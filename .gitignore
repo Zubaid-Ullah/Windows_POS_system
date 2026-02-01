@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+Backup/
+data/Backups/auto/*.db
+data/kyc/*.jpg
+data/bills/*.txt
+test_out_src/
+test_out/
+Keys/

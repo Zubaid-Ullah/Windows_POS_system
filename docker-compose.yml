@@ -1,0 +1,14 @@
+services:
+  pos_app:
+    build: .
+    container_name: afex_pos
+    image: pos_system-pos_app
+    ports:
+      - "5900:5900"
+    volumes:
+      - ./data:/app/data
+      - ./credentials:/app/credentials
+      - ./pos_system.db:/app/pos_system.db
+    environment:
+      - DB_PATH=/app/pos_system.db
+    restart: unless-stopped

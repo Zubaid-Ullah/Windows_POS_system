@@ -1,0 +1,36 @@
+# Offline POS & Inventory Management System
+
+A robust, offline-first POS system built with Python and PyQt6.
+
+## Features
+- **Fully Offline**: Works without internet, uses local SQLite database.
+- **Multi-language**: Supports English, Pashto, and Dari.
+- **RTL Support**: Full support for Right-to-Left languages.
+- **Inventory Management**: Track products, stock levels, and pricing.
+- **Sales & POS**: barcode scanning support, cart management, and discounts.
+- **Customer Loans**: Integrated loan tracking and payment system.
+- **Reporting**: Daily sales, stock valuation, and active loan reports.
+- **Security**: Role-based access control and hashed passwords.
+- **Backup**: Easy-to-use backup and restore utility.
+
+## Setup
+1. Install dependencies:
+   ```bash
+   pip install PyQt6 reportlab python-escpos pandas openpyxl Babel cryptography qtawesome bcrypt python-dotenv
+   ```
+2. Run the application:
+   ```bash
+   python main.py
+   ```
+3. Default Logins:
+   - **Admin**: `admin` / `admin123` (Full Access)
+   - **Salesman**: `sales` / `sales123` (Sales & Customers Only)
+   - **Pricing Manager**: `manager` / `price123` (Inventory & Reports Only)
+
+## Key Modules
+- **Sales (POS)**: Optimized for barcode scanners with instant cart updates.
+- **Inventory**: Full stock management with barcode generation.
+- **Debt & Loans**: Dedicated module to track and receive customer loan payments.
+- **Suppliers**: Manage vendor contacts and records.
+- **Analytics**: Profit & Loss reports for Day, Week, Month, and Year.
+- **Appearance**: Toggle between Light Mode and High-Contrast Night Mode in Settings.

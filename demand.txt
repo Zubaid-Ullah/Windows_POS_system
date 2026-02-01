@@ -1,0 +1,66 @@
+in some issues one of them is mentioned below:
+    Your Settings page already has the shop details:
+        Business name
+        Address
+        Phone / WhatsApp number
+        Email address
+        Whenever you create or print a bill, the system should automatically use these details on the bill.
+        In the Sales window (daily sales – only 24 hours)
+        Bill Number box
+        There should be a box (QLineEdit) that shows the current bill number.
+        This number is shown automatically by the system.
+        After a sale
+        When a bill is created and the sale is completed:
+        The bill is saved
+        The bill number automatically increases
+        The QLineEdit updates to show the next bill number
+        Print bill button
+        Next to the bill number, there should be a Print button.
+        Clicking this button prints that bill again.
+        This is useful if the customer asks for a duplicate copy.
+
+    I want the bill to be print like below:
+                  SALES INVOICE
+                  INVOICE # 0001
+    ------------------------------------------
+    ------------------------------------------
+                Kabul City Center
+          Main Road, Kabul, Afghanistan
+                Phone: 0700000000
+               Email: info@mall.af
+    ------------------------------------------
+    S#  Product Name           Qty  Price  Total
+    ------------------------------------------
+    1   Chocolate Bar Extra
+        Dark Imported 85%        1  120.00  120.00
+    2   Chocolate Bar Extra
+        Dark Imported 85%        1  120.00  120.00
+    3   Chocolate Bar Extra
+        Dark Imported 85%        1  120.00  120.00
+    4   Chocolate Bar Extra
+        Dark Imported 85%        1  120.00  120.00
+    5   Chocolate Bar Extra
+        Dark Imported 85%        1  120.00  120.00
+    6   Chocolate Bar Extra
+        Dark Imported 85%        1  120.00  120.00
+    7   Coca Cola 330ml
+        Coca Cola 330ml          2   30.00   60.00
+    ------------------------------------------
+             NET AMOUNT: 1000.00 AFN
+    Amount in Words:
+    One Thousand Afghanis Only
+    ------------------------------------------
+    Discount:                       20.00
+    Gross Amount:                1020.00
+    Net Amount:                  1000.00
+    ------------------------------------------
+    QrCode
+                 Have a Nice Time
+            Thanks for Your Kind Visit
+
+    when sale invoice generated mention it below SALES INVOICE
+    pick address, phone number, email from settings page.
+    QrCode (convert the number into QrCode) and print it in bill.
+
+    in pharmacy business setting page is missing for superadmin if not planned before, do it now.
+    make same page as general store has.

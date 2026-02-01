@@ -1,0 +1,304 @@
+# --- STARTUP LOGGING (CAPTURE EARLY CRASHES) ---
+import sys
+import os
+import traceback
+from datetime import datetime
+
+LOG_PATH = os.path.expanduser("~/Desktop/AfexPOS_startup.log")
+
+def log_msg(msg):
+    try:
+        with open(LOG_PATH, "a") as f:
+            f.write(f"{datetime.now().isoformat()} - {msg}\n")
+    except: pass
+
+try:
+    # Redirect print and errors to file to prevent crash on Finder launch
+    log_file = open(LOG_PATH, "w", buffering=1) # Clear log on start
+    log_file.write("--- AfexPOS GUI Startup Session ---\n")
+    log_file.write(f"Executable: {sys.executable}\n")
+    log_file.write(f"CWD: {os.getcwd()}\n")
+    
+    # If we are in a .app bundle, let's fix CWD to Resources
+    if getattr(sys, 'frozen', False) and "Contents/MacOS" in sys.executable:
+        res_path = os.path.join(os.path.dirname(sys.executable), "..", "Resources")
+        if os.path.exists(res_path):
+            os.chdir(res_path)
+            log_file.write(f"Changed CWD to Bundle Resources: {os.getcwd()}\n")
+
+    sys.stdout = log_file
+    sys.stderr = log_file
+except Exception as e:
+    pass
+
+from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PyQt6.QtGui import QFont, QIcon
+from src.ui.main_window import MainWindow
+from credentials.bootstrap_installations_table import bootstrap_installations_table
+from src.core.supabase_manager import supabase_manager
+from src.core.local_config import local_config
+from src.core.license_guard import LicenseGuard
+from src.ui.views.onboarding.connectivity_gate import ConnectivityGateWindow
+from src.ui.views.onboarding.create_account_stepper import CreateAccountWindow
+from src.ui.views.onboarding.login_window import LoginWindow
+from src.ui.views.onboarding.locked_window import LockedWindow
+from src.database.db_manager import db_manager
+from src.ui.views.login_view import LoginView 
+from src.ui.theme_manager import theme_manager
+
+def main():
+    try:
+        app = QApplication(sys.argv)
+        print("QApplication initialized.")
+        app.setFont(QFont("Arial"))
+        
+        # Set Global App Icon
+        if getattr(sys, 'frozen', False):
+            # Try finding icon in multiple bundle locations
+            base = getattr(sys, '_MEIPASS', os.path.join(os.path.dirname(sys.executable), "..", "Resources"))
+            icon_path = os.path.join(base, "Logo", "logo.ico")
+        else:
+            icon_path = os.path.join(os.path.dirname(__file__), "Logo", "logo.ico")
+        
+        if os.path.exists(icon_path):
+            app.setWindowIcon(QIcon(icon_path))
+            print(f"Icon loaded from: {icon_path}")
+        
+        theme_manager.init_theme()
+        
+        # Shared References to prevent garbage collection
+        main_window = None
+        onboarding_window = None
+        installer_login_window = None
+        app_login_window = None
+        gate = ConnectivityGateWindow()
+        guard = LicenseGuard()
+
+        def start_main_app(mode="STORE", role="user"):
+            if app_login_window: app_login_window.close()
+            if role != "superadmin":
+                if not check_contract_validity():
+                    print("⚠️ Contract expired. Auto-login disabled.")
+                    show_app_login()
+                    return
+                
+            nonlocal main_window
+            print("🚀 Launching Main POS Interface...")
+            main_window = MainWindow()
+            main_window.show()
+
+        def check_contract_validity():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT value FROM app_settings WHERE key = 'contract_end'")
+                    row = cursor.fetchone()
+                    if row:
+                        contract_end_str = row['value']
+                        try:
+                            contract_end = datetime.strptime(contract_end_str, '%Y-%m-%d')
+                            if datetime.now() > contract_end:
+                                return False
+                        except:
+                            return False
+                    else:
+                        return False
+                return True
+            except Exception as e:
+                print(f"Contract check warning: {e}")
+                return False
+
+        def show_locked_screen(info):
+            lock = LockedWindow(contact_info=info)
+            lock.show()
+            if main_window: main_window.hide()
+
+        def verify_local_data_integrity():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT value FROM app_settings WHERE key = 'company_name'")
+                    if not cursor.fetchone():
+                        return False
+                return True
+            except Exception as e:
+                print(f"⚠️ DB Integrity Check Failed: {e}")
+                return False
+
+        def on_internet_gate_resolved(online):
+            try:
+                print("="*60)
+                print(f"[DEBUG] Gate resolve sequence START: online={online}")
+                print(f"[DEBUG] Checking local registration...")
+                is_registered_local = local_config.is_registered() and verify_local_data_integrity()
+                print(f"[DEBUG] is_registered_local={is_registered_local}")
+                sid = local_config.get("system_id")
+                print(f"[DEBUG] system_id={sid}")
+
+                if not online:
+                    print("[DEBUG] Offline mode detected")
+                    if is_registered_local:
+                        print("[DEBUG] Calling jump_to_app() for offline registered user")
+                        jump_to_app()
+                        return
+                    else:
+                        print("[DEBUG] No local registration, showing activation required message")
+                        QMessageBox.critical(None, "Activation Required", "Internet required for first-time activation.")
+                        sys.exit()
+
+                print("[DEBUG] Internet active. Verifying cloud registration...")
+                try:
+                    print(f"[DEBUG] Calling supabase_manager.get_installation_status({sid})")
+                    cloud_record = supabase_manager.get_installation_status(sid)
+                    print(f"[DEBUG] cloud_record={cloud_record}")
+                except Exception as e:
+                    print(f"[DEBUG] Supabase check failed: {e}")
+                    cloud_record = None
+
+                if not cloud_record:
+                    print("[DEBUG] No cloud record found")
+                    if is_registered_local:
+                        print("[DEBUG] Calling jump_to_app() for locally registered user")
+                        jump_to_app()
+                    else:
+                        print("[DEBUG] Calling show_registration_stepper()")
+                        show_registration_stepper()
+                else:
+                    print("[DEBUG] Cloud record found, processing...")
+                    status = cloud_record.get('status', 'active')
+                    print(f"[DEBUG] Account status={status}")
+                    if status == 'deactivated':
+                        print("[DEBUG] Account deactivated, showing locked screen")
+                        show_locked_screen(cloud_record)
+                        return
+
+                    print("[DEBUG] Setting local config...")
+                    local_config.set("account_created", True)
+                    local_config.set("status", status)
+                    
+                    print("[DEBUG] Verifying local data integrity...")
+                    if not verify_local_data_integrity():
+                         print("[DEBUG] Data integrity failed, showing registration stepper")
+                         local_config.set("account_created", False)
+                         show_registration_stepper()
+                         return
+
+                    print("[DEBUG] All checks passed, calling jump_to_app()")
+                    jump_to_app()
+                print("[DEBUG] on_internet_gate_resolved() completed")
+                print("="*60)
+            except Exception as e:
+                print(f"[CRITICAL ERROR in on_internet_gate_resolved]: {e}")
+                print(f"[DEBUG] Exception type: {type(e).__name__}")
+                import traceback
+                print(traceback.format_exc())
+
+        def show_installer_login():
+            nonlocal installer_login_window
+            installer_login_window = LoginWindow()
+            installer_login_window.login_success.connect(lambda: jump_to_app())
+            installer_login_window.show()
+            gate.close()
+            
+        def show_app_login():
+            try:
+                print("\n" + "="*60)
+                print("[DEBUG] show_app_login() START")
+                nonlocal app_login_window
+                
+                print("[DEBUG] Creating LoginView instance...")
+                app_login_window = LoginView()
+                print("[DEBUG] LoginView created successfully")
+                
+                print("[DEBUG] Setting window title...")
+                app_login_window.setWindowTitle("Afex POS Login")
+                
+                # Fix for Windows frozen executable - ensure window displays properly
+                print("[DEBUG] Importing Qt...")
+                from PyQt6.QtCore import Qt
+                print("[DEBUG] Setting window flags...")
+                app_login_window.setWindowFlags(Qt.WindowType.Window)
+                print("[DEBUG] Setting WA_DeleteOnClose attribute...")
+                app_login_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+                
+                print("[DEBUG] Connecting login_success signal...")
+                app_login_window.login_success.connect(start_main_app)
+                
+                print("[DEBUG] Calling show()...")
+                app_login_window.show()
+                print("[DEBUG] Calling raise_()...")
+                app_login_window.raise_()  # Bring to front
+                print("[DEBUG] Calling activateWindow()...")
+                app_login_window.activateWindow()  # Activate window
+                
+                print("[DEBUG] Closing gate...")
+                gate.close()
+                print("[DEBUG] Checking main_window...")
+                if main_window:
+                    print("[DEBUG] Closing main_window...")
+                    main_window.close()
+                
+                print("[DEBUG] show_app_login() COMPLETED SUCCESSFULLY")
+                print("="*60 + "\n")
+            except Exception as e:
+                print(f"[CRITICAL ERROR in show_app_login]: {e}")
+                print(f"[DEBUG] Exception type: {type(e).__name__}")
+                import traceback
+                print(traceback.format_exc())
+
+        def jump_to_app():
+            try:
+                print("\n" + "="*60)
+                print("[DEBUG] jump_to_app() START")
+                print("[DEBUG] Checking contract validity...")
+                if not check_contract_validity():
+                    print("[DEBUG] Contract invalid, showing app login")
+                    show_app_login()
+                    return
+                
+                print("[DEBUG] Contract valid, checking login mode...")
+                login_mode = local_config.get("login_mode", "each_time")
+                print(f"[DEBUG] login_mode={login_mode}")
+                
+                if login_mode == "once":
+                    print("[DEBUG] Login mode is 'once', starting main app directly")
+                    start_main_app()
+                else:
+                    print("[DEBUG] Login mode requires login, showing app login")
+                    show_app_login()
+                
+                print("[DEBUG] jump_to_app() COMPLETED")
+                print("="*60 + "\n")
+            except Exception as e:
+                print(f"[CRITICAL ERROR in jump_to_app]: {e}")
+                print(f"[DEBUG] Exception type: {type(e).__name__}")
+                import traceback
+                print(traceback.format_exc())
+
+        def show_registration_stepper():
+            nonlocal onboarding_window
+            try:
+                onboarding_window = CreateAccountWindow()
+                onboarding_window.account_created.connect(jump_to_app)
+                onboarding_window.show()
+                gate.close()
+            except Exception as e:
+                print(f"❌ Error opening registration window: {e}")
+                start_main_app()
+
+        def debug_gate_resolved(online):
+            on_internet_gate_resolved(online)
+
+        gate.connection_resolved.connect(debug_gate_resolved)
+        gate.show()
+        sys.exit(app.exec())
+        
+    except Exception as e:
+        print(f"CRITICAL STARTUP ERROR:\n{str(e)}")
+        print(traceback.format_exc())
+        raise e
+
+if __name__ == "__main__":
+    import threading
+    threading.Thread(target=bootstrap_installations_table, daemon=True).start()
+    main()

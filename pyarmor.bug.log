@@ -1,0 +1,39 @@
+[BUG]: out of license
+
+## Command Line
+/Users/apple/Documents/GitHub/POS_system/.venv/bin/pyarmor gen -O /Users/apple/Documents/GitHub/POS_system/platform/macos/macos_secured_dist credentials/admin_manage_installations.py credentials/bootstrap_installations_table.py credentials/register_installation.py main.py src/core/auth.py src/core/license_guard.py src/core/local_config.py src/core/localization.py src/core/pharmacy_auth.py src/core/supabase_manager.py src/core/system_update_manager.py src/database/db_manager.py src/standalone/__init__.py src/standalone/activation_tool.py src/standalone/inventory_update_tool.py src/ui/apply_button_styles.py src/ui/apply_table_styles.py src/ui/button_styles.py src/ui/dialogs/add_pharmacy_item_dialog.py src/ui/dialogs/create_user_dialog.py src/ui/form_styles.py src/ui/main_window.py src/ui/pharmacy_window.py src/ui/styles.py src/ui/table_styles.py src/ui/theme_manager.py src/ui/views/credentials_view.py src/ui/views/customer_view.py src/ui/views/dashboard_view.py src/ui/views/finance_view.py src/ui/views/inventory_view.py src/ui/views/loan_view.py src/ui/views/login_view.py src/ui/views/onboarding/connectivity_gate.py src/ui/views/onboarding/create_account_stepper.py src/ui/views/onboarding/locked_window.py src/ui/views/onboarding/login_window.py src/ui/views/pharmacy/__init__.py src/ui/views/pharmacy/pharmacy_customer_view.py src/ui/views/pharmacy/pharmacy_dashboard_view.py
+
+## Environments
+Python 3.11.9
+Pyarmor 9.2.3 (trial), 000000, non-profits
+Platform darwin.aarch64
+Native darwin.arm64
+Home /Users/apple/.pyarmor
+
+## Traceback
+Traceback (most recent call last):
+  File "/Users/apple/Documents/GitHub/POS_system/.venv/lib/python3.11/site-packages/pyarmor/cli/__main__.py", line 796, in main
+    main_entry(sys.argv[1:])
+  File "/Users/apple/Documents/GitHub/POS_system/.venv/lib/python3.11/site-packages/pyarmor/cli/__main__.py", line 789, in main_entry
+    return args.func(ctx, args)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Documents/GitHub/POS_system/.venv/lib/python3.11/site-packages/pyarmor/cli/__main__.py", line 248, in cmd_gen
+    builder.process(options)
+  File "/Users/apple/Documents/GitHub/POS_system/.venv/lib/python3.11/site-packages/pyarmor/cli/generate.py", line 188, in process
+    self._obfuscate_scripts()
+  File "/Users/apple/Documents/GitHub/POS_system/.venv/lib/python3.11/site-packages/pyarmor/cli/generate.py", line 144, in _obfuscate_scripts
+    code = Pytransform3.generate_obfuscated_script(self.ctx, r)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Documents/GitHub/POS_system/.venv/lib/python3.11/site-packages/pyarmor/cli/core/__init__.py", line 95, in generate_obfuscated_script
+    return m.generate_obfuscated_script(ctx, res)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<maker>", line 728, in generate_obfuscated_script
+  File "/Users/apple/Documents/GitHub/POS_system/.venv/lib/python3.11/site-packages/pyarmor/cli/__init__.py", line 16, in process
+    return meth(self, res, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<maker>", line 553, in process
+  File "<maker>", line 559, in coserialize
+  File "<maker>", line 609, in _build_ast_body
+RuntimeError: out of license
+
+
