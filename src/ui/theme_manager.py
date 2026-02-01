@@ -14,8 +14,8 @@ class ThemeManager(QObject):
         
         "bg_main": "#f4f7fe",
         "bg_card": "#ffffff",
-        "text_main": "#1b2559",
-        "text_secondary": "#FAFAFC",
+        "text_main": "#000000",
+        "text_secondary": "#475569",
         
         "primary": "#4318ff",
         "success": "#05cd99",
@@ -37,7 +37,7 @@ class ThemeManager(QObject):
         "bg_main": "#0b1437",
         "bg_card": "#111c44",
         "text_main": "#ffffff",
-        "text_secondary": "#cbd5e0",
+        "text_secondary": "#a3aed0",
         
         "primary": "#7551ff",
         "success": "#05cd99",
@@ -236,13 +236,30 @@ class ThemeManager(QObject):
             padding: 10px 15px;
             border: none;
             border-radius: 8px;
-            background-color: {t['bg_card']};
-            color: {t['text_main']};
-            font-size: 14px;
+            background-color: {t['bg_card']} !important;
+            color: {t['text_main']} !important;
+            font-size: 18px;
+        }}
+        
+        QSpinBox::up-button, QSpinBox::down-button {{
+            background-color: transparent;
+            border: none;
+        }}
+        
+        QSpinBox QLineEdit {{
+            background-color: transparent !important;
+            color: {t['text_main']} !important;
         }}
         
         QLineEdit[background="black"], QComboBox[background="black"] {{
-            color: white !important;
+            color: #ffffff !important;
+        }}
+        
+        QLineEdit[readOnly="true"] {{
+            background-color: {t['bg_main']};
+            color: {t['text_main']};
+            opacity: 0.8;
+            border: 1px solid {t['border']};
         }}
 
         QLineEdit::placeholder {{

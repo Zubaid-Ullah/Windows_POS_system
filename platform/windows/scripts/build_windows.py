@@ -49,50 +49,45 @@ def setup_dirs():
 
 def build():
     if not SECURED_DIR.exists():
-        print("❌ Run protect_windows_source.py first.")
+        print(f"❌ Secured source not found at: {SECURED_DIR}")
+        print("   Run protect_windows_source.py first.")
         sys.exit(1)
 
     print_step("Building Windows EXE from Obfuscated Source...")
-    print("ℹ️  Note: Windows system DLL warnings (e.g., ntdll.dll, bcrypt.dll) are normal and expected.")
-    print("    These libraries are present on all Windows systems and don't need bundling.")
     
     icon_path = SECURED_DIR / "Logo" / "logo.ico"
-    sep = ";"
+    sep = ";" # Windows specific separator for --add-data
     
-    # Data arguments
+    # Dynamic Data Collection
     data_args = []
+    # Directories to potentially skip from --add-data
+    skip_dirs = ["__pycache__", "windows_build_temp", "windows_exe_dist", "windows_secured_dist", ".git", ".venv", ".idea"]
     
-    # NOTE: Don't use --add-data for src directory - it needs to be importable
-    # PyInstaller will auto-detect src when running from SECURED_DIR
-    # But we add --paths to be explicit
-    
-    # Add src/ui/assets as data (non-Python files)
-    src_assets = SECURED_DIR / "src" / "ui" / "assets"
-    if src_assets.exists():
-        data_args.append(f"--add-data={src_assets}{sep}src/ui/assets")
-    
-    runtime_dir = SECURED_DIR / "pyarmor_runtime_000000"
-    if runtime_dir.exists():
-        data_args.append(f"--add-data={runtime_dir}{sep}pyarmor_runtime_000000")
-
-    items = ["Logo", "data", "locale", "credentials", "Keys", "Backup"]
-    for item in items:
-        if (SECURED_DIR / item).exists():
-            data_args.append(f"--add-data={SECURED_DIR / item}{sep}{item}")
+    print("🔍 Collecting assets dynamically...")
+    for item in SECURED_DIR.iterdir():
+        if item.is_dir() and item.name not in skip_dirs:
+            # We add EVERYTHING in these folders as data (Logo, data, credentials, src, etc.)
+            # PyInstaller handles overlapping code/data.
+            data_args.append(f"--add-data={item}{sep}{item.name}")
+            print(f"   + Added directory: {item.name}")
+        elif item.is_file() and item.name in [".env", "README.md", "SystemCheck.json"]:
+            data_args.append(f"--add-data={item}{sep}.")
+            print(f"   + Added file: {item.name}")
 
     cmd_base = PYINSTALLER_CMD.split() if " " in PYINSTALLER_CMD else [PYINSTALLER_CMD]
     cmd = cmd_base + [
         "--noconfirm",
-        "--onefile",       # Windows users prefer onefile
+        "--onefile",
         "--windowed",
         "--name", APP_NAME,
         "--distpath", str(FINAL_DIST_DIR),
         "--workpath", str(BUILD_TEMP_DIR),
         "--specpath", str(BUILD_TEMP_DIR),
         
-        # Add SECURED_DIR to Python path so src can be imported
+        # Add SECURED_DIR to paths so PyInstaller can find 'src' and other packages
         "--paths", str(SECURED_DIR),
         
+        # Heavy collections
         "--collect-all", "certifi",
         "--collect-all", "cryptography",
         "--collect-all", "cv2",
@@ -112,24 +107,33 @@ def build():
         "--collect-all", "openpyxl",
         "--collect-all", "qrcode",
         
-        # Collections for larger libraries that cause issues with --collect-all
+        # Module specific sub-collections
         "--collect-submodules", "babel",
         "--collect-submodules", "pandas",
         "--collect-submodules", "numpy",
         "--collect-submodules", "googleapiclient",
         "--collect-submodules", "google",
+        "--collect-submodules", "grpc",
         
-        # Exclude test-only dependencies that cause bloat/errors
+        # Hidden imports for common dynamic logic
+        "--hidden-import", "sqlite3",
+        "--hidden-import", "json",
+        "--hidden-import", "uuid",
+        
+        # Exclude test-only dependencies
         "--exclude-module", "pytest",
         "--exclude-module", "pytest-runner",
-        "--exclude-module", "grpc",
 
         *data_args
     ]
     
-    if icon_path.exists(): cmd.extend(["--icon", str(icon_path)])
+    if icon_path.exists(): 
+        cmd.extend(["--icon", str(icon_path)])
+    
+    # Entry point
     cmd.append(str(SECURED_DIR / "main.py"))
 
+    print("\n🚀 Starting PyInstaller Build...")
     run_command(cmd, cwd=str(SECURED_DIR))
 
 if __name__ == "__main__":

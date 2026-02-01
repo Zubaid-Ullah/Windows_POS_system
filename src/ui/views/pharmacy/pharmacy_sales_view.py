@@ -40,17 +40,8 @@ class PharmacySalesView(QWidget):
         bill_row.setSpacing(10)
         
         self.bill_number_display = QLabel("INV-0001")
-        self.bill_number_display.setStyleSheet("""
-            background-color: #f1f5f9;
-            color: #475569;
-            font-family: monospace;
-            font-size: 16px;
-            font-weight: bold;
-            padding: 8px 15px;
-            border: 1px solid #e2e8f0;
-            border-radius: 6px;
-        """)
-        bill_row.addWidget(QLabel("📄 Current Bill #:"))
+        self.bill_number_display.setStyleSheet("font-family: monospace; font-size: 16px; font-weight: bold; padding: 8px 15px;")
+        bill_row.addWidget(QLabel("📄 Last Bill #:"))
         bill_row.addWidget(self.bill_number_display)
         
         self.reprint_btn = QPushButton(" 🖨️ Reprint Last Bill ")
@@ -61,7 +52,7 @@ class PharmacySalesView(QWidget):
         bill_row.addStretch()
         layout.addLayout(bill_row)
         
-        self.load_next_bill_number()
+        self.load_last_bill_number()
 
         # Customer & Payment Method
         control_layout = QHBoxLayout()
@@ -74,7 +65,7 @@ class PharmacySalesView(QWidget):
         self.customer_combo = QComboBox()
         self.load_customers()
         self.customer_combo.currentIndexChanged.connect(self.handle_customer_change)
-        self.customer_combo.installEventFilter(self) # We'll refresh on focus
+        # self.customer_combo.installEventFilter(self) # Removed to fix selection issue on Windows
         
         control_layout.addWidget(QLabel("Customer:"))
         control_layout.addWidget(self.customer_combo, 2)
@@ -90,13 +81,14 @@ class PharmacySalesView(QWidget):
             "Barcode", "Name", "Size", "Expiry", "Price", "Qty", "Total", "Remaining", "Action"
         ])
         style_table(self.table, variant="premium")
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Name
         layout.addWidget(self.table)
         
         # Footer
         footer = QHBoxLayout()
         self.total_lbl = QLabel("Total: 0.00 AFN")
-        self.total_lbl.setStyleSheet("font-size: 24px; font-weight: bold; color: #1b2559;")
+        self.total_lbl.setStyleSheet("font-size: 24px; font-weight: bold;")
         footer.addWidget(self.total_lbl)
         
         footer.addStretch()
@@ -116,6 +108,7 @@ class PharmacySalesView(QWidget):
 
     def load_customers(self):
         curr_text = self.customer_combo.currentText()
+        self.customer_combo.blockSignals(True)
         self.customer_combo.clear()
         self.customer_combo.addItem("Walk-in Customer", None)
         try:
@@ -129,6 +122,8 @@ class PharmacySalesView(QWidget):
             if idx >= 0: self.customer_combo.setCurrentIndex(idx)
         except Exception as e:
             print(f"Error loading customers: {e}")
+        finally:
+            self.customer_combo.blockSignals(False)
 
     def handle_customer_change(self, index):
         """Automatically set payment method based on customer selection"""
@@ -137,11 +132,7 @@ class PharmacySalesView(QWidget):
         elif index > 0:
             self.payment_combo.setCurrentText("CREDIT")
 
-    def eventFilter(self, obj, event):
-        from PyQt6.QtCore import QEvent
-        if obj == self.customer_combo and event.type() == QEvent.Type.FocusIn:
-            self.load_customers()
-        return super().eventFilter(obj, event)
+    # eventFilter removed to fix customer selection issue on Windows 10
 
     def check_stock(self, product_id, batch, quantity):
         with db_manager.get_pharmacy_connection() as conn:
@@ -240,13 +231,19 @@ class PharmacySalesView(QWidget):
             
             # Editable Quantity with SpinBox
             qty_spinbox = QSpinBox()
+            qty_spinbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_spinbox.setMinimum(1)
             qty_spinbox.setMaximum(int(item.get('stock', 999)))  # Convert to int
             qty_spinbox.setValue(item['qty'])
+            qty_spinbox.setStyleSheet("font-size: 18px; font-weight: bold; height: 40px;")
+            qty_spinbox.setMaximumWidth(100)
+            qty_spinbox.setStyleSheet("background-color: #f1f5f9; color: #475569; font-size: 18px; padding: 2px 6px; border: 1px solid #e2e8f0; border-radius: 4px;")
             qty_spinbox.editingFinished.connect(lambda s=qty_spinbox, idx=i: self.update_qty(idx, s.value()))
             self.table.setCellWidget(i, 5, qty_spinbox)
             
-            self.table.setItem(i, 6, QTableWidgetItem(f"{total:.2f}"))
+            total_item = QTableWidgetItem(f"{total:.2f}")
+            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(i, 6, total_item)
             
             # Remaining stock display
             remaining = item.get('stock', 0) - item['qty']
@@ -268,6 +265,8 @@ class PharmacySalesView(QWidget):
             self.table.setCellWidget(i, 8, remove_btn)
             
         self.total_lbl.setText(f"Total: {grant_total:.2f} AFN")
+        self.table.resizeColumnsToContents()
+        self.table.resizeRowsToContents()
     
     def update_qty(self, idx, new_qty):
         """Update quantity when spinbox changes"""
@@ -372,7 +371,7 @@ class PharmacySalesView(QWidget):
                 self.print_pharmacy_sale_bill(sale_id, invoice, total_amount, payment_method)
 
                 # Auto update bill number display for next sale
-                self.load_next_bill_number()
+                self.load_last_bill_number()
 
                 QMessageBox.information(self, "Success", f"Pharmacy Sale Completed!\nInvoice: {invoice}")
                 self.cart = []
@@ -383,29 +382,22 @@ class PharmacySalesView(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Transaction Failed: {e}")
 
-    def load_next_bill_number(self):
-        """Load and display next pharmacy bill number"""
+    def load_last_bill_number(self):
+        """Load and display last pharmacy bill number for today"""
         try:
             with db_manager.get_pharmacy_connection() as conn:
+                # Find the last bill from today
                 last_bill = conn.execute(
-                    "SELECT invoice_number FROM pharmacy_sales ORDER BY id DESC LIMIT 1"
+                    "SELECT invoice_number FROM pharmacy_sales WHERE date(created_at) = date('now') ORDER BY id DESC LIMIT 1"
                 ).fetchone()
                 
                 if last_bill:
-                    try:
-                        # Extract number from format PHARM-YYYYMMDDHHMMSS or similar
-                        # But let's use a simpler incrementing number if we want to match general store style
-                        # For now, just generate the next likely one
-                        next_num = last_bill['id'] + 1 if 'id' in last_bill else 1
-                    except:
-                        next_num = 1
+                    self.bill_number_display.setText(last_bill['invoice_number'])
                 else:
-                    next_num = 1
-                
-                self.bill_number_display.setText(f"PHARM-{datetime.now().strftime('%Y%m%d')}-{next_num:04d}")
+                    self.bill_number_display.setText("no bill")
         except Exception as e:
             print(f"Error loading pharmacy bill number: {e}")
-            self.bill_number_display.setText("PHARM-0001")
+            self.bill_number_display.setText("Error")
 
     def reprint_last_bill(self):
         """Reprint the last pharmacy bill"""
@@ -427,7 +419,8 @@ class PharmacySalesView(QWidget):
                 confirm = QMessageBox.question(
                     self, "Reprint Bill",
                     f"Reprint last pharmacy bill?\nInvoice: {invoice_num}\nAmount: {total:,.2f} AFN",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
                 )
                 
                 if confirm == QMessageBox.StandardButton.Yes:

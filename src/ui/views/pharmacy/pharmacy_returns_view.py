@@ -35,8 +35,8 @@ class PharmacyReturnsView(QWidget):
         layout.addWidget(self.sale_info_lbl)
 
         # Items Table
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Product", "Sold Qty", "Price", "Return Qty", "Action", "Confirm"])
+        self.table = QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels(["Product", "Sold Qty", "Already Ret", "Remaining", "Price", "Return Qty", "Action", "Refund Mode", "Confirm"])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
@@ -70,40 +70,78 @@ class PharmacyReturnsView(QWidget):
                 
                 self.table.setRowCount(0)
                 for i, item in enumerate(items):
+                    # Calculate already returned quantity for THIS specific invoice line
+                    ret_row = conn.execute("""
+                        SELECT SUM(quantity) as returned_qty 
+                        FROM pharmacy_return_items 
+                        WHERE sale_item_id = ?
+                    """, (item['id'],)).fetchone()
+                    
+                    already_returned = ret_row['returned_qty'] or 0
+                    remaining = item['quantity'] - already_returned
+                    
                     self.table.insertRow(i)
                     self.table.setItem(i, 0, QTableWidgetItem(item['name_en']))
                     self.table.setItem(i, 1, QTableWidgetItem(str(item['quantity'])))
-                    self.table.setItem(i, 2, QTableWidgetItem(f"{item['unit_price']:.2f}"))
+                    self.table.setItem(i, 2, QTableWidgetItem(str(already_returned)))
+                    
+                    rem_item = QTableWidgetItem(str(remaining))
+                    if remaining <= 0:
+                        rem_item.setForeground(Qt.GlobalColor.red)
+                    self.table.setItem(i, 3, rem_item)
+                    
+                    self.table.setItem(i, 4, QTableWidgetItem(f"{item['unit_price']:.2f}"))
                     
                     qty_input = QDoubleSpinBox()
-                    qty_input.setRange(0, item['quantity'])
+                    qty_input.setRange(0, remaining)
                     qty_input.setValue(0)
-                    self.table.setCellWidget(i, 3, qty_input)
+                    self.table.setCellWidget(i, 5, qty_input)
                     
                     action_combo = QComboBox()
                     action_combo.addItems(["RETURN", "REPLACE"])
-                    self.table.setCellWidget(i, 4, action_combo)
+                    self.table.setCellWidget(i, 6, action_combo)
+                    
+                    refund_mode_combo = QComboBox()
+                    refund_mode_combo.addItems(["ACCOUNT", "CASH"])
+                    # Default to ACCOUNT if it was a credit sale, otherwise CASH
+                    if sale['payment_type'] == 'CREDIT':
+                        refund_mode_combo.setCurrentText("ACCOUNT")
+                    else:
+                        refund_mode_combo.setCurrentText("CASH")
+                    self.table.setCellWidget(i, 7, refund_mode_combo)
                     
                     btn = QPushButton("Process")
-                    style_button(btn, variant="warning", size="small")
+                    if remaining <= 0:
+                        btn.setEnabled(False)
+                        btn.setText("Fully Ret.")
+                        style_button(btn, variant="secondary", size="small")
+                    else:
+                        style_button(btn, variant="warning", size="small")
+                    
                     btn.clicked.connect(lambda ch, it=item, r=i: self.process_return(it, r))
-                    self.table.setCellWidget(i, 5, btn)
+                    self.table.setCellWidget(i, 8, btn)
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
-    def process_return(self, sale_item, row_idx):
-        qty_widget = self.table.cellWidget(row_idx, 3)
-        action_widget = self.table.cellWidget(row_idx, 4)
-        
-        qty = qty_widget.value()
-        action = action_widget.currentText()
+    def process_return(self, sale_item, row):
+        qty = self.table.cellWidget(row, 5).value()
+        action = self.table.cellWidget(row, 6).currentText()
+        refund_mode = self.table.cellWidget(row, 7).currentText()
         
         if qty <= 0:
-            QMessageBox.warning(self, "Error", "Quantity must be greater than 0")
+            QMessageBox.warning(self, "Error", "Please select a quantity to return.")
             return
             
-        ok = QMessageBox.question(self, "Confirm", f"Process {action} for {qty} units?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        # Double check remaining one last time
+        remaining = float(self.table.item(row, 3).text())
+        if qty > remaining:
+            QMessageBox.warning(self, "Error", f"Cannot return more than remaining quantity ({remaining}).")
+            return
+        
+        ok = QMessageBox.question(self, "Confirm", f"Process {action} for {qty} units via {refund_mode}?", 
+                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                 QMessageBox.StandardButton.Yes)
         if ok != QMessageBox.StandardButton.Yes: return
         
         # Reason dialog
@@ -118,17 +156,20 @@ class PharmacyReturnsView(QWidget):
         try:
             with db_manager.get_pharmacy_connection() as conn:
                 # 1. Create Return Record
+                # Refund only if action is RETURN
+                actual_refund = qty * sale_item['unit_price'] if action == 'RETURN' else 0
+                
                 conn.execute("""
-                    INSERT INTO pharmacy_returns (original_sale_id, refund_amount, reason, user_id) 
-                    VALUES (?, ?, ?, ?)
-                """, (sale_item['sale_id'], qty * sale_item['unit_price'], reason_text, user_id))
+                    INSERT INTO pharmacy_returns (original_sale_id, refund_amount, refund_type, reason, user_id) 
+                    VALUES (?, ?, ?, ?, ?)
+                """, (sale_item['sale_id'], actual_refund, refund_mode, reason_text, user_id))
                 return_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                 
-                # 2. Add Return Item
+                # 2. Add Return Item (Now with sale_item_id)
                 conn.execute("""
-                    INSERT INTO pharmacy_return_items (return_id, product_id, quantity, unit_price, action)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (return_id, sale_item['product_id'], qty, sale_item['unit_price'], action))
+                    INSERT INTO pharmacy_return_items (return_id, sale_item_id, product_id, quantity, unit_price, action)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (return_id, sale_item['id'], sale_item['product_id'], qty, sale_item['unit_price'], action))
                 
                 # 3. Update Stock (If Return, add back to stock? Or just record?)
                 # Requirement says "Update Stock"
@@ -143,13 +184,21 @@ class PharmacyReturnsView(QWidget):
                     conn.execute("UPDATE pharmacy_inventory SET quantity = quantity + ? WHERE product_id=? AND batch_number=?", 
                                  (qty, sale_item['product_id'], batch['batch_number']))
                 
-                # 4. Update Customer Balance (if it was a credit sale)
+                # 4. Update Customer Balance (if it was a credit sale AND refund is to ACCOUNT)
                 sale = conn.execute("SELECT customer_id, payment_type FROM pharmacy_sales WHERE id=?", (sale_item['sale_id'],)).fetchone()
-                if sale and sale['customer_id'] and sale['payment_type'] == 'CREDIT':
-                     refund_amt = qty * sale_item['unit_price']
-                     conn.execute("UPDATE pharmacy_customers SET balance = balance - ? WHERE id=?", (refund_amt, sale['customer_id']))
+                if sale and sale['customer_id'] and sale['payment_type'] == 'CREDIT' and actual_refund > 0 and refund_mode == 'ACCOUNT':
+                     # Update Customer Balance (Allow it to go negative/credit)
+                     conn.execute("UPDATE pharmacy_customers SET balance = balance - ? WHERE id=?", (actual_refund, sale['customer_id']))
+                     
                      # Also update loan balance if exists
-                     conn.execute("UPDATE pharmacy_loans SET balance = balance - ? WHERE sale_id=?", (refund_amt, sale_item['sale_id']))
+                     conn.execute("UPDATE pharmacy_loans SET balance = balance - ? WHERE sale_id=?", (actual_refund, sale_item['sale_id']))
+                     
+                     # If loan balance is now <= 0, mark as COMPLETED
+                     conn.execute("""
+                        UPDATE pharmacy_loans 
+                        SET status = 'COMPLETED' 
+                        WHERE sale_id = ? AND balance <= 0
+                     """, (sale_item['sale_id'],))
 
                 conn.commit()
             

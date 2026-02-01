@@ -31,22 +31,25 @@ class TableStyler:
         
         table_font = QFont()
         table_font.setFamily("Arial")
-        table_font.setPointSize(20)
+        table_font.setPointSize(18)
         table_font.setWeight(QFont.Weight.Normal)
         table.setFont(table_font)
+        table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed)
         
         # Header configuration
         header = table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         header.setStretchLastSection(True)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setMinimumSectionSize(150)
-        header.setDefaultSectionSize(200)
+        
+        # Initial sizing
+        table.resizeColumnsToContents()
+        table.resizeRowsToContents()
         
         # Vertical header (row numbers)
         v_header = table.verticalHeader()
         v_header.setVisible(False)  # Cleaner look
-        v_header.setDefaultSectionSize(45)  # Appropriate for 12pt font
+        v_header.setDefaultSectionSize(60)  # Appropriate for 18pt font
         
         from src.ui.theme_manager import theme_manager
         t = theme_manager.DARK if theme_manager.is_dark else theme_manager.QUICKMART
@@ -99,7 +102,7 @@ class TableStyler:
                 padding: 15px 15px;
                 border: none;
                 font-weight: 600;
-                font-size: 14px;
+                font-size: 18px;
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
             }}
@@ -170,6 +173,7 @@ class TableStyler:
         table_font.setFamily("Arial")
         table_font.setPointSize(14)
         table.setFont(table_font)
+        table.verticalHeader().setDefaultSectionSize(50)
     
     @staticmethod
     def apply_sales_cart_style(table: QTableWidget):
@@ -179,12 +183,12 @@ class TableStyler:
         # Even larger font for critical sales interaction
         table_font = QFont()
         table_font.setFamily("Arial")
-        table_font.setPointSize(18)
+        table_font.setPointSize(22)
         table_font.setWeight(QFont.Weight.Bold)
         table.setFont(table_font)
         
         v_header = table.verticalHeader()
-        v_header.setDefaultSectionSize(75)
+        v_header.setDefaultSectionSize(80)
         
         # Enhanced visual feedback
         table.setStyleSheet(table.styleSheet() + """

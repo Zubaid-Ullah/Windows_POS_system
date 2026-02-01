@@ -254,12 +254,14 @@ def build_receipt_escpos(
     b += esc_align(1)
     b += esc_font_size(2, 2)
     b += esc_bold(True)
-    b += esc_line(brand.brand_name)
+    for wln in wrap_text(brand.brand_name, width_chars // 2): # //2 because size 2,2 doubles width
+        b += esc_line(wln)
     b += esc_bold(False)
     b += esc_font_size(1, 1)
 
     if brand.slogan:
-        b += esc_line(brand.slogan)
+        for wln in wrap_text(brand.slogan, width_chars):
+            b += esc_line(wln)
 
     if brand.mall_name:
         b += esc_line(brand.mall_name)

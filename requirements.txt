@@ -9,7 +9,7 @@ qtawesome
 bcrypt 
 python-dotenv
 pyinstaller
-opencv-python-headless
+opencv-python
 numpy
 psutil
 google-api-python-client 

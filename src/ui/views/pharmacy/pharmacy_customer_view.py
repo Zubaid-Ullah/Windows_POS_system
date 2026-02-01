@@ -342,7 +342,14 @@ class PharmacyCustomerView(QWidget):
                     self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
                     self.table.setItem(i, 1, QTableWidgetItem(row['name']))
                     self.table.setItem(i, 2, QTableWidgetItem(row['phone']))
-                    self.table.setItem(i, 3, QTableWidgetItem(f"$ {row['balance']:,.2f}"))
+                    
+                    bal_item = QTableWidgetItem(f"$ {row['balance']:,.2f}")
+                    if row['balance'] < 0:
+                        bal_item.setForeground(Qt.GlobalColor.darkGreen)
+                        bal_item.setText(f"Credit: ${abs(row['balance']):,.2f}")
+                    elif row['balance'] > 0:
+                        bal_item.setForeground(Qt.GlobalColor.red)
+                    self.table.setItem(i, 3, bal_item)
                     
                     actions = QWidget()
                     act_layout = QHBoxLayout(actions)
@@ -386,8 +393,15 @@ class PharmacyCustomerView(QWidget):
         data_layout.addRow("<b>Phone:</b>", QLabel(row['phone']))
         data_layout.addRow("<b>Address:</b>", QLabel(row['address'] or "N/A"))
         
-        balance_lbl = QLabel(f"<b>{row['balance']:,.2f} AFN</b>")
-        balance_lbl.setStyleSheet("color: #ef4444; font-size: 16px;" if row['balance'] > 0 else "color: #10b981;")
+        if row['balance'] > 0:
+            balance_lbl = QLabel(f"<b>{row['balance']:,.2f} AFN</b>")
+            balance_lbl.setStyleSheet("color: #ef4444; font-size: 16px;")
+        elif row['balance'] < 0:
+            balance_lbl = QLabel(f"<b>Credit: {abs(row['balance']):,.2f} AFN</b>")
+            balance_lbl.setStyleSheet("color: #10b981; font-size: 16px;")
+        else:
+            balance_lbl = QLabel("<b>0.00 AFN</b>")
+            balance_lbl.setStyleSheet("color: #64748b; font-size: 16px;")
         data_layout.addRow("<b>Current Balance:</b>", balance_lbl)
         
         loan_status = "Enabled" if row['loan_enabled'] else "Disabled"

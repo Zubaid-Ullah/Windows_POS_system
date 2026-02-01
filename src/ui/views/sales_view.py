@@ -162,7 +162,7 @@ class SalesView(QWidget):
         self.bill_number_display = QLineEdit()
         self.bill_number_display.setReadOnly(True)
         self.bill_number_display.setFixedWidth(250)
-        self.bill_number_display.setStyleSheet("background: #f0f0f0; font-weight: bold; font-size: 14px; padding: 5px;")
+        self.bill_number_display.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
         self.load_next_bill_number()  # Load and display next bill number
         bill_layout.addWidget(self.bill_number_display)
         
@@ -184,6 +184,30 @@ class SalesView(QWidget):
         self.cart_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.cart_table.cellChanged.connect(self.handle_qty_edit)
         main_layout.addWidget(self.cart_table)
+        
+        # Price Check Stats Card (Hidden by default)
+        self.display_card = QFrame()
+        self.display_card.setObjectName("card")
+        self.display_card.setVisible(False)
+        self.display_card.setMinimumHeight(200)
+        card_layout = QVBoxLayout(self.display_card)
+        
+        self.product_name_lbl = QLabel("")
+        self.product_name_lbl.setStyleSheet("font-size: 24px; font-weight: bold;")
+        self.product_name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.price_lbl = QLabel("")
+        self.price_lbl.setStyleSheet("font-size: 32px; font-weight: 800; color: #059669;")
+        self.price_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.quantity_lbl = QLabel("")
+        self.quantity_lbl.setStyleSheet("font-size: 18px; color: #64748b;")
+        self.quantity_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        card_layout.addWidget(self.product_name_lbl)
+        card_layout.addWidget(self.price_lbl)
+        card_layout.addWidget(self.quantity_lbl)
+        main_layout.addWidget(self.display_card)
         
         # 3. Bottom Panel
         bottom_panel = QHBoxLayout()
@@ -257,6 +281,11 @@ class SalesView(QWidget):
         self.cart = []
         self.refresh_table()
         self.discount_input.clear()
+        self.cart_table.setVisible(False)
+        self.display_card.setVisible(True)
+        self.product_name_lbl.setText("Scan product for price check")
+        self.price_lbl.setText("")
+        self.quantity_lbl.setText("")
         
         # 3. Visual feedback
         self.search_input.setPlaceholderText("🔴 PRICE CHECK MODE (Press ESC to Resume Sale)")
@@ -274,6 +303,8 @@ class SalesView(QWidget):
             self.held_cart_data = None
         
         self.is_price_check_mode = False
+        self.cart_table.setVisible(True)
+        self.display_card.setVisible(False)
         self.refresh_table()
         self.reset_search_style()
         QMessageBox.information(self, "Resumed", "Sale transaction resumed.")
@@ -323,10 +354,29 @@ class SalesView(QWidget):
             product = self.barcode_cache[barcode]
             
             if self.is_price_check_mode:
-                QMessageBox.information(self, "Price Check", 
-                    f"Product: {product['name_en']}\n"
-                    f"Price: {product['sale_price']} AFN\n"
-                    f"Stock: {product.get('stock_qty') or 0}")
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT name_en, name_fa, sale_price FROM products WHERE barcode = ?", (barcode,))
+                    product_info = cursor.fetchone()
+                    
+                    if product_info:
+                        name = product_info['name_en'] or product_info['name_fa']
+                        price = product_info['sale_price']
+                        
+                        # Fetch stock
+                        cursor.execute("SELECT quantity FROM inventory WHERE product_id = ?", (product['id'],))
+                        s_row = cursor.fetchone()
+                        stock = s_row['quantity'] if s_row else 0
+                        
+                        self.product_name_lbl.setText(name)
+                        self.price_lbl.setText(f"{price:.2f} AFN")
+                        self.quantity_lbl.setText(f"In Stock: {int(stock)}")
+                        self.display_card.setStyleSheet("background-color: #e6f7ff; border: 2px solid #91d5ff; border-radius: 8px; padding: 15px;")
+                    else:
+                        self.product_name_lbl.setText("Product not found")
+                        self.price_lbl.setText("")
+                        self.quantity_lbl.setText("")
+                        self.display_card.setStyleSheet("background-color: #fff1f0; border: 2px solid #ffccc7; border-radius: 8px; padding: 15px;")
                 self.search_input.clear()
                 return
 
@@ -416,9 +466,23 @@ class SalesView(QWidget):
             self.cart_table.setItem(i, 1, QTableWidgetItem(item['barcode']))
             self.cart_table.setItem(i, 2, QTableWidgetItem(item['name']))
             self.cart_table.setItem(i, 3, QTableWidgetItem(lang_manager.localize_digits(f"{item['price']:.2f}")))
-            self.cart_table.setItem(i, 4, QTableWidgetItem(lang_manager.localize_digits(str(item['qty']))))
-            self.cart_table.setItem(i, 5, QTableWidgetItem(lang_manager.localize_digits(str(int(current_stock)))))  # Real-time stock
-            self.cart_table.setItem(i, 6, QTableWidgetItem(lang_manager.localize_digits(f"{(item['price'] * item['qty']):.2f}")))
+            qty_item = QTableWidgetItem(lang_manager.localize_digits(str(item['qty'])))
+            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.cart_table.setItem(i, 4, qty_item)
+            
+            stock_item = QTableWidgetItem(lang_manager.localize_digits(str(int(current_stock))))
+            stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if current_stock > 10:
+                stock_item.setForeground(Qt.GlobalColor.darkGreen)
+            elif current_stock > 5:
+                stock_item.setForeground(QColor(255, 140, 0))  # Orange
+            else:
+                stock_item.setForeground(Qt.GlobalColor.red)
+            self.cart_table.setItem(i, 5, stock_item)
+            
+            total_item = QTableWidgetItem(lang_manager.localize_digits(f"{(item['price'] * item['qty']):.2f}"))
+            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.cart_table.setItem(i, 6, total_item)
             
             remove_btn = QPushButton()
             remove_btn.setIcon(qta.icon("fa5s.times", color="white"))
@@ -434,6 +498,8 @@ class SalesView(QWidget):
             c_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.cart_table.setCellWidget(i, 7, container)
             
+        self.cart_table.resizeColumnsToContents()
+        self.cart_table.resizeRowsToContents()
         self.cart_table.blockSignals(False)
         self.update_totals()
 

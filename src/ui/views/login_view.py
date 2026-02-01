@@ -268,6 +268,8 @@ class LoginView(QWidget):
         if not self.check_contract(): return
         
         if Auth.login(username, password):
+            self.store_uname.clear()
+            self.store_pword.clear()
             self.login_success.emit("STORE", "user")
         else:
             QMessageBox.warning(self, "Error", "Invalid credentials")
@@ -281,6 +283,8 @@ class LoginView(QWidget):
         if not self.check_contract(): return
         
         if PharmacyAuth.login(username, password):
+            self.pharm_uname.clear()
+            self.pharm_pword.clear()
             self.login_success.emit("PHARMACY", "user")
         else:
             QMessageBox.warning(self, "Error", "Invalid credentials")
@@ -310,8 +314,12 @@ class LoginView(QWidget):
              
              if mode == "PHARMACY":
                   PharmacyAuth.set_current_user(mock_user)
+                  self.pharm_uname.clear()
+                  self.pharm_pword.clear()
              else:
                   Auth.set_current_user(mock_user)
+                  self.store_uname.clear()
+                  self.store_pword.clear()
                   
              self.login_success.emit(mode, "superadmin")
         else:
@@ -370,14 +378,21 @@ class LoginView(QWidget):
                     # If still expired after check
                     msg_box = QMessageBox(self)
                     msg_box.setWindowTitle("Contract Expired")
-                    msg_box.setIcon(QMessageBox.Icon.Critical)
+                    # msg_box.setIcon(QMessageBox.Icon.Critical)
                     msg_box.setText(
-                        "<h3 style='color: #ee5d50;'>Contract Completed</h3>"
-                        "<p>Thank you for using our service.</p>"
-                        "<p>Your contract has expired. To continue using the system, "
-                        "please renew your contract.</p>"
-                        "<p>For renewal inquiries, please contact our support team.</p>")
-                    
+                        "<h2 style='color:#ee5d50; margin-bottom:6px;'>🚫 Contract Completed</h2>"
+                        "<p style='margin-top:4px;'>Thank you for using our service 🙏</p>"
+                        "<p>Your contract has <b>expired</b>. To continue using the system, "
+                        "please <b>renew your contract</b>.</p>"
+                        "<p>If you have any questions regarding renewal, feel free to contact us.</p>"
+                        "<hr>"
+                        "<p><b>OR DEVELOPER</b></p>"
+                        "<p>📱 WhatsApp: <b>+93 796 776 436</b></p>"
+                        "<p>📞 Mobile: <b>+93 796 776 436</b></p>"
+                        "<p>📧 Email: <b>zubaidullah.khan1437@gmail.com</b></p>"
+                        "<p style='font-size:11px; color:#777;'>We’re happy to assist you anytime 🚀</p>"
+                    )
+                    msg_box.setTextFormat(Qt.TextFormat.RichText)
                     t = theme_manager.DARK if theme_manager.is_dark else theme_manager.QUICKMART
                     msg_box.setStyleSheet(f"QMessageBox {{ background-color: {t['bg_card']}; }} QLabel {{ color: {t['text_main']}; }}")
                     msg_box.exec()

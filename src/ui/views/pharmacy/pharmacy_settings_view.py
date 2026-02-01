@@ -106,26 +106,49 @@ class PharmacySettingsView(QWidget):
         layout.setSpacing(20)
 
         # Pharmacy Information Group
+        style = "border: 1px solid #e0e5f2;"
         company_group = QGroupBox("Pharmacy Information")
+        company_group.setStyleSheet(style)
         company_form = QFormLayout(company_group)
 
         self.company_name = QLineEdit()
+        self.company_name.setStyleSheet(style)
+        self.company_name.setMaximumHeight(300)
         self.company_name.setPlaceholderText("Enter pharmacy name")
 
         self.company_address = QTextEdit()
-        self.company_address.setMaximumHeight(80)
+        self.company_address.setStyleSheet(style)
+        self.company_address.setMaximumHeight(300)
         self.company_address.setPlaceholderText("Enter pharmacy address")
 
         self.company_phone = QLineEdit()
+        self.company_phone.setStyleSheet(style)
+        self.company_phone.setMaximumHeight(300)
         self.company_phone.setPlaceholderText("Enter phone number")
 
         self.company_email = QLineEdit()
+        self.company_email.setStyleSheet(style)
+        self.company_email.setMaximumHeight(300)
         self.company_email.setPlaceholderText("Enter email address")
+
+        self.walking_receipt_note = QTextEdit()
+        self.walking_receipt_note.setStyleSheet(style)
+        self.walking_receipt_note.setMinimumWidth(300)
+        self.walking_receipt_note.setMaximumHeight(80)
+        self.walking_receipt_note.setPlaceholderText("Message for Walking Customers (e.g., Thank you for your visit!)")
+
+        self.loan_receipt_note = QTextEdit()
+        self.loan_receipt_note.setStyleSheet(style)
+        self.loan_receipt_note.setMinimumWidth(300)
+        self.loan_receipt_note.setMaximumHeight(150)
+        self.loan_receipt_note.setPlaceholderText("Message for Trusty/Loan Customers (e.g., Please pay soon...)")
 
         company_form.addRow("Pharmacy Name:", self.company_name)
         company_form.addRow("Address:", self.company_address)
         company_form.addRow("Phone:", self.company_phone)
         company_form.addRow("Email:", self.company_email)
+        company_form.addRow("Walking Receipt Note:", self.walking_receipt_note)
+        company_form.addRow("Loan/Trusty Receipt Note:", self.loan_receipt_note)
 
         layout.addWidget(company_group)
 
@@ -137,6 +160,7 @@ class PharmacySettingsView(QWidget):
         whatsapp_form = QFormLayout()
         self.whatsapp_number = QLineEdit()
         self.whatsapp_number.setPlaceholderText("Enter WhatsApp number (e.g., +1234567890)")
+        self.whatsapp_number.setMinimumWidth(300)
         whatsapp_form.addRow("WhatsApp Number:", self.whatsapp_number)
 
         whatsapp_layout.addLayout(whatsapp_form)
@@ -272,11 +296,19 @@ class PharmacySettingsView(QWidget):
                 except Exception as e:
                     print(f"Error loading pharmacy_info: {e}")
 
-                # Load WhatsApp from app_settings
+                # Load WhatsApp and Receipt Notes from app_settings
                 try:
-                    row = conn.execute("SELECT value FROM app_settings WHERE key='whatsapp_number'").fetchone()
-                    if row:
-                        self.whatsapp_number.setText(row['value'] or "")
+                    rows = conn.execute("SELECT key, value FROM app_settings WHERE key IN ('whatsapp_number', 'walking_receipt_note', 'loan_receipt_note', 'receipt_note')").fetchall()
+                    for row in rows:
+                        if row['key'] == 'whatsapp_number':
+                            self.whatsapp_number.setText(row['value'] or "")
+                        elif row['key'] == 'walking_receipt_note':
+                            self.walking_receipt_note.setPlainText(row['value'] or "")
+                        elif row['key'] == 'loan_receipt_note':
+                            self.loan_receipt_note.setPlainText(row['value'] or "")
+                        elif row['key'] == 'receipt_note' and not self.walking_receipt_note.toPlainText():
+                             # Migrate old single note to walking note
+                             self.walking_receipt_note.setPlainText(row['value'] or "")
                 except: pass
 
         except Exception as e:
@@ -297,9 +329,13 @@ class PharmacySettingsView(QWidget):
                     self.company_email.text().strip()
                 ))
                 
-                # Save WhatsApp to app_settings
+                # Save WhatsApp and Receipt Notes to app_settings
                 conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('whatsapp_number', ?)",
                             (self.whatsapp_number.text().strip(),))
+                conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('walking_receipt_note', ?)",
+                            (self.walking_receipt_note.toPlainText().strip(),))
+                conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('loan_receipt_note', ?)",
+                            (self.loan_receipt_note.toPlainText().strip(),))
                 
                 conn.commit()
 

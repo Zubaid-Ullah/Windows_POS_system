@@ -6,4 +6,7 @@ data/kyc/*.jpg
 data/bills/*.txt
 test_out_src/
 test_out/
-Keys/
+keys/
+platform/windows/windows_exe_dist/
+platform/windows/windows_build_temp/
+platform/windows/windows_secured_dist/

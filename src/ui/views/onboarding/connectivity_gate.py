@@ -106,6 +106,7 @@ class ConnectivityGateWindow(QWidget):
         print(f"[CONNECTIVITY_GATE] Emitting connection_resolved signal: online={online}")
         self.connection_resolved.emit(online)
         print("[CONNECTIVITY_GATE] Signal emitted successfully")
+        self.close()
 
     def go_offline(self):
         self.connection_resolved.emit(False)

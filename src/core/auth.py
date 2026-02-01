@@ -128,13 +128,13 @@ class Auth:
         permissions = {
             'SuperAdmin': ['*'], 
             'Admin': ['sales', 'inventory', 'customers', 'suppliers', 'loans', 'reports', 'finance', 'settings', 'low_stock', 'price_check', 'returns', 'pharmacy', 
-                      'pharmacy_dashboard', 'pharmacy_finance', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_suppliers', 'pharmacy_loans', 'pharmacy_reports', 'pharmacy_price_check', 'pharmacy_returns', 'pharmacy_users'],
+                      'pharmacy_dashboard', 'pharmacy_finance', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_suppliers', 'pharmacy_loans', 'pharmacy_reports', 'pharmacy_price_check', 'pharmacy_returns', 'pharmacy_users', 'pharmacy_settings'],
             'Manager': ['reports', 'inventory', 'customers', 'suppliers', 'loans', 'low_stock', 'price_check', 'returns', 'pharmacy',
                         'pharmacy_dashboard', 'pharmacy_finance', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_suppliers', 'pharmacy_loans', 'pharmacy_reports', 'pharmacy_price_check', 'pharmacy_returns', 'pharmacy_users'],
             'Salesman': ['sales', 'low_stock', 'price_check', 'returns', 'pharmacy',
                          'pharmacy_dashboard', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_reports', 'pharmacy_returns', 'pharmacy_price_check'],
             'PriceChecker': ['price_check'],
-            'Pharmacy Manager': ['pharmacy_dashboard', 'pharmacy_finance', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_suppliers', 'pharmacy_loans', 'pharmacy_reports', 'pharmacy_price_check', 'pharmacy_returns', 'pharmacy_users'],
+            'Pharmacy Manager': ['pharmacy_dashboard', 'pharmacy_finance', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_suppliers', 'pharmacy_loans', 'pharmacy_reports', 'pharmacy_price_check', 'pharmacy_returns', 'pharmacy_users', 'pharmacy_settings'],
             'Pharmacist': ['pharmacy_dashboard', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_price_check', 'pharmacy_returns']
         }
         return permissions.get(role_name, [])

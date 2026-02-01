@@ -86,7 +86,7 @@ class CredentialsView(QWidget):
             "System ID", "PC Name", "Company", "Status", "Expiry", "Last Check-in", "Actions"
         ])
         style_table(self.table, variant="premium")
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         layout.addWidget(self.table)
 
         self.load_local_info()
@@ -152,6 +152,9 @@ class CredentialsView(QWidget):
                 btn_lay.addWidget(toggle_btn)
                 
                 self.table.setCellWidget(i, 6, btn_widget)
+
+            self.table.resizeColumnsToContents()
+            self.table.resizeRowsToContents()
 
         except Exception as e:
             print(f"Failed to fetch installations: {e}")

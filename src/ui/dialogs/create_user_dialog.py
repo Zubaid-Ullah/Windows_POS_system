@@ -108,6 +108,7 @@ class CreateUserDialog(QDialog):
             ("reports", "Reports", "View sales reports"),
             ("suppliers", "Suppliers", "Manage suppliers"),
             ("pharmacy", "Pharmacy", "Access pharmacy module"),
+            ("pharmacy_settings", "Pharmacy Settings", "Manage pharmacy specific configurations"),
             ("settings", "Settings", "System settings"),
             ("price_check", "Price Check", "Price checking terminal"),
             ("returns", "Returns", "Process returns"),

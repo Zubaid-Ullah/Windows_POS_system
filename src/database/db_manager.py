@@ -346,20 +346,30 @@ class DatabaseManager:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS pharmacy_returns (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, original_sale_id INTEGER, refund_amount REAL,
+                    refund_type TEXT DEFAULT 'ACCOUNT',
                     reason TEXT, user_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (original_sale_id) REFERENCES pharmacy_sales(id)
                 )
             ''')
+            # Migration: Add refund_type to pharmacy_returns if missing
+            try:
+                cursor.execute("ALTER TABLE pharmacy_returns ADD COLUMN refund_type TEXT DEFAULT 'ACCOUNT'")
+            except: pass
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS pharmacy_return_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, return_id INTEGER, product_id INTEGER,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, return_id INTEGER, 
+                    sale_item_id INTEGER, product_id INTEGER,
                     quantity REAL NOT NULL, unit_price REAL NOT NULL, action TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (return_id) REFERENCES pharmacy_returns(id),
                     FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
                 )
             ''')
+            # Migration: Add sale_item_id to pharmacy_return_items if missing
+            try:
+                cursor.execute("ALTER TABLE pharmacy_return_items ADD COLUMN sale_item_id INTEGER")
+            except: pass
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS pharmacy_month_close (

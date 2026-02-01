@@ -84,7 +84,7 @@ class LocalConfig:
         if os.path.exists(self.config_path):
             try:
                 content = ""
-                with open(self.config_path, "r") as f:
+                with open(self.config_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 
                 if "--- DATA ---" in content:
@@ -104,14 +104,14 @@ class LocalConfig:
             # Read requirements part
             requirements = ""
             if os.path.exists(self.config_path):
-                with open(self.config_path, "r") as f:
+                with open(self.config_path, "r", encoding="utf-8") as f:
                     content = f.read()
                     if "--- DATA ---" in content:
                         requirements = content.split("--- DATA ---")[0]
                     else:
                         requirements = content
 
-            with open(self.config_path, "w") as f:
+            with open(self.config_path, "w", encoding="utf-8") as f:
                 f.write(requirements.strip())
                 f.write("\n\n--- DATA ---\n")
                 for k, v in self._data.items():

@@ -101,7 +101,7 @@ if __name__ == "__main__":
         for i in range(0, len(protect_list), BATCH_SIZE):
             run_batch((i // BATCH_SIZE) + 1, protect_list[i : i + BATCH_SIZE])
             
-        for folder in ["Logo", "data", "locale", "credentials", "Keys", "Backup"]:
+        for folder in ["Logo", "data", "locale", "credentials", "Keys", "Backup", "src"]:
             src, dst = SOURCE_DIR / folder, DIST_DIR / folder
             if src.exists(): shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.py", "*.pyc"))
         for f in [".env", "README.md", "requirements.txt", "docker-compose.yml"]:

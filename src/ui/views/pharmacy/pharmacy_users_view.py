@@ -105,7 +105,8 @@ class PharmacyUsersView(QWidget):
             ("pharmacy_finance", "Pharmacy Finance"),
             ("pharmacy_price_check", "Medicine Price Check"),
             ("pharmacy_returns", "Returns & Replacements"),
-            ("pharmacy_users", "Pharmacy User Management")
+            ("pharmacy_users", "Pharmacy User Management"),
+            ("pharmacy_settings", "Pharmacy Settings")
         ]
         
         self.feature_checkboxes = {}

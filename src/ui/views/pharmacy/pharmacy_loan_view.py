@@ -55,7 +55,15 @@ class PharmacyLoanView(QWidget):
                     self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
                     self.table.setItem(i, 1, QTableWidgetItem(f"{row['customer_name']} ({row['phone']})"))
                     self.table.setItem(i, 2, QTableWidgetItem(f"{row['total_amount']:,.2f} AFN"))
-                    self.table.setItem(i, 3, QTableWidgetItem(f"{row['balance']:,.2f} AFN"))
+                    
+                    bal_item = QTableWidgetItem(f"{row['balance']:,.2f} AFN")
+                    if row['balance'] < 0:
+                        bal_item.setForeground(Qt.GlobalColor.darkGreen)
+                        bal_item.setToolTip("Customer has credit balance")
+                    elif row['balance'] > 0:
+                        bal_item.setForeground(Qt.GlobalColor.red)
+                    
+                    self.table.setItem(i, 3, bal_item)
                     self.table.setItem(i, 4, QTableWidgetItem(row['status']))
                     
                     actions = QWidget()
@@ -152,7 +160,7 @@ class PharmacyLoanView(QWidget):
         
         amount, ok = QInputDialog.getDouble(self, "Receive Payment", 
                                             f"Enter amount received from {loan_row['customer_name']}:", 
-                                            loan_row['balance'], 0, loan_row['balance'], 2)
+                                            loan_row['balance'] if loan_row['balance'] > 0 else 0, 0, 1000000, 2)
         if ok and amount > 0:
             try:
                 with db_manager.get_pharmacy_connection() as conn:

@@ -338,19 +338,32 @@ class PharmacyFinanceView(QWidget):
         grid = QGridLayout()
         grid.setSpacing(20)
         
-        self.total_sale_card = self.create_summary_card("Gross Sales", "0.00 AFN", "#3b82f6")
-        self.total_cost_card = self.create_summary_card("Cost of Goods", "0.00 AFN", "#64748b")
+        # Row 1: Sales Breakdown
+        self.gross_sale_card = self.create_summary_card("Gross Sales", "0.00 AFN", "#3b82f6")
+        self.ret_sale_card = self.create_summary_card("Returns Amount", "0.00 AFN", "#ef4444")
+        self.net_sale_card = self.create_summary_card("Net Sales", "0.00 AFN", "#2563eb")
+        
+        # Row 2: COGS Breakdown
+        self.gross_cost_card = self.create_summary_card("Gross COGS", "0.00 AFN", "#64748b")
+        self.ret_cost_card = self.create_summary_card("Returns COGS", "0.00 AFN", "#94a3b8")
+        self.net_cost_card = self.create_summary_card("Net COGS", "0.00 AFN", "#475569")
+        
+        # Row 3: Profit & Ops
         self.net_profit_card = self.create_summary_card("Trading Profit", "0.00 AFN", "#10b981")
-        self.total_salaries_card = self.create_summary_card("Total Salaries", "0.00 AFN", "#f59e0b")
-        self.total_expenses_card = self.create_summary_card("Operational Expenses", "0.00 AFN", "#f43f5e")
+        self.total_exp_card = self.create_summary_card("Total OpEx", "0.00 AFN", "#f59e0b")
         self.final_net_card = self.create_summary_card("Net Monthly Profit", "0.00 AFN", "#8b5cf6")
         
-        grid.addWidget(self.total_sale_card, 0, 0)
-        grid.addWidget(self.total_cost_card, 0, 1)
-        grid.addWidget(self.net_profit_card, 0, 2)
-        grid.addWidget(self.total_salaries_card, 1, 0)
-        grid.addWidget(self.total_expenses_card, 1, 1)
-        grid.addWidget(self.final_net_card, 1, 2)
+        grid.addWidget(self.gross_sale_card, 0, 0)
+        grid.addWidget(self.ret_sale_card, 0, 1)
+        grid.addWidget(self.net_sale_card, 0, 2)
+        
+        grid.addWidget(self.gross_cost_card, 1, 0)
+        grid.addWidget(self.ret_cost_card, 1, 1)
+        grid.addWidget(self.net_cost_card, 1, 2)
+        
+        grid.addWidget(self.net_profit_card, 2, 0)
+        grid.addWidget(self.total_exp_card, 2, 1)
+        grid.addWidget(self.final_net_card, 2, 2)
         
         layout.addLayout(grid)
         layout.addStretch()
@@ -426,11 +439,16 @@ class PharmacyFinanceView(QWidget):
                 
                 final_net = trading_profit - total_salaries - total_expenses
                 
-                self.total_sale_card.value_lbl.setText(f"{net_sales:,.2f} AFN")
-                self.total_cost_card.value_lbl.setText(f"{net_cost:,.2f} AFN")
+                self.gross_sale_card.value_lbl.setText(f"{gross_sales:,.2f} AFN")
+                self.ret_sale_card.value_lbl.setText(f"{returns_total:,.2f} AFN")
+                self.net_sale_card.value_lbl.setText(f"{net_sales:,.2f} AFN")
+                
+                self.gross_cost_card.value_lbl.setText(f"{gross_cost:,.2f} AFN")
+                self.ret_cost_card.value_lbl.setText(f"{return_cost:,.2f} AFN")
+                self.net_cost_card.value_lbl.setText(f"{net_cost:,.2f} AFN")
+                
                 self.net_profit_card.value_lbl.setText(f"{trading_profit:,.2f} AFN")
-                self.total_salaries_card.value_lbl.setText(f"{total_salaries:,.2f} AFN")
-                self.total_expenses_card.value_lbl.setText(f"{total_expenses:,.2f} AFN")
+                self.total_exp_card.value_lbl.setText(f"{(total_salaries + total_expenses):,.2f} AFN")
                 self.final_net_card.value_lbl.setText(f"{final_net:,.2f} AFN")
                 
                 if final_net < 0:

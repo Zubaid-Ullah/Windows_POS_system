@@ -1,4 +1,6 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, 
+import os
+
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
                              QPushButton, QLabel, QFrame, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QDialog, QFormLayout, QComboBox, QMessageBox, QInputDialog, QTextEdit)
 from PyQt6.QtCore import Qt
@@ -91,6 +93,7 @@ class CustomerDialog(QDialog):
         loan_form.setSpacing(12)
 
         self.loan_enabled = QComboBox()
+        self.loan_enabled.setMinimumWidth(100)
         self.loan_enabled.addItems(["No", "Yes"])
         self.loan_enabled.setStyleSheet("padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;")
 

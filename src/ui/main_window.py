@@ -14,7 +14,6 @@ from src.ui.views.loan_view import LoanView
 from src.ui.views.stock_alert_view import StockAlertView
 from src.ui.views.price_check_view import PriceCheckView
 from src.ui.views.returns_view import ReturnsView
-from src.ui.views.returns_view import ReturnsView
 from src.ui.views.pharmacy.pharmacy_hub import PharmacyHub
 from src.ui.theme_manager import theme_manager
 from src.core.localization import lang_manager

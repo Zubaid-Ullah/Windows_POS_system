@@ -8,13 +8,13 @@ LOG_PATH = os.path.expanduser("~/Desktop/AfexPOS_startup.log")
 
 def log_msg(msg):
     try:
-        with open(LOG_PATH, "a") as f:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(f"{datetime.now().isoformat()} - {msg}\n")
     except: pass
 
 try:
     # Redirect print and errors to file to prevent crash on Finder launch
-    log_file = open(LOG_PATH, "w", buffering=1) # Clear log on start
+    log_file = open(LOG_PATH, "w", buffering=1, encoding="utf-8") # Clear log on start
     log_file.write("--- AfexPOS GUI Startup Session ---\n")
     log_file.write(f"Executable: {sys.executable}\n")
     log_file.write(f"CWD: {os.getcwd()}\n")
@@ -78,12 +78,12 @@ def main():
             if app_login_window: app_login_window.close()
             if role != "superadmin":
                 if not check_contract_validity():
-                    print("⚠️ Contract expired. Auto-login disabled.")
+                    print("[WARNING] Contract expired. Auto-login disabled.")
                     show_app_login()
                     return
                 
             nonlocal main_window
-            print("🚀 Launching Main POS Interface...")
+            print("[INFO] Launching Main POS Interface...")
             main_window = MainWindow()
             main_window.show()
 
@@ -122,7 +122,7 @@ def main():
                         return False
                 return True
             except Exception as e:
-                print(f"⚠️ DB Integrity Check Failed: {e}")
+                print(f"[WARNING] DB Integrity Check Failed: {e}")
                 return False
 
         def on_internet_gate_resolved(online):
@@ -283,7 +283,7 @@ def main():
                 onboarding_window.show()
                 gate.close()
             except Exception as e:
-                print(f"❌ Error opening registration window: {e}")
+                print(f"[ERROR] Error opening registration window: {e}")
                 start_main_app()
 
         def debug_gate_resolved(online):

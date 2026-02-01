@@ -357,14 +357,14 @@ class CreateAccountWindow(QWidget):
             self.installer_user.clear()
             if users:
                 self.installer_user.addItems(users)
-                print(f"✅ Loaded {len(users)} installers strictly from Cloud")
+                print(f"[SUCCESS] Loaded {len(users)} installers strictly from Cloud")
                 self.installer_user.setEnabled(True)
             else:
                 self.installer_user.addItem("❌ No online users found")
                 self.installer_user.setEnabled(False)
                 QMessageBox.critical(self, "Cloud Data Missing", "The authorized persons table is empty in the cloud. Registration cannot proceed.\n\nCheck debug_connectivity.txt in the app folder for details (RLS/Table errors).")
         except Exception as e:
-            print(f"❌ Cloud Error: {e}")
+            print(f"[ERROR] Cloud Error: {e}")
             self.installer_user.addItem("❌ Cloud connection failed")
             self.installer_user.setEnabled(False)
             QMessageBox.critical(self, "Connection Error", "Could not connect to the cloud authorization server.")
@@ -425,7 +425,7 @@ class CreateAccountWindow(QWidget):
                 return "UNSUPPORTED-OS"
 
         except Exception as e:
-            print(f"⚠️ Serial Key Error: {e}")
+            print(f"[WARNING] Serial Key Error: {e}")
             return "ERROR-FETCH-SERIAL"
 
     def finish_creation(self):
@@ -462,7 +462,7 @@ class CreateAccountWindow(QWidget):
         self.next_btn.setEnabled(False)
         self.back_btn.setEnabled(False)
         
-        print("🚀 Registering system and client online...")
+        print("[INFO] Registering system and client online...")
         # 1. Register Installation
         if supabase_manager.upsert_installation(payload):
             # 1b. Save company details to local database
@@ -487,7 +487,7 @@ class CreateAccountWindow(QWidget):
                         except: pass
                     conn.commit()
             except Exception as e:
-                print(f"⚠️ Failed to sync to local DB: {e}")
+                print(f"[WARNING] Failed to sync to local DB: {e}")
 
             # 1c. Generate and save QR Code
             try:
@@ -501,10 +501,10 @@ class CreateAccountWindow(QWidget):
                 if not os.path.exists(qr_dir): os.makedirs(qr_dir)
                 qr_path = os.path.join(qr_dir, "company_qr.png")
                 img.save(qr_path)
-                print(f"✅ QR Code generated at: {qr_path}")
+                print(f"[SUCCESS] QR Code generated at: {qr_path}")
                 local_config.set("company_qr_path", qr_path)
             except Exception as e:
-                print(f"⚠️ Failed to generate QR Code: {e}")
+                print(f"[WARNING] Failed to generate QR Code: {e}")
 
             # 2. Register Client Credentials
             if supabase_manager.register_client(self.client_user.text(), self.client_pass.text(), sid):
@@ -551,7 +551,7 @@ class CreateAccountWindow(QWidget):
                 shortcut.WorkingDirectory = os.path.dirname(exe_path)
                 shortcut.IconLocation = exe_path
                 shortcut.save()
-                print("✅ Shortcut created via WScript")
+                print("[SUCCESS] Shortcut created via WScript")
 
             # Fallback for Windows if win32com not available (using temporary VBS)
             elif sys.platform == "win32": # Redundant check but logic flow
@@ -562,7 +562,7 @@ class CreateAccountWindow(QWidget):
             if sys.platform == "win32":
                 self._create_shortcut_vbs(sys.argv[0])
         except Exception as e:
-            print(f"⚠️ Failed to create shortcut: {e}")
+            print(f"[WARNING] Failed to create shortcut: {e}")
 
     def _create_shortcut_vbs(self, exe_path):
         try:
@@ -583,6 +583,6 @@ class CreateAccountWindow(QWidget):
             
             subprocess.call(["cscript", "//Nologo", vbs_path], shell=True)
             os.remove(vbs_path)
-            print("✅ Shortcut created via embedded VBS")
+            print("[SUCCESS] Shortcut created via embedded VBS")
         except Exception as e:
-            print(f"❌ VBS Shortcut Error: {e}")
+            print(f"[ERROR] VBS Shortcut Error: {e}")

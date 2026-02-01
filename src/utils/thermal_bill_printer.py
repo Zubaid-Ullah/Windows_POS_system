@@ -69,11 +69,21 @@ class ThermalBillPrinter:
                         except:
                             pass
 
-                # Fetch WhatsApp number (common in app_settings for both)
+                # Fetch WhatsApp and Receipt Notes (common in app_settings for both)
                 try:
-                    row = conn.execute("SELECT value FROM app_settings WHERE key='whatsapp_number'").fetchone()
-                    if row and row['value']:
-                        info['whatsapp'] = row['value']
+                    rows = conn.execute("""
+                        SELECT key, value FROM app_settings 
+                        WHERE key IN ('whatsapp_number', 'walking_receipt_note', 'loan_receipt_note', 'receipt_note')
+                    """).fetchall()
+                    for row in rows:
+                        if row['key'] == 'whatsapp_number':
+                            info['whatsapp'] = row['value']
+                        elif row['key'] == 'walking_receipt_note':
+                            info['walking_note'] = row['value']
+                        elif row['key'] == 'loan_receipt_note':
+                            info['loan_note'] = row['value']
+                        elif row['key'] == 'receipt_note':
+                            info['receipt_note'] = row['value']
                 except: pass
 
                 return info
@@ -88,8 +98,26 @@ class ThermalBillPrinter:
     
     def center_text(self, text):
         """Center text based on thermal printer width"""
+        if len(text) >= self.width:
+            return text[:self.width]
         padding = (self.width - len(text)) // 2
         return ' ' * padding + text
+    
+    def center_wrapped_text(self, text):
+        """Wrap and center text blocks"""
+        lines = []
+        words = text.split()
+        cur = ""
+        for w in words:
+            if len(cur) + (1 if cur else 0) + len(w) <= self.width:
+                cur = f"{cur} {w}".strip()
+            else:
+                if cur:
+                    lines.append(self.center_text(cur))
+                cur = w
+        if cur:
+            lines.append(self.center_text(cur))
+        return "\n".join(lines)
     
     def separator(self, char='-'):
         """Create separator line"""
@@ -271,8 +299,8 @@ class ThermalBillPrinter:
         bill_text += self.separator() + "\n"
         bill_text += self.separator("-") + "\n"
         
-        bill_text += self.center_text(company_info['name']) + "\n"
-        bill_text += self.center_text(company_info['address']) + "\n"
+        bill_text += self.center_wrapped_text(company_info['name']) + "\n"
+        bill_text += self.center_wrapped_text(company_info['address']) + "\n"
         bill_text += self.center_text(f"Phone: {company_info['phone']}") + "\n"
         bill_text += self.center_text(f"Email: {company_info['email']}") + "\n"
         bill_text += self.separator() + "\n"
@@ -316,6 +344,42 @@ class ThermalBillPrinter:
             qr_content = f"https://wa.me/{clean_num}"
         
         bill_text += self.generate_qr_code(qr_content) + "\n"
+        
+        # Determine which note to use
+        custom_note = None
+        if is_credit:
+            custom_note = company_info.get('loan_note')
+        else:
+            custom_note = company_info.get('walking_note') or company_info.get('receipt_note')
+
+        # Add Custom Receipt Note if exists
+        if custom_note:
+            bill_text += self.separator("-") + "\n"
+            note = custom_note
+            # Simple wrapping
+            while len(note) > self.width:
+                split_idx = note[:self.width].rfind(' ')
+                if split_idx == -1: split_idx = self.width
+                bill_text += self.center_text(note[:split_idx].strip()) + "\n"
+                note = note[split_idx:].strip()
+            bill_text += self.center_text(note) + "\n"
+            bill_text += self.separator("-") + "\n"
+
+        # Special msg for credit/loan customers
+        if is_credit:
+            bill_text += "\n" + self.center_text("!!! PAYMENT REQUEST !!!") + "\n"
+            msg = "We request you to pay the outstanding amount soon, as it relates to an employee's salary."
+            # Wrap msg
+            temp_msg = msg
+            while len(temp_msg) > self.width:
+                split_idx = temp_msg[:self.width].rfind(' ')
+                if split_idx == -1: split_idx = self.width
+                bill_text += temp_msg[:split_idx].strip() + "\n"
+                temp_msg = temp_msg[split_idx:].strip()
+            bill_text += temp_msg + "\n"
+            bill_text += f"\nLoan Amount: {net_amount:,.2f} AFN\n"
+            bill_text += self.separator("-") + "\n"
+
         bill_text += self.center_text("Have a Nice Time") + "\n"
         bill_text += self.center_text("Thanks for Your Kind Visit") + "\n"
         bill_text += "\n\n\n\n" # Feed paper before cut

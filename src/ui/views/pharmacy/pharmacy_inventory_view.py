@@ -111,6 +111,9 @@ class PharmacyInventoryView(QWidget):
                 act_layout.addWidget(edit_btn)
                 act_layout.addWidget(delete_btn)
                 self.table.setCellWidget(i, 12, actions)
+            
+            self.table.resizeColumnsToContents()
+            self.table.resizeRowsToContents()
 
     def handle_barcode_scan(self):
         barcode = self.search_input.text().strip()
@@ -139,7 +142,12 @@ class PharmacyInventoryView(QWidget):
             self.load_inventory()
 
     def delete_product(self, product_id):
-        confirm = QMessageBox.question(self, "Confirm Delete", "Are you sure you want to delete this product?")
+        confirm = QMessageBox.question(
+            self, "Confirm Delete", 
+            "Are you sure you want to delete this product?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
         if confirm == QMessageBox.StandardButton.Yes:
             try:
                 with db_manager.get_pharmacy_connection() as conn:

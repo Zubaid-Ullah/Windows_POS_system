@@ -28,9 +28,9 @@ class PharmacyDashboardCard(QFrame):
         
         # Animation
         self.icon_anim = QVariantAnimation()
-        self.icon_anim.setDuration(300)
+        self.icon_anim.setDuration(400)
         self.icon_anim.setStartValue(40)
-        self.icon_anim.setEndValue(55)
+        self.icon_anim.setEndValue(65)
         self.icon_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.icon_anim.valueChanged.connect(self.update_icon)
         self.update_icon(40)
