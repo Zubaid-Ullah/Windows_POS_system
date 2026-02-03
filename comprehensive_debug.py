@@ -22,7 +22,7 @@ def test_supabase_connection():
     SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://gwmtlvquhlqtkyynuexf.supabase.co").rstrip("/")
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or os.environ.get("SERVICE_ROLE_KEY")
 
-    print(f"Supabase URL: {SUPABASE_URL}")
+    print(f"Supabase URL: [HIDDEN] (Cloud URL)")
     print(f"Key present: {'✅ Yes' if SUPABASE_KEY else '❌ No'}")
     print(f"Key starts with: {SUPABASE_KEY[:20] + '...' if SUPABASE_KEY else 'N/A'}")
     print()
@@ -41,13 +41,14 @@ def test_supabase_connection():
     try:
         headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
         url = f"{SUPABASE_URL}/rest/v1/"
-        print(f"   URL: {url}")
+        print(f"   URL: [HIDDEN] (Cloud endpoint)")
         response = requests.get(url, headers=headers, timeout=10)
         print(f"   ✅ Supabase reachable: {response.status_code}")
         if response.status_code != 200:
             print(f"   Response: {response.text}")
     except Exception as e:
-        print(f"   ❌ Supabase unreachable: {e}")
+        error_msg = str(e).replace("gwmtlvquhlqtkyynuexf.supabase.co", "[HIDDEN-URL]")
+        print(f"   ❌ Supabase unreachable: {error_msg}")
         return
 
     # Test table access
@@ -66,7 +67,7 @@ def test_supabase_connection():
             url = f"{SUPABASE_URL}/rest/v1/{table}"
             params = {"select": "*", "limit": "5"}
 
-            print(f"      URL: {url}")
+            print(f"      URL: [HIDDEN] (Cloud table {table})")
             print(f"      Params: {params}")
 
             response = requests.get(url, headers=headers, params=params, timeout=10)
@@ -83,7 +84,8 @@ def test_supabase_connection():
                 print(f"      ❌ Error: {response.text}")
 
         except Exception as e:
-            print(f"      ❌ Exception: {e}")
+            error_msg = str(e).replace("gwmtlvquhlqtkyynuexf.supabase.co", "[HIDDEN-URL]")
+            print(f"      ❌ Exception: {error_msg}")
 
     # Test specific authorized_persons query
     print("\n4️⃣ Testing authorized_persons Query...")
@@ -92,7 +94,7 @@ def test_supabase_connection():
         url = f"{SUPABASE_URL}/rest/v1/authorized_persons"
         params = {"select": "names", "order": "names.asc"}
 
-        print(f"   URL: {url}")
+        print(f"   URL: [HIDDEN] (Cloud auth query)")
         print(f"   Params: {params}")
 
         response = requests.get(url, headers=headers, params=params, timeout=10)
@@ -111,7 +113,8 @@ def test_supabase_connection():
             print(f"   ❌ Error response: {response.text}")
 
     except Exception as e:
-        print(f"   ❌ Exception: {e}")
+        error_msg = str(e).replace("gwmtlvquhlqtkyynuexf.supabase.co", "[HIDDEN-URL]")
+        print(f"   ❌ Exception: {error_msg}")
 
     # Test with manager class
     print("\n5️⃣ Testing with SupabaseManager Class...")
@@ -129,7 +132,8 @@ def test_supabase_connection():
         print(f"   Count: {len(installers)}")
 
     except Exception as e:
-        print(f"   ❌ Manager test failed: {e}")
+        error_msg = str(e).replace("gwmtlvquhlqtkyynuexf.supabase.co", "[HIDDEN-URL]")
+        print(f"   ❌ Manager test failed: {error_msg}")
 
     print("\n" + "=" * 60)
     print("DEBUG COMPLETE")

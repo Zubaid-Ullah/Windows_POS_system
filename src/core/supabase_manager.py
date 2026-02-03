@@ -74,7 +74,17 @@ class SupabaseManager:
         
         # DEBUG: Log key status (safe, partial)
         k_status = f"{self.key[:5]}...{self.key[-5:]}" if self.key and len(self.key) > 10 else "None/Short"
-        self._log(f"Supabase Init: URL={self.url}, Key={k_status}")
+        # Mask URL for security
+        self._log(f"Supabase Init: URL=[HIDDEN], Key={k_status}")
+
+    def _sanitize(self, msg: Any) -> str:
+        """Hide sensitive URLs in log/output messages"""
+        s_msg = str(msg)
+        if self.url:
+            s_msg = s_msg.replace(self.url, "[HIDDEN-URL]")
+        # Also catch the known hardcoded URL just in case self.url is not set yet
+        s_msg = s_msg.replace("gwmtlvquhlqtkyynuexf.supabase.co", "[HIDDEN-URL]")
+        return s_msg
 
     def _log_init(self, msg):
         # Quick helper to log before full init
@@ -89,8 +99,9 @@ class SupabaseManager:
             else:
                 base = os.path.dirname(os.path.abspath(__file__))
             
+            sanitized_msg = self._sanitize(msg)
             with open(os.path.join(base, "debug_connectivity.txt"), "a", encoding='utf-8') as f:
-                f.write(f"[{datetime.now().time()}] {msg}\n")
+                f.write(f"[{datetime.now().time()}] {sanitized_msg}\n")
         except: pass
 
     def _headers(self) -> Dict[str, str]:
@@ -178,7 +189,7 @@ class SupabaseManager:
                 if not self.url:
                     self._log("⚠️ Supabase URL is empty, skipping ping.")
                 else:
-                    self._log(f"Pinging Supabase at {self.url}...")
+                    self._log("Pinging Supabase (Cloud URL)...")
                     r = requests.get(f"{self.url}/rest/v1/", headers={"apikey": self.key}, timeout=5)
                     if r.status_code in (200, 401):
                         self._log("  -> Supabase Success")
@@ -210,7 +221,7 @@ class SupabaseManager:
             # Try standard spelling 'authorized_persons'
             params = {"select": "names", "order": "names.asc"}
             url = self._url(self.USERS_TABLE)
-            self._log(f"GET {url}")
+            self._log(f"GET [HIDDEN]/{self.USERS_TABLE}")
             
             r = requests.get(url, params=params, headers=self._headers(), timeout=10)
             self._log(f"  -> Status: {r.status_code}")
@@ -284,10 +295,10 @@ class SupabaseManager:
             
             if r.status_code in (200, 201):
                 return True
-            print(f"❌ register_client failed: {r.status_code} - {r.text}")
+            print(self._sanitize(f"❌ register_client failed: {r.status_code} - {r.text}"))
             return False
         except Exception as e:
-            print(f"❌ register_client error: {e}")
+            print(self._sanitize(f"❌ register_client error: {e}"))
             return False
 
     def verify_client(self, username, password) -> bool:
@@ -331,7 +342,7 @@ class SupabaseManager:
             return r.status_code in (200, 204)
 
         except Exception as e:
-            print(f"❌ update_company_details error: {e}")
+            print(self._sanitize(f"❌ update_company_details error: {e}"))
             return False
 
     def upsert_installation(self, payload: Dict[str, Any]) -> bool:
@@ -354,11 +365,11 @@ class SupabaseManager:
             if r.status_code in (200, 201, 204, 409):
                 return True
 
-            print(f"❌ upsert_installation failed: {r.status_code} - {r.text}")
+            print(self._sanitize(f"❌ upsert_installation failed: {r.status_code} - {r.text}"))
             return False
 
         except Exception as e:
-            print(f"❌ upsert_installation error: {e}")
+            print(self._sanitize(f"❌ upsert_installation error: {e}"))
             return False
 
     def get_installation_status(self, system_id: str) -> Optional[Dict[str, Any]]:
@@ -378,14 +389,14 @@ class SupabaseManager:
 
             r = requests.get(self._url(self.INSTALL_TABLE), params=params, headers=self._headers(), timeout=10)
             if r.status_code != 200:
-                print(f"❌ get_installation_status failed: {r.status_code} - {r.text}")
+                print(self._sanitize(f"❌ get_installation_status failed: {r.status_code} - {r.text}"))
                 return None
 
             data = r.json() or []
             return data[0] if data else None
 
         except Exception as e:
-            print(f"❌ get_installation_status error: {e}")
+            print(self._sanitize(f"❌ get_installation_status error: {e}"))
             return None
 
 

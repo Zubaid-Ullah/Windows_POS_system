@@ -14,16 +14,17 @@ def test_basic_connectivity():
     print("=" * 50)
 
     test_urls = [
-        ("Google", "https://www.google.com"),
-        ("Cloudflare", "https://www.cloudflare.com"),
-        ("Microsoft", "https://www.microsoft.com"),
-        ("Supabase", "https://gwmtlvquhlqtkyynuexf.supabase.co")
+        ("Google", "https://www.google.com", True),  # (name, url, show_url)
+        ("Cloudflare", "https://www.cloudflare.com", True),
+        ("Microsoft", "https://www.microsoft.com", True),
+        ("Supabase", "https://gwmtlvquhlqtkyynuexf.supabase.co", False)  # Hide cloud URL for security
     ]
 
     results = {}
 
-    for name, url in test_urls:
-        print(f"Testing {name} ({url})...")
+    for name, url, show_url in test_urls:
+        display_url = url if show_url else "Cloud URL"
+        print(f"Testing {name} ({display_url})...")
         try:
             start_time = time.time()
             response = requests.head(url, timeout=10)
@@ -37,10 +38,12 @@ def test_basic_connectivity():
                 results[name] = False
 
         except requests.exceptions.RequestException as e:
-            print(f"  ❌ FAILED - {str(e)}")
+            error_msg = str(e).replace("gwmtlvquhlqtkyynuexf.supabase.co", "[HIDDEN-URL]")
+            print(f"  ❌ FAILED - {error_msg}")
             results[name] = False
         except Exception as e:
-            print(f"  ❌ ERROR - {str(e)}")
+            error_msg = str(e).replace("gwmtlvquhlqtkyynuexf.supabase.co", "[HIDDEN-URL]")
+            print(f"  ❌ ERROR - {error_msg}")
             results[name] = False
 
         print()
