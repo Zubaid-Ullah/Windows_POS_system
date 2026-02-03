@@ -3,15 +3,17 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QPushButton,
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPropertyAnimation, QEasingCurve, QVariantAnimation
 import qtawesome as qta
 from src.ui.theme_manager import theme_manager
+from src.core.localization import lang_manager
 
 class PharmacyDashboardCard(QFrame):
     clicked = pyqtSignal(str)
     
-    def __init__(self, label, icon_name, key, color_hex):
+    def __init__(self, label, icon_name, key, color_hex, translation_key=None):
         super().__init__()
         self.key = key
         self.color_hex = color_hex
         self.icon_name = icon_name
+        self.translation_key = translation_key
         self.setObjectName("action_card")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         
@@ -34,6 +36,10 @@ class PharmacyDashboardCard(QFrame):
         self.icon_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.icon_anim.valueChanged.connect(self.update_icon)
         self.update_icon(40)
+    
+    def update_label(self):
+        if self.translation_key:
+            self.text_lbl.setText(lang_manager.get(self.translation_key))
         
     def update_icon(self, size):
         self.icon_lbl.setPixmap(qta.icon(self.icon_name, color=self.color_hex).pixmap(int(size), int(size)))
@@ -57,8 +63,10 @@ class PharmacyDashboardView(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.cards = []
         self.init_ui()
         theme_manager.theme_changed.connect(self.update_theme)
+        lang_manager.language_changed.connect(self.update_labels)
         self.update_theme()
 
     def init_ui(self):
@@ -69,17 +77,18 @@ class PharmacyDashboardView(QWidget):
         grid = QGridLayout()
         grid.setSpacing(20)
         
+        # (translation_key, icon, nav_key, color)
         actions = [
-            ("Pharmacy Finance", "fa5s.chart-pie", "pharmacy_finance", "#3b82f6"),
-            ("Inventory", "fa5s.boxes", "pharmacy_inventory", "#10b981"),
-            ("Pharmacy Sales", "fa5s.file-invoice-dollar", "pharmacy_sales", "#8b5cf6"),
-            ("Customers", "fa5s.users", "pharmacy_customers", "#f59e0b"),
-            ("Suppliers", "fa5s.truck", "pharmacy_suppliers", "#ec4899"),
-            ("Credit Controls", "fa5s.hand-holding-usd", "pharmacy_loans", "#6366f1"),
-            ("Pharmacy Reports", "fa5s.chart-line", "pharmacy_reports", "#14b8a6"),
-            ("Price Check", "fa5s.tag", "pharmacy_price_check", "#f43f5e"),
-            ("Returns", "fa5s.undo", "pharmacy_returns", "#f97316"),
-            ("User Management", "fa5s.user-nurse", "pharmacy_users", "#64748b")
+            ("pharmacy_finance", "fa5s.chart-pie", "pharmacy_finance", "#3b82f6"),
+            ("inventory", "fa5s.boxes", "pharmacy_inventory", "#10b981"),
+            ("sales", "fa5s.file-invoice-dollar", "pharmacy_sales", "#8b5cf6"),
+            ("customers", "fa5s.users", "pharmacy_customers", "#f59e0b"),
+            ("suppliers", "fa5s.truck", "pharmacy_suppliers", "#ec4899"),
+            ("credit_controls", "fa5s.hand-holding-usd", "pharmacy_loans", "#6366f1"),
+            ("reports", "fa5s.chart-line", "pharmacy_reports", "#14b8a6"),
+            ("price_check", "fa5s.tag", "pharmacy_price_check", "#f43f5e"),
+            ("returns", "fa5s.undo", "pharmacy_returns", "#f97316"),
+            ("user_management", "fa5s.user-nurse", "pharmacy_users", "#64748b")
         ]
 
         from src.core.pharmacy_auth import PharmacyAuth as Auth
@@ -90,17 +99,19 @@ class PharmacyDashboardView(QWidget):
         col = 0
         max_cols = 4 # 4 columns
 
-        for label, icon, key, color in actions:
+        for trans_key, icon, key, color in actions:
             # Check permissions
             has_perm = "*" in user_perms or key in user_perms or f"{key}_view" in user_perms
             if not has_perm:
                 continue
-                
-            card = PharmacyDashboardCard(label, icon, key, color)
+            
+            label = lang_manager.get(trans_key)
+            card = PharmacyDashboardCard(label, icon, key, color, translation_key=trans_key)
             # Store icon name for hover logic
             card.icon_lbl.setProperty("icon_name", icon)
             card.clicked.connect(self.navigation_requested.emit)
             grid.addWidget(card, row, col)
+            self.cards.append(card)
             col += 1
             if col >= max_cols:
                 col = 0
@@ -108,6 +119,10 @@ class PharmacyDashboardView(QWidget):
         
         layout.addLayout(grid)
         layout.addStretch()
+    
+    def update_labels(self):
+        for card in self.cards:
+            card.update_label()
 
     def create_action_card(self, label, icon_name, key, color_hex):
         # Deprecated, moved to PharmacyDashboardCard class

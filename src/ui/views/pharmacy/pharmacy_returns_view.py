@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from src.ui.button_styles import style_button
 from src.ui.table_styles import style_table
 from src.database.db_manager import db_manager
+from src.core.localization import lang_manager
 
 class PharmacyReturnsView(QWidget):
     return_processed = pyqtSignal()
@@ -20,9 +21,9 @@ class PharmacyReturnsView(QWidget):
         # Search Invoice
         search_layout = QHBoxLayout()
         self.invoice_input = QLineEdit()
-        self.invoice_input.setPlaceholderText("Enter Invoice/Sale ID...")
+        self.invoice_input.setPlaceholderText(lang_manager.get("search") + " Invoice/Sale ID...")
         self.invoice_input.setFixedHeight(55)
-        self.search_btn = QPushButton("Load Invoice")
+        self.search_btn = QPushButton(lang_manager.get("search"))
         style_button(self.search_btn, variant="info")
         self.search_btn.clicked.connect(self.load_invoice)
         search_layout.addWidget(self.invoice_input)
@@ -34,9 +35,25 @@ class PharmacyReturnsView(QWidget):
         self.sale_info_lbl.setStyleSheet("font-size: 16px; color: #64748b; font-weight: 500;")
         layout.addWidget(self.sale_info_lbl)
 
-        # Items Table
-        self.table = QTableWidget(0, 9)
-        self.table.setHorizontalHeaderLabels(["Product", "Sold Qty", "Already Ret", "Remaining", "Price", "Return Qty", "Action", "Refund Mode", "Confirm"])
+        # 2. Refund Mode Selection
+        refund_layout = QHBoxLayout()
+        refund_layout.addWidget(QLabel(lang_manager.get("refund_mode") + ":"))
+        self.refund_mode_combo = QComboBox()
+        self.refund_mode_combo.addItems([lang_manager.get("cash"), lang_manager.get("credit")])
+        self.refund_mode_combo.setMinimumWidth(200)
+        refund_layout.addWidget(self.refund_mode_combo)
+        refund_layout.addStretch()
+        layout.addLayout(refund_layout)
+
+        # 3. Table for items in the invoice
+        # Columns: Barcode, Name, Size, Sold Qty, Returned Qty, Price, Status, Return Action
+        self.table = QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels([
+            lang_manager.get("product"), lang_manager.get("quantity") + " (Sold)", 
+            lang_manager.get("already_returned"), lang_manager.get("price"), 
+            lang_manager.get("remaining"), lang_manager.get("return_quantity"), 
+            lang_manager.get("action"), lang_manager.get("confirm")
+        ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
@@ -56,10 +73,10 @@ class PharmacyReturnsView(QWidget):
                 """, (sale_id, sale_id)).fetchone()
                 
                 if not sale:
-                    QMessageBox.warning(self, "Not Found", "Invoice not found.")
+                    QMessageBox.warning(self, lang_manager.get("not_found"), lang_manager.get("invoice_not_found"))
                     return
                 
-                self.sale_info_lbl.setText(f"Invoice #{sale['invoice_number']} | Customer: {sale['customer_name'] or 'Walk-in'} | Total: ${sale['total_amount']:,.2f}")
+                self.sale_info_lbl.setText(f"{lang_manager.get('invoice')} #{sale['invoice_number']} | {lang_manager.get('customer')}: {sale['customer_name'] or lang_manager.get('walk_in')} | {lang_manager.get('total')}: ${sale['total_amount']:,.2f}")
                 
                 items = conn.execute("""
                     SELECT si.*, p.name_en
@@ -78,30 +95,25 @@ class PharmacyReturnsView(QWidget):
                     """, (item['id'],)).fetchone()
                     
                     already_returned = ret_row['returned_qty'] or 0
-                    remaining = item['quantity'] - already_returned
+                    remaining_qty = item['quantity'] - already_returned
                     
                     self.table.insertRow(i)
-                    self.table.setItem(i, 0, QTableWidgetItem(item['name_en']))
-                    self.table.setItem(i, 1, QTableWidgetItem(str(item['quantity'])))
-                    self.table.setItem(i, 2, QTableWidgetItem(str(already_returned)))
+                    self.table.setItem(i, 0, QTableWidgetItem(item['name_en'])) # Product Name
+                    self.table.setItem(i, 1, QTableWidgetItem(str(item['quantity']))) # Sold Qty
+                    self.table.setItem(i, 2, QTableWidgetItem(str(already_returned))) # Already Ret
+                    self.table.setItem(i, 3, QTableWidgetItem(f"{item['unit_price']:.2f}")) # Price
                     
-                    rem_item = QTableWidgetItem(str(remaining))
-                    if remaining <= 0:
+                    rem_item = QTableWidgetItem(str(remaining_qty))
+                    if remaining_qty <= 0:
                         rem_item.setForeground(Qt.GlobalColor.red)
-                    self.table.setItem(i, 3, rem_item)
-                    
-                    self.table.setItem(i, 4, QTableWidgetItem(f"{item['unit_price']:.2f}"))
+                    self.table.setItem(i, 4, rem_item) # Remaining Qty
                     
                     qty_input = QDoubleSpinBox()
-                    qty_input.setRange(0, remaining)
+                    qty_input.setRange(0, remaining_qty)
                     qty_input.setValue(0)
-                    self.table.setCellWidget(i, 5, qty_input)
+                    self.table.setCellWidget(i, 5, qty_input) # Return Qty
                     
                     action_combo = QComboBox()
-                    action_combo.addItems(["RETURN", "REPLACE"])
-                    self.table.setCellWidget(i, 6, action_combo)
-                    
-                    refund_mode_combo = QComboBox()
                     refund_mode_combo.addItems(["ACCOUNT", "CASH"])
                     # Default to ACCOUNT if it was a credit sale, otherwise CASH
                     if sale['payment_type'] == 'CREDIT':

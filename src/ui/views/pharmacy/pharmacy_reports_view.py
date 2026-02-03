@@ -10,6 +10,7 @@ from src.ui.table_styles import style_table
 from src.ui.button_styles import style_button
 from src.ui.theme_manager import theme_manager
 from src.ui.views.pharmacy.pharmacy_month_close_dialog import PharmacyMonthCloseDialog
+from src.core.localization import lang_manager
 from datetime import datetime
 
 class PharmacyReportsView(QWidget):
@@ -38,51 +39,57 @@ class PharmacyReportsView(QWidget):
         
         # Header + Actions
         header_layout = QHBoxLayout()
-        title = QLabel("Pharmacy Reports")
+        title = QLabel(lang_manager.get("pharmacy_reports"))
         title.setObjectName("page_header")
         
         self.filter_combo = QComboBox()
-        self.filter_combo.addItems(["Daily Report", "Weekly Report", "Monthly Report", "Custom Range"])
+        self.filter_combo.addItems([
+            lang_manager.get("daily_report"), 
+            lang_manager.get("weekly_report"), 
+            lang_manager.get("monthly_report"), 
+            lang_manager.get("preset") + " Range"
+        ])
         self.filter_combo.setMinimumWidth(300)
         self.filter_combo.currentIndexChanged.connect(self.load_data)
         
-        self.date_from = QDateEdit()
+        # Date Range (hidden unless Custom)
+        self.date_range_frame = QFrame()
+        range_layout = QHBoxLayout(self.date_range_frame)
+        self.date_from = QDateEdit(QDate.currentDate().addDays(-30))
         self.date_from.setCalendarPopup(True)
-        self.date_from.setDate(QDate.currentDate().addDays(-30))
         self.date_from.setMinimumWidth(300)
         
-        self.date_to = QDateEdit()
+        self.date_to = QDateEdit(QDate.currentDate())
         self.date_to.setCalendarPopup(True)
-        self.date_to.setDate(QDate.currentDate())
         self.date_to.setMinimumWidth(300)
                 
-        filter_btn = QPushButton("Filter")
+        filter_btn = QPushButton(lang_manager.get("search"))
         style_button(filter_btn, variant="info", size="small")
         filter_btn.clicked.connect(lambda: [self.filter_combo.setCurrentText("Custom Range"), self.load_data()])
         
-        month_close_btn = QPushButton("Month-End Close")
-        style_button(month_close_btn, variant="warning")
-        month_close_btn.clicked.connect(self.open_month_close)
+        self.month_close_btn = QPushButton(lang_manager.get("monthly_close"))
+        style_button(self.month_close_btn, variant="warning")
+        self.month_close_btn.clicked.connect(self.open_month_close)
         
         header_layout.addWidget(title)
         header_layout.addStretch()
-        header_layout.addWidget(QLabel("Preset:"))
+        header_layout.addWidget(QLabel(lang_manager.get("preset") + ":"))
         header_layout.addWidget(self.filter_combo)
-        header_layout.addWidget(QLabel("From:"))
+        header_layout.addWidget(QLabel(lang_manager.get("from") + ":"))
         header_layout.addWidget(self.date_from)
-        header_layout.addWidget(QLabel("To:"))
+        header_layout.addWidget(QLabel(lang_manager.get("to") + ":"))
         header_layout.addWidget(self.date_to)
         header_layout.addWidget(filter_btn)
-        header_layout.addWidget(month_close_btn)
+        header_layout.addWidget(self.month_close_btn)
         
         layout.addLayout(header_layout)
 
         # Stats Cards
         stats_layout = QHBoxLayout()
-        self.today_sale = self.create_card("Total Sales", "0.00 AFN")
-        self.return_items = self.create_card("Return Items", "0")
-        self.orders = self.create_card("Total Orders", "0")
-        self.low_stock = self.create_card("Low Stock", "0")
+        self.today_sale = self.create_card(lang_manager.get("total_sales"), "0.00 AFN")
+        self.return_items = self.create_card(lang_manager.get("return_items_count"), "0")
+        self.orders = self.create_card(lang_manager.get("total_orders"), "0")
+        self.low_stock = self.create_card(lang_manager.get("low_stock"), "0")
         
         stats_layout.addWidget(self.today_sale)
         stats_layout.addWidget(self.return_items)
@@ -93,24 +100,27 @@ class PharmacyReportsView(QWidget):
         # Tables with Print Buttons
 
         # Transaction Table with Print Button
-        trans_group = QGroupBox("Invoices / Transactions")
+        trans_group = QGroupBox(lang_manager.get("invoices_transactions"))
         trans_layout = QVBoxLayout(trans_group)
 
         trans_header = QHBoxLayout()
-        trans_title = QLabel("<b>Transaction Details</b>")
+        trans_title = QLabel(f"<b>{lang_manager.get('transaction_details')}</b>")
         trans_title.setStyleSheet("border:none; background:transparent;")
         trans_header.addWidget(trans_title)
 
         trans_header.addStretch()
-        self.trans_print_btn = QPushButton("🖨️ Print Transactions")
+        self.trans_print_btn = QPushButton(lang_manager.get("print_transactions"))
         style_button(self.trans_print_btn, variant="info", size="small")
-        self.trans_print_btn.clicked.connect(lambda: self.print_table_report("Pharmacy Transactions", self.trans_table))
+        self.trans_print_btn.clicked.connect(lambda: self.print_table_report(lang_manager.get("transaction_details"), self.trans_table))
         trans_header.addWidget(self.trans_print_btn)
 
         trans_layout.addLayout(trans_header)
 
         self.trans_table = QTableWidget(0, 5)
-        self.trans_table.setHorizontalHeaderLabels(["Inv #", "Customer", "Items", "Amount", "Method"])
+        self.trans_table.setHorizontalHeaderLabels([
+            lang_manager.get("invoice_number_short"), lang_manager.get("customer"), 
+            lang_manager.get("quantity"), lang_manager.get("amount"), lang_manager.get("method")
+        ])
         style_table(self.trans_table, variant="premium")
         self.trans_table.setMinimumHeight(350)
         self.trans_table.cellClicked.connect(self.handle_trans_click)
@@ -118,35 +128,43 @@ class PharmacyReportsView(QWidget):
         layout.addWidget(trans_group)
 
         # Returns Breakdown Table (New Request)
-        ret_group = QGroupBox("Returned Items Details")
+        ret_group = QGroupBox(lang_manager.get("returned_items_details"))
         ret_layout = QVBoxLayout(ret_group)
         
         self.ret_table = QTableWidget(0, 6)
-        self.ret_table.setHorizontalHeaderLabels(["Invoice", "Customer", "Item Name", "Qty Returned", "Amount Info", "Method"])
+        self.ret_table.setHorizontalHeaderLabels([
+            lang_manager.get("invoice"), lang_manager.get("customer"), 
+            lang_manager.get("product_name"), lang_manager.get("quantity") + " (Ret)", 
+            lang_manager.get("amount"), lang_manager.get("method")
+        ])
         style_table(self.ret_table, variant="premium")
         self.ret_table.setMinimumHeight(250)
         ret_layout.addWidget(self.ret_table)
         layout.addWidget(ret_group)
 
         # Loan / Credit Table with Print Button
-        loan_group = QGroupBox("Pharmacy Loans / Credit Details")
+        loan_group = QGroupBox(lang_manager.get("pharmacy_loans_credit_details"))
         loan_layout = QVBoxLayout(loan_group)
 
         loan_header = QHBoxLayout()
-        loan_title = QLabel("<b>Credit & Loan Information</b>")
+        loan_title = QLabel(f"<b>{lang_manager.get('credit_loan_info')}</b>")
         loan_title.setStyleSheet("border:none; background:transparent;")
         loan_header.addWidget(loan_title)
 
         loan_header.addStretch()
-        self.loan_print_btn = QPushButton("🖨️ Print Loans")
+        self.loan_print_btn = QPushButton(lang_manager.get("print_loans"))
         style_button(self.loan_print_btn, variant="info", size="small")
-        self.loan_print_btn.clicked.connect(lambda: self.print_table_report("Pharmacy Loans & Credit", self.loan_table))
+        self.loan_print_btn.clicked.connect(lambda: self.print_table_report(lang_manager.get("credit_loan_info"), self.loan_table))
         loan_header.addWidget(self.loan_print_btn)
 
         loan_layout.addLayout(loan_header)
 
         self.loan_table = QTableWidget(0, 4)
-        self.loan_table.setHorizontalHeaderLabels(["Customer", "Invoice", "Total Loan", "Balance"])
+        self.loan_table.setHorizontalHeaderLabels([
+            lang_manager.get("customer"), lang_manager.get("invoice"), 
+            lang_manager.get("total") + " (" + lang_manager.get("credit") + ")", 
+            lang_manager.get("balance")
+        ])
         style_table(self.loan_table, variant="premium")
         self.loan_table.setMinimumHeight(300)
         self.loan_table.resizeColumnsToContents()
@@ -154,57 +172,64 @@ class PharmacyReportsView(QWidget):
         layout.addWidget(loan_group)
 
         # Low Stock Table with Print Button
-        stock_group = QGroupBox("Critical Stock Alert")
+        stock_group = QGroupBox(lang_manager.get("critical_stock_alert"))
         stock_layout = QVBoxLayout(stock_group)
 
         stock_header = QHBoxLayout()
-        stock_title = QLabel("<b>Low Stock Medicines</b>")
+        stock_title = QLabel(f"<b>{lang_manager.get('low_stock_medicines')}</b>")
         stock_title.setStyleSheet("border:none; background:transparent;")
         stock_header.addWidget(stock_title)
 
         stock_header.addStretch()
-        self.stock_print_btn = QPushButton("🖨️ Print Stock Report")
+        self.stock_print_btn = QPushButton(lang_manager.get("print_stock_report"))
         style_button(self.stock_print_btn, variant="info", size="small")
-        self.stock_print_btn.clicked.connect(lambda: self.print_table_report("Pharmacy Stock Alert", self.low_stock_table))
+        self.stock_print_btn.clicked.connect(lambda: self.print_table_report(lang_manager.get("low_stock_medicines"), self.low_stock_table))
         stock_header.addWidget(self.stock_print_btn)
 
         stock_layout.addLayout(stock_header)
 
         self.low_stock_table = QTableWidget(0, 4)
-        self.low_stock_table.setHorizontalHeaderLabels(["Medicine", "Expiry", "Current Qty", "Min Level"])
+        self.low_stock_table.setHorizontalHeaderLabels([
+            lang_manager.get("medicine"), lang_manager.get("expiry_date"), 
+            lang_manager.get("quantity"), lang_manager.get("reorder_level")
+        ])
         style_table(self.low_stock_table, variant="premium")
         self.low_stock_table.setMinimumHeight(300)
         stock_layout.addWidget(self.low_stock_table)
         layout.addWidget(stock_group)
 
         # Expiry Stock Report Section
-        expiry_group = QGroupBox("Expiring Stock Report")
+        expiry_group = QGroupBox(lang_manager.get("expiring_stock_report"))
         expiry_layout = QVBoxLayout(expiry_group)
 
         expiry_header = QHBoxLayout()
-        expiry_title = QLabel("<b>Medicine Expiry Status</b>")
+        expiry_title = QLabel(f"<b>{lang_manager.get('medicine_expiry_status')}</b>")
         expiry_title.setStyleSheet("border:none; background:transparent;")
         expiry_header.addWidget(expiry_title)
 
         expiry_header.addStretch()
-        expiry_header.addWidget(QLabel("Showing items expiring within:"))
+        expiry_header.addWidget(QLabel(lang_manager.get("showing_items_expiring_within")))
         self.expiry_days_spin = QSpinBox()
         self.expiry_days_spin.setRange(1, 1000) # Increased range for flexibility, user said 1-30 but 30 might be too low for some
         self.expiry_days_spin.setValue(30)
-        self.expiry_days_spin.setSuffix(" Days")
+        self.expiry_days_spin.setSuffix(" " + lang_manager.get("days"))
         self.expiry_days_spin.setMinimumWidth(100)
         self.expiry_days_spin.valueChanged.connect(self.load_data)
         expiry_header.addWidget(self.expiry_days_spin)
 
-        self.expiry_print_btn = QPushButton("🖨️ Print Expiry Report")
+        self.expiry_print_btn = QPushButton(lang_manager.get("print_expiry_report"))
         style_button(self.expiry_print_btn, variant="info", size="small")
-        self.expiry_print_btn.clicked.connect(lambda: self.print_table_report("Pharmacy Expiry Alert", self.expiry_table))
+        self.expiry_print_btn.clicked.connect(lambda: self.print_table_report(lang_manager.get("medicine_expiry_status"), self.expiry_table))
         expiry_header.addWidget(self.expiry_print_btn)
 
         expiry_layout.addLayout(expiry_header)
 
         self.expiry_table = QTableWidget(0, 5)
-        self.expiry_table.setHorizontalHeaderLabels(["Medicine", "Batch #", "Expiry Date", "Days Left", "Status"])
+        self.expiry_table.setHorizontalHeaderLabels([
+            lang_manager.get("medicine"), lang_manager.get("batch_no_short"), 
+            lang_manager.get("expiry_date"), lang_manager.get("days_left"), 
+            lang_manager.get("status")
+        ])
         
         # NO stylesheet - let setForeground work without any CSS interference
         self.expiry_table.setAlternatingRowColors(False)
@@ -226,7 +251,7 @@ class PharmacyReportsView(QWidget):
         # Complete Report Button
         report_btn_layout = QHBoxLayout()
         report_btn_layout.addStretch()
-        self.complete_report_btn = QPushButton("🖨️ Print Complete Pharmacy Report")
+        self.complete_report_btn = QPushButton(lang_manager.get("print_complete_pharmacy_report"))
         style_button(self.complete_report_btn, variant="success")
         self.complete_report_btn.clicked.connect(self.print_full_report)
         report_btn_layout.addWidget(self.complete_report_btn)
@@ -273,21 +298,21 @@ class PharmacyReportsView(QWidget):
         try:
             with db_manager.get_pharmacy_connection() as conn:
                 filter_text = self.filter_combo.currentText()
-                if "Daily" in filter_text:
+                if lang_manager.get("daily_report") in filter_text:
                     time_filter = "date({T}.created_at) = date('now')"
-                    period_name = "Today"
-                elif "Weekly" in filter_text:
+                    period_name = lang_manager.get("today")
+                elif lang_manager.get("weekly_report") in filter_text:
                     time_filter = "date({T}.created_at) >= date('now', '-7 days')"
-                    period_name = "Last 7 Days"
-                elif "Monthly" in filter_text:
+                    period_name = lang_manager.get("last_7_days")
+                elif lang_manager.get("monthly_report") in filter_text:
                     time_filter = "date({T}.created_at) >= date('now', 'start of month')"
-                    period_name = "This Month"
+                    period_name = lang_manager.get("this_month")
                 else:
                     # Custom Range
                     d_from = self.date_from.date().toString("yyyy-MM-dd")
                     d_to = self.date_to.date().toString("yyyy-MM-dd")
                     time_filter = f"date({{T}}.created_at) BETWEEN '{d_from}' AND '{d_to}'"
-                    period_name = f"{d_from} to {d_to}"
+                    period_name = f"{d_from} {lang_manager.get('to')} {d_to}"
                 
                 # 1. Total Sales (Net of Returns)
                 # Gross Sales
@@ -300,7 +325,7 @@ class PharmacyReportsView(QWidget):
                 
                 net_sales = gross_sales - returned_amount
                 self.today_sale.value_lbl.setText(f"{net_sales:,.2f} AFN")
-                self.today_sale.title_lbl.setText(f"Net Sales ({period_name})")
+                self.today_sale.title_lbl.setText(f"{lang_manager.get('net_sales')} ({period_name})")
                 
                 # 2. Return Items Count
                 ret_row = conn.execute(f"SELECT COUNT(*) as cnt FROM pharmacy_returns r WHERE {time_filter.format(T='r')}").fetchone()
@@ -356,14 +381,14 @@ class PharmacyReportsView(QWidget):
                     self.trans_table.insertRow(i)
                     # Show invoice number instead of ID
                     self.trans_table.setItem(i, 0, QTableWidgetItem(row['invoice_number']))
-                    self.table_item(self.trans_table, i, 1, row['customer_name'] or "Walk-in")
+                    self.table_item(self.trans_table, i, 1, row['customer_name'] or lang_manager.get("walk_in"))
                     
                     # Item count
                     cnt = conn.execute("SELECT SUM(quantity) as q FROM pharmacy_sale_items WHERE sale_id=?", (row['id'],)).fetchone()
                     self.table_item(self.trans_table, i, 2, str(int(cnt['q'] or 0)))
                     self.table_item(self.trans_table, i, 3, f"{row['total_amount']:,.2f} AFN")
                     # Remove payment method display per user request
-                    method = "CREDIT" if row['payment_type'] == 'CREDIT' else "CASH"
+                    method = lang_manager.get("credit") if row['payment_type'] == 'CREDIT' else lang_manager.get("cash")
                     self.table_item(self.trans_table, i, 4, method)
                 
                 # Add totals row
@@ -379,7 +404,7 @@ class PharmacyReportsView(QWidget):
                     total_amount = sum([row['total_amount'] for row in trans])
                     
                     # Add total row with bold styling
-                    total_lbl = QTableWidgetItem("TOTAL")
+                    total_lbl = QTableWidgetItem(lang_manager.get("total"))
                     total_lbl.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     font = QFont()
                     font.setBold(True)
@@ -428,7 +453,7 @@ class PharmacyReportsView(QWidget):
                 for i, row in enumerate(ret_rows):
                     self.ret_table.insertRow(i)
                     self.table_item(self.ret_table, i, 0, row['invoice_number'])
-                    self.table_item(self.ret_table, i, 1, row['customer_name'] or "Walk-in")
+                    self.table_item(self.ret_table, i, 1, row['customer_name'] or lang_manager.get("walk_in"))
                     self.table_item(self.ret_table, i, 2, row['item_name'])
                     # Show Qty with nice formatting
                     self.table_item(self.ret_table, i, 3, str(row['qty_returned']))
@@ -523,16 +548,16 @@ class PharmacyReportsView(QWidget):
                     expiry_date_str = row_data['expiry']
                     days_left = row_data['days_left']
                     
-                    status_text = "ACTIVE"
+                    status_text = lang_manager.get("active")
                     if days_left <= 0:
-                        status_text = "EXPIRED"
+                        status_text = lang_manager.get("expired")
                     elif days_left <= 7:
-                        status_text = "ALERT"
+                        status_text = lang_manager.get("alert")
 
                     medicine_item = QTableWidgetItem(medicine_name)
                     batch_item = QTableWidgetItem(batch_no)
                     expiry_item = QTableWidgetItem(expiry_date_str)
-                    days_item_text = f"{days_left} Days" if days_left >= 0 else "Expired"
+                    days_item_text = f"{days_left} {lang_manager.get('days')}" if days_left >= 0 else lang_manager.get("expired")
                     days_item = QTableWidgetItem(days_item_text)
                     status_item_obj = QTableWidgetItem(status_text)
                     
@@ -610,7 +635,7 @@ class PharmacyReportsView(QWidget):
                                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
                                 thermal_printer.print_bill(bill_text)
                     else:
-                        QMessageBox.warning(self, "Error", "Sale not found.")
+                        QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("not_found"))
             except Exception as e:
                 print(f"Error handling click: {e}")
 
@@ -621,7 +646,7 @@ class PharmacyReportsView(QWidget):
     def print_table_report(self, title, table):
         """Print a table report with preview"""
         if table.rowCount() == 0:
-            QMessageBox.information(self, "No Data", "No data available to print.")
+            QMessageBox.information(self, lang_manager.get("no_data"), lang_manager.get("no_data"))
             return
 
         # Create printer
@@ -658,9 +683,9 @@ class PharmacyReportsView(QWidget):
         period_text = self.filter_combo.currentText()
         date_from = self.date_from.date().toString("yyyy-MM-dd")
         date_to = self.date_to.date().toString("yyyy-MM-dd")
-        cursor.insertText(f"Report Period: {period_text}\n", info_format)
-        cursor.insertText(f"Date Range: {date_from} to {date_to}\n", info_format)
-        cursor.insertText(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", info_format)
+        cursor.insertText(f"{lang_manager.get('report_period')}: {period_text}\n", info_format)
+        cursor.insertText(f"{lang_manager.get('date')}: {date_from} {lang_manager.get('to')} {date_to}\n", info_format)
+        cursor.insertText(f"{lang_manager.get('generated_at')}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", info_format)
         cursor.insertText("\n")
 
         # Create table
@@ -705,9 +730,9 @@ class PharmacyReportsView(QWidget):
         footer_format.setFontPointSize(10)
         footer_format.setFontItalic(True)
 
-        if "Stock Alert" in title and table == self.low_stock_table:
+        if lang_manager.get("critical_stock_alert") in title or lang_manager.get("low_stock_medicines") in title:
             low_stock_count = table.rowCount()
-            cursor.insertText(f"Total Low Stock Items: {low_stock_count}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_low_stock_items')}: {low_stock_count}\n", footer_format)
 
         elif "Transactions" in title and table == self.trans_table:
             total_sales = 0
@@ -726,9 +751,9 @@ class PharmacyReportsView(QWidget):
                         total_items += int(items_item.text())
                     except:
                         pass
-            cursor.insertText(f"Total Transactions: {table.rowCount()}\n", footer_format)
-            cursor.insertText(f"Total Items Sold: {total_items}\n", footer_format)
-            cursor.insertText(f"Total Sales Amount: {total_sales:,.2f} AFN\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_transactions')}: {table.rowCount()}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_items_sold')}: {total_items}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_sales_amount')}: {total_sales:,.2f} AFN\n", footer_format)
 
         elif "Loans" in title and table == self.loan_table:
             total_loans = 0
@@ -746,9 +771,9 @@ class PharmacyReportsView(QWidget):
                         total_balance += float(balance_item.text().replace(',', '').replace(' AFN', ''))
                     except:
                         pass
-            cursor.insertText(f"Total Active Loans: {table.rowCount()}\n", footer_format)
-            cursor.insertText(f"Total Loan Amount: {total_loans:,.2f} AFN\n", footer_format)
-            cursor.insertText(f"Total Outstanding Balance: {total_balance:,.2f} AFN\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_active_loans')}: {table.rowCount()}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_loan_amount')}: {total_loans:,.2f} AFN\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_outstanding_balance')}: {total_balance:,.2f} AFN\n", footer_format)
 
         elif "Expiry Alert" in title and table == self.expiry_table:
             expired_count = 0
@@ -756,9 +781,9 @@ class PharmacyReportsView(QWidget):
                 status_item = table.item(row, 4)
                 if status_item and status_item.text() == "EXPIRED":
                     expired_count += 1
-            cursor.insertText(f"Total Items Monitored: {table.rowCount()}\n", footer_format)
-            cursor.insertText(f"Already Expired: {expired_count}\n", footer_format)
-            cursor.insertText(f"Nearing Expiry: {table.rowCount() - expired_count}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_items_monitored')}: {table.rowCount()}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('already_expired_count')}: {expired_count}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('nearing_expiry')}: {table.rowCount() - expired_count}\n", footer_format)
 
         # Print the document
         document.print(printer)
@@ -785,7 +810,7 @@ class PharmacyReportsView(QWidget):
         title_format = QTextCharFormat()
         title_format.setFontPointSize(18)
         title_format.setFontWeight(QFont.Weight.Bold)
-        cursor.insertText("Complete Pharmacy Reports Summary\n", title_format)
+        cursor.insertText(f"{lang_manager.get('complete_pharmacy_reports_summary')}\n", title_format)
         cursor.insertText("\n")
 
         # Date info
@@ -794,17 +819,17 @@ class PharmacyReportsView(QWidget):
         period_text = self.filter_combo.currentText()
         date_from = self.date_from.date().toString("yyyy-MM-dd")
         date_to = self.date_to.date().toString("yyyy-MM-dd")
-        cursor.insertText(f"Report Period: {period_text}\n", info_format)
-        cursor.insertText(f"Date Range: {date_from} to {date_to}\n", info_format)
-        cursor.insertText(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", info_format)
+        cursor.insertText(f"{lang_manager.get('report_period')}: {period_text}\n", info_format)
+        cursor.insertText(f"{lang_manager.get('date')}: {date_from} {lang_manager.get('to')} {date_to}\n", info_format)
+        cursor.insertText(f"{lang_manager.get('generated_at')}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", info_format)
         cursor.insertText("\n")
 
         # Add each section
         sections = [
-            ("Pharmacy Transactions", self.trans_table),
-            ("Pharmacy Loans & Credit", self.loan_table),
-            ("Pharmacy Stock Alert", self.low_stock_table),
-            ("Pharmacy Expiry Alert", self.expiry_table)
+            (lang_manager.get("transaction_details"), self.trans_table),
+            (lang_manager.get("credit_loan_info"), self.loan_table),
+            (lang_manager.get("low_stock_medicines"), self.low_stock_table),
+            (lang_manager.get("medicine_expiry_status"), self.expiry_table)
         ]
 
         for section_title, table in sections:

@@ -8,6 +8,7 @@ from src.ui.button_styles import style_button
 from src.ui.table_styles import style_table
 from src.core.pharmacy_auth import PharmacyAuth as Auth
 from src.database.db_manager import db_manager
+from src.core.localization import lang_manager
 
 class PharmacyUsersView(QWidget):
     def __init__(self):
@@ -31,15 +32,15 @@ class PharmacyUsersView(QWidget):
         
         # Add New User Header Button
         add_user_header = QHBoxLayout()
-        header_label = QLabel("<b>User Management</b>")
+        header_label = QLabel(f"<b>{lang_manager.get('user_management')}</b>")
         header_label.setStyleSheet("font-size: 16px;")
         
         # Password Visibility Toggle
-        self.password_toggle_btn = QPushButton("👁️ Show Passwords")
+        self.password_toggle_btn = QPushButton(lang_manager.get("show_passwords_icon"))
         style_button(self.password_toggle_btn, variant="warning", size="small")
         self.password_toggle_btn.clicked.connect(self.toggle_password_visibility)
         
-        add_user_btn = QPushButton("+ Add New User")
+        add_user_btn = QPushButton(lang_manager.get("add_new_user_icon"))
         style_button(add_user_btn, variant="success", size="small")
         add_user_btn.clicked.connect(self.clear_form)
         add_user_header.addWidget(header_label)
@@ -48,20 +49,20 @@ class PharmacyUsersView(QWidget):
         add_user_header.addWidget(add_user_btn)
         from_v_layout.addLayout(add_user_header)
         
-        gb = QGroupBox("User Details")
+        gb = QGroupBox(lang_manager.get("user_details"))
         from_v_layout.addWidget(gb)
         form = QFormLayout(gb)
         form.setSpacing(15)
         
         self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("Enter username")
+        self.username_input.setPlaceholderText(lang_manager.get("enter_username"))
         self.username_input.setFixedHeight(55)
         self.username_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.username_input.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.username_input.setStyleSheet("border: 1px solid black;")
         
         self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("Enter password")
+        self.password_input.setPlaceholderText(lang_manager.get("enter_password"))
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setFixedHeight(55)
         self.password_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -69,23 +70,23 @@ class PharmacyUsersView(QWidget):
         
         # Role
         self.role_combo = QComboBox()
-        self.role_combo.addItems(["Pharmacist", "Manager"])
+        self.role_combo.addItems([lang_manager.get("pharmacist"), lang_manager.get("manager")])
         self.role_combo.setFixedHeight(55)
         self.role_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.role_combo.setStyleSheet("border: 1px solid black;")
-        form.addRow("Role:", self.role_combo)
+        form.addRow(f"{lang_manager.get('role')}:", self.role_combo)
         self.title_input = QLineEdit()
-        self.title_input.setPlaceholderText("e.g. Senior Pharmacist")
+        self.title_input.setPlaceholderText(lang_manager.get("e.g._senior_pharmacist"))
         self.title_input.setFixedHeight(55)
         self.title_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.title_input.setStyleSheet("border: 1px solid black;")
 
-        form.addRow("Username *:", self.username_input)
-        form.addRow("Password *:", self.password_input)
-        form.addRow("Title:", self.title_input)
+        form.addRow(f"{lang_manager.get('username')} *:", self.username_input)
+        form.addRow(f"{lang_manager.get('password')} *:", self.password_input)
+        form.addRow(f"{lang_manager.get('title')}:", self.title_input)
         
         # Permissions Section
-        perm_label = QLabel("<b>Assign Features / Permissions</b>")
+        perm_label = QLabel(f"<b>{lang_manager.get('assign_features_permissions')}</b>")
         form.addRow(perm_label)
         
         self.perm_area = QScrollArea()
@@ -95,18 +96,18 @@ class PharmacyUsersView(QWidget):
         self.perm_layout = QVBoxLayout(perm_widget)
         
         self.features = [
-            ("pharmacy_dashboard", "Pharmacy Dashboard"),
-            ("pharmacy_sales", "Pharmacy Sales / POS"),
-            ("pharmacy_inventory", "Pharmacy Inventory"),
-            ("pharmacy_customers", "Pharmacy Customers"),
-            ("pharmacy_suppliers", "Medicine Suppliers"),
-            ("pharmacy_loans", "Credit / Loan Control"),
-            ("pharmacy_reports", "Pharmacy Reports"),
-            ("pharmacy_finance", "Pharmacy Finance"),
-            ("pharmacy_price_check", "Medicine Price Check"),
-            ("pharmacy_returns", "Returns & Replacements"),
-            ("pharmacy_users", "Pharmacy User Management"),
-            ("pharmacy_settings", "Pharmacy Settings")
+            ("pharmacy_dashboard", lang_manager.get("pharmacy_dashboard")),
+            ("pharmacy_sales", lang_manager.get("pharmacy_sales_pos")),
+            ("pharmacy_inventory", lang_manager.get("pharmacy_inventory")),
+            ("pharmacy_customers", lang_manager.get("pharmacy_customers")),
+            ("pharmacy_suppliers", lang_manager.get("medicine_suppliers")),
+            ("pharmacy_loans", lang_manager.get("credit_loan_control")),
+            ("pharmacy_reports", lang_manager.get("pharmacy_reports")),
+            ("pharmacy_finance", lang_manager.get("pharmacy_finance")),
+            ("pharmacy_price_check", lang_manager.get("medicine_price_check")),
+            ("pharmacy_returns", lang_manager.get("returns_replacements")),
+            ("pharmacy_users", lang_manager.get("pharmacy_user_management")),
+            ("pharmacy_settings", lang_manager.get("pharmacy_settings"))
         ]
         
         self.feature_checkboxes = {}
@@ -118,7 +119,7 @@ class PharmacyUsersView(QWidget):
         self.perm_area.setWidget(perm_widget)
         form.addRow(self.perm_area)
         
-        save_btn = QPushButton("Save User")
+        save_btn = QPushButton(lang_manager.get("save"))
         style_button(save_btn, variant="success")
         save_btn.clicked.connect(self.save_user)
         form.addRow(save_btn)
@@ -130,7 +131,13 @@ class PharmacyUsersView(QWidget):
         table_layout = QVBoxLayout(table_container)
         
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["ID", "Username", "Password", "Assigned Features", "Actions"])
+        self.table.setHorizontalHeaderLabels([
+            lang_manager.get("id"),
+            lang_manager.get("username"),
+            lang_manager.get("password"),
+            lang_manager.get("assigned_features"),
+            lang_manager.get("actions")
+        ])
         style_table(self.table, variant="premium")
         
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)

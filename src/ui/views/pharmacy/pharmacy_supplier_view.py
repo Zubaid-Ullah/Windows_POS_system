@@ -5,13 +5,14 @@ from PyQt6.QtCore import Qt
 from src.ui.button_styles import style_button
 from src.ui.table_styles import style_table
 from src.database.db_manager import db_manager
+from src.core.localization import lang_manager
 
 class AddPharmacySupplierDialog(QDialog):
     def __init__(self, parent=None, supplier_data=None):
         super().__init__(parent)
-        self.setWindowTitle("Add / Edit Pharmacy Supplier")
-        self.setFixedWidth(400)
         self.supplier_data = supplier_data
+        self.setWindowTitle(lang_manager.get("add_edit_supplier"))
+        self.setFixedWidth(450)
         self.init_ui()
 
     def init_ui(self):
@@ -19,30 +20,37 @@ class AddPharmacySupplierDialog(QDialog):
         form = QFormLayout()
         
         self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText(lang_manager.get("name") + "*")
         self.company_input = QLineEdit()
+        self.company_input.setPlaceholderText(lang_manager.get("company"))
         self.contact_input = QLineEdit()
+        self.contact_input.setPlaceholderText(lang_manager.get("contact"))
+        self.address_input = QLineEdit()
+        self.address_input.setPlaceholderText(lang_manager.get("address"))
         
         if self.supplier_data:
             self.name_input.setText(self.supplier_data['name'])
             self.company_input.setText(self.supplier_data['company_name'] or "")
             self.contact_input.setText(self.supplier_data['contact'] or "")
+            self.address_input.setText(self.supplier_data['address'] or "")
             
-        form.addRow("Supplier Name *:", self.name_input)
-        form.addRow("Company Name:", self.company_input)
-        form.addRow("Contact Number *:", self.contact_input)
+        form.addRow(lang_manager.get("name") + ":", self.name_input)
+        form.addRow(lang_manager.get("company") + ":", self.company_input)
+        form.addRow(lang_manager.get("contact") + ":", self.contact_input)
+        form.addRow(lang_manager.get("address") + ":", self.address_input)
         
         layout.addLayout(form)
         
         btns = QHBoxLayout()
-        save = QPushButton("Save")
-        style_button(save, variant="success")
-        save.clicked.connect(self.save)
+        self.save_btn = QPushButton(lang_manager.get("save"))
+        style_button(self.save_btn, variant="success")
+        self.save_btn.clicked.connect(self.save)
         
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(lang_manager.get("cancel"))
         style_button(cancel, variant="outline")
         cancel.clicked.connect(self.reject)
         
-        btns.addWidget(save)
+        btns.addWidget(self.save_btn)
         btns.addWidget(cancel)
         layout.addLayout(btns)
 
@@ -50,23 +58,24 @@ class AddPharmacySupplierDialog(QDialog):
         name = self.name_input.text().strip()
         company = self.company_input.text().strip()
         contact = self.contact_input.text().strip()
+        address = self.address_input.text().strip()
         
         if not name or not contact:
-            QMessageBox.warning(self, "Error", "Name and Contact are required")
+            QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("name_contact_required"))
             return
             
         try:
             with db_manager.get_pharmacy_connection() as conn:
                 if self.supplier_data:
-                    conn.execute("UPDATE pharmacy_suppliers SET name=?, company_name=?, contact=? WHERE id=?", 
-                                 (name, company, contact, self.supplier_data['id']))
+                    conn.execute("UPDATE pharmacy_suppliers SET name=?, company_name=?, contact=?, address=? WHERE id=?", 
+                                 (name, company, contact, address, self.supplier_data['id']))
                 else:
-                    conn.execute("INSERT INTO pharmacy_suppliers (name, company_name, contact) VALUES (?, ?, ?)",
-                                 (name, company, contact))
+                    conn.execute("INSERT INTO pharmacy_suppliers (name, company_name, contact, address) VALUES (?, ?, ?, ?)",
+                                 (name, company, contact, address))
                 conn.commit()
             self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, lang_manager.get("error"), str(e))
 
 
 class PharmacySupplierView(QWidget):
@@ -79,12 +88,12 @@ class PharmacySupplierView(QWidget):
         layout.setSpacing(20)
         
         header_layout = QHBoxLayout()
-        title = QLabel("Pharmacy Suppliers")
+        title = QLabel(lang_manager.get("suppliers"))
         title.setStyleSheet("font-size: 22px; font-weight: bold;")
         header_layout.addWidget(title)
         header_layout.addStretch()
         
-        add_btn = QPushButton("+ Add Supplier")
+        add_btn = QPushButton("+ " + lang_manager.get("add_supplier"))
         style_button(add_btn, variant="success")
         add_btn.clicked.connect(lambda: self.open_dialog())
         header_layout.addWidget(add_btn)
@@ -93,7 +102,10 @@ class PharmacySupplierView(QWidget):
 
         # Table
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["ID", "Full Name", "Company", "Contact", "Actions"])
+        self.table.setHorizontalHeaderLabels([
+            "ID", lang_manager.get("name"), lang_manager.get("company"), 
+            lang_manager.get("contact"), lang_manager.get("actions")
+        ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
@@ -116,11 +128,11 @@ class PharmacySupplierView(QWidget):
                     act_layout = QHBoxLayout(actions)
                     act_layout.setContentsMargins(2,2,2,2)
                     
-                    edit_btn = QPushButton("Edit")
-                    style_button(edit_btn, variant="success", size="small")
-                    edit_btn.clicked.connect(lambda ch, r=row: self.open_dialog(r))
+                    edit_btn = QPushButton(lang_manager.get("edit"))
+                    style_button(edit_btn, variant="info", size="small")
+                    edit_btn.clicked.connect(lambda ch, s=row: self.open_dialog(s))
                     
-                    del_btn = QPushButton("Del")
+                    del_btn = QPushButton(lang_manager.get("delete"))
                     style_button(del_btn, variant="danger", size="small")
                     del_btn.clicked.connect(lambda ch, sid=row['id']: self.delete_supplier(sid))
                     

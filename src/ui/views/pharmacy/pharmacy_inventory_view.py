@@ -25,19 +25,19 @@ class PharmacyInventoryView(QWidget):
         
         header = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Scan barcode or search medicine...")
+        self.search_input.setPlaceholderText(lang_manager.get("search") + " " + lang_manager.get("medicine") + "...")
         self.search_input.setMinimumHeight(55)
         self.search_input.textChanged.connect(self.load_inventory)
         self.search_input.returnPressed.connect(self.handle_barcode_scan)
         header.addWidget(self.search_input)
         
-        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn = QPushButton(lang_manager.get("refresh"))
         style_button(self.refresh_btn, variant="info")
         self.refresh_btn.clicked.connect(self.load_inventory)
         header.addWidget(self.refresh_btn)
         
         # New Add Button
-        self.add_btn = QPushButton("+ Add Medicine")
+        self.add_btn = QPushButton("+ " + lang_manager.get("add_product"))
         style_button(self.add_btn, variant="success")
         self.add_btn.clicked.connect(self.open_add_dialog)
         header.addWidget(self.add_btn)
@@ -47,7 +47,13 @@ class PharmacyInventoryView(QWidget):
         # Columns: Barcode, Name, Size, Expiry, Price, Qty, Total Val, Cost, Brand, Company, Vendor, Contact, Actions
         self.table = QTableWidget(0, 13)
         self.table.setHorizontalHeaderLabels([
-            "Barcode", "Name", "Size", "Expiry", "Price", "Qty", "Total Val", "Cost", "Brand", "Company", "Vendor", "Contact", "Actions"
+            lang_manager.get("barcode"), lang_manager.get("name"), 
+            lang_manager.get("size"), lang_manager.get("expiry_date"), 
+            lang_manager.get("price"), lang_manager.get("quantity"), 
+            lang_manager.get("total_val"), lang_manager.get("cost"), 
+            lang_manager.get("brand"), lang_manager.get("company"), 
+            lang_manager.get("vendor"), lang_manager.get("contact"), 
+            lang_manager.get("actions")
         ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -100,11 +106,11 @@ class PharmacyInventoryView(QWidget):
                 act_layout.setContentsMargins(0,0,0,0)
                 act_layout.setSpacing(5)
                 
-                edit_btn = QPushButton("Edit")
+                edit_btn = QPushButton(lang_manager.get("edit"))
                 style_button(edit_btn, variant="info", size="small")
                 edit_btn.clicked.connect(lambda checked, p_id=p['id']: self.edit_product(p_id))
                 
-                delete_btn = QPushButton("Del")
+                delete_btn = QPushButton(lang_manager.get("delete"))
                 style_button(delete_btn, variant="danger", size="small")
                 delete_btn.clicked.connect(lambda checked, p_id=p['id']: self.delete_product(p_id))
                 
@@ -143,8 +149,8 @@ class PharmacyInventoryView(QWidget):
 
     def delete_product(self, product_id):
         confirm = QMessageBox.question(
-            self, "Confirm Delete", 
-            "Are you sure you want to delete this product?",
+            self, lang_manager.get("confirm_delete"), 
+            lang_manager.get("confirm_delete") + "?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes
         )

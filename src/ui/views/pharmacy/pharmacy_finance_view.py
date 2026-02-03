@@ -7,6 +7,7 @@ import qtawesome as qta
 from src.ui.button_styles import style_button
 from src.ui.table_styles import style_table
 from src.database.db_manager import db_manager
+from src.core.localization import lang_manager
 
 class PharmacyFinanceView(QWidget):
     def __init__(self):
@@ -28,7 +29,7 @@ class PharmacyFinanceView(QWidget):
         title_icon = QLabel()
         title_icon.setPixmap(qta.icon("fa5s.prescription-bottle-alt", color="#10b981").pixmap(32, 32))
 
-        title_text = QLabel("Pharmacy Financial Management")
+        title_text = QLabel(lang_manager.get("pharmacy_financial_management"))
         title_text.setStyleSheet("font-size: 28px; font-weight: bold; color: #065f46; margin-left: 15px;")
 
         header_layout.addWidget(title_icon)
@@ -70,17 +71,17 @@ class PharmacyFinanceView(QWidget):
         # Tab 1: Daily Expenses & Petty Cash
         self.expense_tab = QWidget()
         self.init_expense_tab()
-        self.tabs.addTab(self.expense_tab, "💰 Expenses")
+        self.tabs.addTab(self.expense_tab, f"💰 {lang_manager.get('expenses')}")
 
         # Tab 2: Salaries
         self.salary_tab = QWidget()
         self.init_salary_tab()
-        self.tabs.addTab(self.salary_tab, "💸 Salaries")
+        self.tabs.addTab(self.salary_tab, f"💸 {lang_manager.get('overview')}")
 
         # Tab 3: Monthly Summary & Profit
         self.summary_tab = QWidget()
         self.init_summary_tab()
-        self.tabs.addTab(self.summary_tab, "📊 Summary")
+        self.tabs.addTab(self.summary_tab, f"📊 {lang_manager.get('profit')}")
 
         layout.addWidget(self.tabs)
 
@@ -88,11 +89,16 @@ class PharmacyFinanceView(QWidget):
         layout = QVBoxLayout(self.expense_tab)
         
         # Entry Form
-        form_gb = QGroupBox("Record New Expense / Petty Cash")
+        form_gb = QGroupBox(lang_manager.get("record_new_expense"))
         form_layout = QFormLayout(form_gb)
         
         self.exp_type = QComboBox()
-        self.exp_type.addItems(["Daily Expense", "Petty Cash", "Utility", "Other"])
+        self.exp_type.addItems([
+            lang_manager.get("daily_expense"), 
+            lang_manager.get("petty_cash"), 
+            lang_manager.get("utility"), 
+            lang_manager.get("other")
+        ])
         self.exp_type.setMinimumWidth(500)
         
         self.exp_amount = QDoubleSpinBox()
@@ -101,7 +107,7 @@ class PharmacyFinanceView(QWidget):
         self.exp_amount.setMinimumWidth(500)
         
         self.exp_purpose = QLineEdit()
-        self.exp_purpose.setPlaceholderText("Description of expense")
+        self.exp_purpose.setPlaceholderText(lang_manager.get("description_of_expense"))
         self.exp_purpose.setMinimumWidth(500)
         
         self.exp_date = QDateEdit()
@@ -109,23 +115,23 @@ class PharmacyFinanceView(QWidget):
         self.exp_date.setCalendarPopup(True)
         self.exp_date.setMinimumWidth(500)
         
-        self.save_btn = QPushButton("Save Record")
+        self.save_btn = QPushButton(lang_manager.get("save"))
         style_button(self.save_btn, variant="primary")
         self.save_btn.setMinimumWidth(500)
         self.save_btn.clicked.connect(self.save_expense)
         
-        form_layout.addRow("Type:", self.exp_type)
-        form_layout.addRow("Amount:", self.exp_amount)
-        form_layout.addRow("Purpose:", self.exp_purpose)
-        form_layout.addRow("Date:", self.exp_date)
+        form_layout.addRow(lang_manager.get("type") + ":", self.exp_type)
+        form_layout.addRow(lang_manager.get("amount") + ":", self.exp_amount)
+        form_layout.addRow(lang_manager.get("description") + ":", self.exp_purpose)
+        form_layout.addRow(lang_manager.get("date") + ":", self.exp_date)
         form_layout.addRow("", self.save_btn)
         
         layout.addWidget(form_gb)
         
         # Summary Row
         summary_layout = QHBoxLayout()
-        self.daily_total_lbl = QLabel("Daily Total: 0.00 AFN")
-        self.monthly_total_lbl = QLabel("Monthly Total: 0.00 AFN")
+        self.daily_total_lbl = QLabel(lang_manager.get("daily_total") + ": 0.00 AFN")
+        self.monthly_total_lbl = QLabel(lang_manager.get("monthly_total") + ": 0.00 AFN")
         self.daily_total_lbl.setObjectName("stat_value")
         self.monthly_total_lbl.setObjectName("stat_value")
         summary_layout.addWidget(self.daily_total_lbl)
@@ -135,7 +141,10 @@ class PharmacyFinanceView(QWidget):
         
         # Table
         self.exp_table = QTableWidget(0, 5)
-        self.exp_table.setHorizontalHeaderLabels(["ID", "Date", "Type", "Purpose", "Amount"])
+        self.exp_table.setHorizontalHeaderLabels([
+            "ID", lang_manager.get("date"), lang_manager.get("type"), 
+            lang_manager.get("description"), lang_manager.get("amount")
+        ])
         style_table(self.exp_table, variant="premium")
         self.exp_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.exp_table)
@@ -146,7 +155,7 @@ class PharmacyFinanceView(QWidget):
         layout = QVBoxLayout(self.salary_tab)
         
         # Assignment Form (Moved from Users View)
-        gb = QGroupBox("Staff Salary Setup")
+        gb = QGroupBox(lang_manager.get("staff_salary_setup"))
         form = QFormLayout(gb)
         
         self.user_combo = QComboBox()
@@ -159,23 +168,30 @@ class PharmacyFinanceView(QWidget):
         
         self.salary_type = QComboBox()
         self.salary_type.setMinimumWidth(500)
-        self.salary_type.addItems(["Monthly", "Weekly", "Daily"])
+        self.salary_type.addItems([
+            lang_manager.get("monthly_report").replace(" Report", ""), 
+            "Weekly", 
+            lang_manager.get("daily_report").replace(" Report", "")
+        ]) # Note: We should probably add specific salary type keys, but for now reusing
         
-        self.assign_btn = QPushButton("Assign Salary")
+        self.assign_btn = QPushButton(lang_manager.get("assign_salary"))
         self.assign_btn.setMinimumWidth(500)
         style_button(self.assign_btn, variant="success")
         self.assign_btn.clicked.connect(self.assign_salary)
         
-        form.addRow("Select Staff:", self.user_combo)
-        form.addRow("Amount:", self.salary_amount)
-        form.addRow("Type:", self.salary_type)
+        form.addRow(lang_manager.get("select_staff") + ":", self.user_combo)
+        form.addRow(lang_manager.get("amount") + ":", self.salary_amount)
+        form.addRow(lang_manager.get("type") + ":", self.salary_type)
         form.addRow("", self.assign_btn)
         
         layout.addWidget(gb)
         
         # Salary Table
         self.salary_table = QTableWidget(0, 5)
-        self.salary_table.setHorizontalHeaderLabels(["Staff Name", "Salary Type", "Amount", "Status", "Actions"])
+        self.salary_table.setHorizontalHeaderLabels([
+            lang_manager.get("staff_name"), lang_manager.get("salary_type"), 
+            lang_manager.get("amount"), lang_manager.get("status"), lang_manager.get("actions")
+        ])
         style_table(self.salary_table)
         self.salary_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.salary_table)
@@ -330,7 +346,7 @@ class PharmacyFinanceView(QWidget):
         layout.setSpacing(15)
         
         # Header with current month
-        self.month_lbl = QLabel(f"Summary for {QDate.currentDate().toString('MMMM yyyy')}")
+        self.month_lbl = QLabel(lang_manager.get("overview") + " " + QDate.currentDate().toString('MMMM yyyy'))
         self.month_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #3b82f6;")
         layout.addWidget(self.month_lbl)
         
@@ -339,19 +355,19 @@ class PharmacyFinanceView(QWidget):
         grid.setSpacing(20)
         
         # Row 1: Sales Breakdown
-        self.gross_sale_card = self.create_summary_card("Gross Sales", "0.00 AFN", "#3b82f6")
-        self.ret_sale_card = self.create_summary_card("Returns Amount", "0.00 AFN", "#ef4444")
-        self.net_sale_card = self.create_summary_card("Net Sales", "0.00 AFN", "#2563eb")
+        self.gross_sale_card = self.create_summary_card(lang_manager.get("gross_sales"), "0.00 AFN", "#3b82f6")
+        self.ret_sale_card = self.create_summary_card(lang_manager.get("total_returns"), "0.00 AFN", "#ef4444")
+        self.net_sale_card = self.create_summary_card(lang_manager.get("total_sales"), "0.00 AFN", "#2563eb")
         
         # Row 2: COGS Breakdown
-        self.gross_cost_card = self.create_summary_card("Gross COGS", "0.00 AFN", "#64748b")
-        self.ret_cost_card = self.create_summary_card("Returns COGS", "0.00 AFN", "#94a3b8")
-        self.net_cost_card = self.create_summary_card("Net COGS", "0.00 AFN", "#475569")
+        self.gross_cost_card = self.create_summary_card(lang_manager.get("gross_cogs"), "0.00 AFN", "#64748b")
+        self.ret_cost_card = self.create_summary_card(lang_manager.get("total_returns"), "0.00 AFN", "#94a3b8")
+        self.net_cost_card = self.create_summary_card(lang_manager.get("net_cogs"), "0.00 AFN", "#475569")
         
         # Row 3: Profit & Ops
-        self.net_profit_card = self.create_summary_card("Trading Profit", "0.00 AFN", "#10b981")
-        self.total_exp_card = self.create_summary_card("Total OpEx", "0.00 AFN", "#f59e0b")
-        self.final_net_card = self.create_summary_card("Net Monthly Profit", "0.00 AFN", "#8b5cf6")
+        self.net_profit_card = self.create_summary_card(lang_manager.get("trading_profit"), "0.00 AFN", "#10b981")
+        self.total_exp_card = self.create_summary_card(lang_manager.get("opex"), "0.00 AFN", "#f59e0b")
+        self.final_net_card = self.create_summary_card(lang_manager.get("net_monthly_profit"), "0.00 AFN", "#8b5cf6")
         
         grid.addWidget(self.gross_sale_card, 0, 0)
         grid.addWidget(self.ret_sale_card, 0, 1)
@@ -368,7 +384,7 @@ class PharmacyFinanceView(QWidget):
         layout.addLayout(grid)
         layout.addStretch()
         
-        refresh_btn = QPushButton("Refresh Summary")
+        refresh_btn = QPushButton(lang_manager.get("refresh"))
         style_button(refresh_btn, variant="outline")
         refresh_btn.clicked.connect(self.load_summary)
         layout.addWidget(refresh_btn)

@@ -1,12 +1,13 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QPushButton, QLabel, QHeaderView, QGroupBox,
                              QFormLayout, QLineEdit, QComboBox, QMessageBox, QTableWidgetItem,
-                             QCheckBox, QFileDialog, QDialog, QFrame)
+                             QCheckBox, QFileDialog, QDialog, QFrame, QGridLayout, QDoubleSpinBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from src.ui.button_styles import style_button
 from src.ui.table_styles import style_table
 from src.database.db_manager import db_manager
+from src.core.localization import lang_manager
 
 class PharmacyCustomerView(QWidget):
     customers_updated = pyqtSignal()
@@ -40,135 +41,99 @@ class PharmacyCustomerView(QWidget):
         basic_title = QLabel("Basic Information")
         basic_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #166534; margin-bottom: 10px;")
         basic_layout.addWidget(basic_title)
-
-        form = QFormLayout()
-        form.setSpacing(12)
-
+        # Basic Info Inputs
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter customer's full name")
-        self.name_input.setStyleSheet("padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;")
-        self.name_input.setMinimumWidth(500)
-
+        self.name_input.setPlaceholderText(lang_manager.get("name") + "*")
+        self.name_input.setFixedHeight(50)
+        
         self.phone_input = QLineEdit()
-        self.phone_input.setPlaceholderText("Enter phone number")
-        self.phone_input.setStyleSheet("padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;")
-        self.phone_input.setMinimumWidth(500)
-
+        self.phone_input.setPlaceholderText(lang_manager.get("contact_number") + "*")
+        self.phone_input.setFixedHeight(50)
+        
         self.address_input = QLineEdit()
-        self.address_input.setPlaceholderText("Enter customer address")
-        self.address_input.setStyleSheet("padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;")
-        self.address_input.setMinimumWidth(500)
-
-        form.addRow("Full Name:", self.name_input)
-        form.addRow("Contact Number:", self.phone_input)
-        form.addRow("Address:", self.address_input)
-
-        basic_layout.addLayout(form)
+        self.address_input.setPlaceholderText(lang_manager.get("address"))
+        self.address_input.setFixedHeight(50)
+        
+        basic_layout.addWidget(self.name_input)
+        basic_layout.addWidget(self.phone_input)
+        basic_layout.addWidget(self.address_input)
         layout.addWidget(basic_group)
 
-        # Credit & Loan Group
-        loan_group = QFrame()
-        loan_group.setObjectName("pharmacy_customer_loan_group")
-        loan_group.setStyleSheet("""
-            QFrame#pharmacy_customer_loan_group {
-                background-color: #fef3c7;
-                border-radius: 8px;
-                border: 1px solid #fcd34d;
-            }
-        """)
-        loan_layout = QVBoxLayout(loan_group)
-        loan_layout.setContentsMargins(15, 15, 15, 15)
+        # Hidden inputs for KYC paths
+        self.photo_path = QLineEdit()
+        self.photo_path.setVisible(False)
+        self.id_card_path = QLineEdit()
+        self.id_card_path.setVisible(False)
+        layout.addWidget(self.photo_path)
+        layout.addWidget(self.id_card_path)
 
-        loan_title = QLabel("Credit & Loan Settings")
-        loan_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #92400e; margin-bottom: 10px;")
-        loan_layout.addWidget(loan_title)
-
-        loan_form = QFormLayout()
-        loan_form.setSpacing(12)
-
-        self.loan_cb = QCheckBox("Allow Credit Sales")
-        self.loan_cb.setStyleSheet("font-weight: 500; color: #92400e;")
-
-        self.loan_limit = QLineEdit()
-        self.loan_limit.setPlaceholderText("Maximum credit amount")
-        self.loan_limit.setStyleSheet("padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;")
-        self.loan_limit.setEnabled(False)
-        self.loan_limit.setMinimumWidth(500)
-        self.loan_cb.toggled.connect(self.loan_limit.setEnabled)
-
-        loan_form.addRow("Credit Sales:", self.loan_cb)
-        loan_form.addRow("Credit Limit (AFN):", self.loan_limit)
-
-        loan_layout.addLayout(loan_form)
+        # Loan / Credit Options
+        loan_group = QGroupBox(lang_manager.get("credit_controls"))
+        loan_layout = QGridLayout(loan_group)
+        
+        self.loan_cb = QCheckBox(lang_manager.get("allow_credit_sales"))
+        self.loan_cb.setChecked(True)
+        
+        self.loan_limit = QDoubleSpinBox()
+        self.loan_limit.setRange(0, 1000000)
+        self.loan_limit.setPrefix(lang_manager.get("limit_exceeded").split()[0] + " ") # Reuse partially or better use a specific key
+        self.loan_limit.setSuffix(" AFN")
+        self.loan_limit.setFixedHeight(45)
+        
+        loan_layout.addWidget(self.loan_cb, 0, 0)
+        loan_layout.addWidget(QLabel(lang_manager.get("reorder_level").split()[1] + ":"), 0, 1) # REUSE OR ADD KEY
+        loan_layout.addWidget(self.loan_limit, 0, 2)
+        
         layout.addWidget(loan_group)
 
         # KYC Section
-        kyc_group = QFrame()
-        kyc_group.setObjectName("pharmacy_customer_kyc_group")
-        kyc_group.setStyleSheet("""
-            QFrame#pharmacy_customer_kyc_group {
-                background-color: #f3f4f6;
-                border-radius: 8px;
-                border: 1px solid #d1d5db;
-            }
-        """)
-        kyc_layout = QVBoxLayout(kyc_group)
-        kyc_layout.setContentsMargins(15, 15, 15, 15)
+        layout.addWidget(QLabel("<b>" + lang_manager.get("kyc_documentation") + "</b>"))
+        kyc_grid = QGridLayout()
+        # Photo 1: Customer Face
+        f_box = QVBoxLayout()
+        f_box.addWidget(QLabel(lang_manager.get("customer_photo")))
+        self.face_img = QLabel()
+        self.face_img.setFixedSize(160, 120)
+        self.face_img.setStyleSheet("background: #f1f5f9; border: 1px dashed #cbd5e1;")
+        f_box.addWidget(self.face_img)
+        self.face_btn = QPushButton(lang_manager.get("browse"))
+        style_button(self.face_btn, variant="outline", size="small")
+        self.face_btn.clicked.connect(lambda: self.select_kyc_photo('face'))
+        f_box.addWidget(self.face_btn)
+        kyc_grid.addLayout(f_box, 0, 0)
 
-        kyc_title = QLabel("KYC Documentation")
-        kyc_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #374151; margin-bottom: 10px;")
-        kyc_layout.addWidget(kyc_title)
-
-        kyc_form = QFormLayout()
-        kyc_form.setSpacing(12)
-
-        self.photo_path = QLineEdit()
-        self.photo_path.setReadOnly(True)
-        self.photo_path.setPlaceholderText("No photo selected")
-        self.photo_path.setStyleSheet("padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; background: #f9fafb;")
-        self.photo_path.setMinimumWidth(500)
-        photo_btn = QPushButton("Browse Photo")
-        photo_btn.setStyleSheet("padding: 6px 12px; background: #3b82f6; color: white; border: none; border-radius: 4px; font-size: 12px;")
-        photo_btn.clicked.connect(lambda: self.browse_kyc("photo"))
-
-        photo_layout = QHBoxLayout()
-        photo_layout.addWidget(self.photo_path)
-        photo_layout.addWidget(photo_btn)
-
-        self.id_card_path = QLineEdit()
-        self.id_card_path.setReadOnly(True)
-        self.id_card_path.setPlaceholderText("No ID card selected")
-        self.id_card_path.setStyleSheet("padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; background: #f9fafb;")
-        self.id_card_path.setMinimumWidth(500)
-        id_card_btn = QPushButton("Browse ID Card")
-        id_card_btn.setStyleSheet("padding: 6px 12px; background: #10b981; color: white; border: none; border-radius: 4px; font-size: 12px;")
-        id_card_btn.clicked.connect(lambda: self.browse_kyc("id_card"))
-
-        id_layout = QHBoxLayout()
-        id_layout.addWidget(self.id_card_path)
-        id_layout.addWidget(id_card_btn)
-
-        kyc_form.addRow("Customer Photo:", photo_layout)
-        kyc_form.addRow("ID Card Photo:", id_layout)
-
-        kyc_layout.addLayout(kyc_form)
-        layout.addWidget(kyc_group)
+        # Photo 2: ID Card
+        id_box = QVBoxLayout()
+        id_box.addWidget(QLabel(lang_manager.get("id_card_photo")))
+        self.id_img = QLabel()
+        self.id_img.setFixedSize(160, 120)
+        self.id_img.setStyleSheet("background: #f1f5f9; border: 1px dashed #cbd5e1;")
+        id_box.addWidget(self.id_img)
+        self.id_btn = QPushButton(lang_manager.get("browse"))
+        style_button(self.id_btn, variant="outline", size="small")
+        self.id_btn.clicked.connect(lambda: self.select_kyc_photo('id'))
+        id_box.addWidget(self.id_btn)
+        kyc_grid.addLayout(id_box, 0, 1)
+        layout.addLayout(kyc_grid)
         
-        save_btn = QPushButton("Save Customer")
+        save_btn = QPushButton(lang_manager.get("save"))
         style_button(save_btn, variant="success")
         save_btn.clicked.connect(self.save_customer)
         layout.addWidget(save_btn)
 
         # Table
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["ID", "Full Name", "Contact", "Balance", "Actions"])
+        self.table.setHorizontalHeaderLabels([
+            "ID", lang_manager.get("name"), lang_manager.get("phone"), 
+            lang_manager.get("balance"), lang_manager.get("actions")
+        ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
         
         self.load_customers()
 
-    def browse_kyc(self, k_type):
+    def select_kyc_photo(self, k_type):
         """Ask user whether to upload from system or take photo"""
         # Create custom dialog with proper buttons
         msg = QMessageBox(self)
@@ -196,10 +161,15 @@ class PharmacyCustomerView(QWidget):
             return  # Cancelled
             
         if path:
-            if k_type == "photo": 
+            pix = QPixmap(path)
+            if k_type == "face": 
                 self.photo_path.setText(path)
-            else: 
+                if not pix.isNull():
+                    self.face_img.setPixmap(pix.scaled(self.face_img.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            elif k_type == "id": 
                 self.id_card_path.setText(path)
+                if not pix.isNull():
+                    self.id_img.setPixmap(pix.scaled(self.id_img.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
     
     def capture_photo_from_camera(self, photo_type):
         """Capture photo using OpenCV"""
@@ -300,7 +270,7 @@ class PharmacyCustomerView(QWidget):
         phone = self.phone_input.text().strip()
         address = self.address_input.text().strip()
         loan_enabled = 1 if self.loan_cb.isChecked() else 0
-        limit = float(self.loan_limit.text() or 0)
+        limit = self.loan_limit.value()
         
         photo = self.photo_path.text()
         id_card = self.id_card_path.text()
@@ -468,9 +438,26 @@ class PharmacyCustomerView(QWidget):
         self.phone_input.setText(row['phone'])
         self.address_input.setText(row['address'] or "")
         self.loan_cb.setChecked(bool(row['loan_enabled']))
-        self.loan_limit.setText(str(row['loan_limit']))
+        self.loan_limit.setValue(float(row['loan_limit']))
         self.photo_path.setText(row['kyc_photo'] or "")
         self.id_card_path.setText(row['kyc_id_card'] or "")
+        
+        # Update previews if exists
+        if row['kyc_photo']:
+            pix = QPixmap(row['kyc_photo'])
+            if not pix.isNull():
+                self.face_img.setPixmap(pix.scaled(self.face_img.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            self.face_img.clear()
+            self.face_img.setText("No Photo")
+
+        if row['kyc_id_card']:
+            pix_id = QPixmap(row['kyc_id_card'])
+            if not pix_id.isNull():
+                self.id_img.setPixmap(pix_id.scaled(self.id_img.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        else:
+            self.id_img.clear()
+            self.id_img.setText("No ID")
 
     def delete_customer(self, cid):
         if QMessageBox.question(self, "Confirm", "Delete this customer?") == QMessageBox.StandardButton.Yes:
@@ -485,6 +472,8 @@ class PharmacyCustomerView(QWidget):
         self.phone_input.clear()
         self.address_input.clear()
         self.loan_cb.setChecked(False)
-        self.loan_limit.clear()
+        self.loan_limit.setValue(0.0)
         self.photo_path.clear()
         self.id_card_path.clear()
+        self.face_img.clear()
+        self.id_img.clear()

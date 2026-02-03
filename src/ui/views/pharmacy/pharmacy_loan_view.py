@@ -6,6 +6,7 @@ from PyQt6.QtGui import QPixmap
 from src.ui.button_styles import style_button
 from src.ui.table_styles import style_table
 from src.database.db_manager import db_manager
+from src.core.localization import lang_manager
 
 class PharmacyLoanView(QWidget):
     def __init__(self):
@@ -18,14 +19,17 @@ class PharmacyLoanView(QWidget):
 
         # Search / Filter
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search customer name...")
+        self.search_input.setPlaceholderText(lang_manager.get("search") + " " + lang_manager.get("customer") + "...")
         self.search_input.setMinimumHeight(55)
         self.search_input.textChanged.connect(self.load_loans)
         layout.addWidget(self.search_input)
 
         # Table
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["ID", "Customer", "Total Loan", "Balance", "Status", "Actions"])
+        self.table.setHorizontalHeaderLabels([
+            "ID", lang_manager.get("customer"), lang_manager.get("total"), 
+            lang_manager.get("balance"), lang_manager.get("status"), lang_manager.get("actions")
+        ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.resizeColumnsToContents()
@@ -53,34 +57,39 @@ class PharmacyLoanView(QWidget):
                 for i, row in enumerate(rows):
                     self.table.insertRow(i)
                     self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
-                    self.table.setItem(i, 1, QTableWidgetItem(f"{row['customer_name']} ({row['phone']})"))
-                    self.table.setItem(i, 2, QTableWidgetItem(f"{row['total_amount']:,.2f} AFN"))
+                    self.table.setItem(i, 1, QTableWidgetItem(row['customer_name'] or lang_manager.get("walk_in_customer")))
+                    self.table.setItem(i, 2, QTableWidgetItem(f"{row['total_amount']:,.2f}"))
                     
-                    bal_item = QTableWidgetItem(f"{row['balance']:,.2f} AFN")
+                    bal_item = QTableWidgetItem(f"{row['balance']:,.2f}")
                     if row['balance'] < 0:
                         bal_item.setForeground(Qt.GlobalColor.darkGreen)
-                        bal_item.setToolTip("Customer has credit balance")
+                        bal_item.setToolTip(lang_manager.get("customer_has_credit_balance"))
                     elif row['balance'] > 0:
                         bal_item.setForeground(Qt.GlobalColor.red)
                     
                     self.table.setItem(i, 3, bal_item)
-                    self.table.setItem(i, 4, QTableWidgetItem(row['status']))
+                    
+                    status = row['status']
+                    status_item = QTableWidgetItem(lang_manager.get(status.lower()))
+                    if status == 'PENDING': status_item.setForeground(Qt.GlobalColor.red)
+                    else: status_item.setForeground(Qt.GlobalColor.darkGreen)
+                    self.table.setItem(i, 4, status_item)
                     
                     actions = QWidget()
                     act_layout = QHBoxLayout(actions)
                     act_layout.setContentsMargins(0,0,0,0)
                     act_layout.setSpacing(5)
 
-                    pay_btn = QPushButton("Pay")
-                    style_button(pay_btn, variant="info", size="small")
+                    pay_btn = QPushButton(lang_manager.get("pay"))
+                    style_button(pay_btn, variant="success", size="small")
                     pay_btn.clicked.connect(lambda ch, r=row: self.receive_payment(r))
                     
-                    view_btn = QPushButton("Details")
-                    style_button(view_btn, variant="outline", size="small")
-                    view_btn.clicked.connect(lambda ch, cid=row['customer_id'], name=row['customer_name']: self.show_visual_details(cid, name))
+                    detail_btn = QPushButton(lang_manager.get("details"))
+                    style_button(detail_btn, variant="info", size="small")
+                    detail_btn.clicked.connect(lambda ch, cid=row['customer_id']: self.show_visual_details(cid))
 
                     act_layout.addWidget(pay_btn)
-                    act_layout.addWidget(view_btn)
+                    act_layout.addWidget(detail_btn)
                     self.table.setCellWidget(i, 5, actions)
         except Exception as e:
             print(f"Error loading loans: {e}")

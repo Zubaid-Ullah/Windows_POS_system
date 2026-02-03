@@ -24,12 +24,12 @@ class PharmacySalesView(QWidget):
         # Search / Barcode Entry
         header = QHBoxLayout()
         self.barcode_input = QLineEdit()
-        self.barcode_input.setPlaceholderText("Scan Barcode or Type Product Name...")
+        self.barcode_input.setPlaceholderText(lang_manager.get("search") + " " + lang_manager.get("barcode") + "...")
         self.barcode_input.setFixedHeight(55)
         self.barcode_input.returnPressed.connect(self.handle_search)
         header.addWidget(self.barcode_input, 4)
         
-        self.add_btn = QPushButton("Add to Basket")
+        self.add_btn = QPushButton(lang_manager.get("add") + " " + lang_manager.get("basket"))
         style_button(self.add_btn, variant="primary")
         self.add_btn.clicked.connect(self.handle_search)
         header.addWidget(self.add_btn, 1)
@@ -41,10 +41,10 @@ class PharmacySalesView(QWidget):
         
         self.bill_number_display = QLabel("INV-0001")
         self.bill_number_display.setStyleSheet("font-family: monospace; font-size: 16px; font-weight: bold; padding: 8px 15px;")
-        bill_row.addWidget(QLabel("📄 Last Bill #:"))
+        bill_row.addWidget(QLabel("📄 " + lang_manager.get("last_bill") + ":"))
         bill_row.addWidget(self.bill_number_display)
         
-        self.reprint_btn = QPushButton(" 🖨️ Reprint Last Bill ")
+        self.reprint_btn = QPushButton(" 🖨️ " + lang_manager.get("reprint_last_bill") + " ")
         style_button(self.reprint_btn, variant="info", size="small")
         self.reprint_btn.clicked.connect(self.reprint_last_bill)
         bill_row.addWidget(self.reprint_btn)
@@ -67,9 +67,9 @@ class PharmacySalesView(QWidget):
         self.customer_combo.currentIndexChanged.connect(self.handle_customer_change)
         # self.customer_combo.installEventFilter(self) # Removed to fix selection issue on Windows
         
-        control_layout.addWidget(QLabel("Customer:"))
+        control_layout.addWidget(QLabel(lang_manager.get("customer") + ":"))
         control_layout.addWidget(self.customer_combo, 2)
-        control_layout.addWidget(QLabel("Method:"))
+        control_layout.addWidget(QLabel(lang_manager.get("method") + ":"))
         control_layout.addWidget(self.payment_combo, 1)
         
         layout.addLayout(control_layout)
@@ -78,7 +78,11 @@ class PharmacySalesView(QWidget):
         # Columns: Barcode, Name, Size, Expiry, Price, Qty, Total, Remaining, Actions
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
-            "Barcode", "Name", "Size", "Expiry", "Price", "Qty", "Total", "Remaining", "Action"
+            lang_manager.get("barcode"), lang_manager.get("name"), 
+            lang_manager.get("size"), lang_manager.get("expiry_date"), 
+            lang_manager.get("price"), lang_manager.get("quantity"), 
+            lang_manager.get("total"), lang_manager.get("remaining"), 
+            lang_manager.get("actions")
         ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -94,12 +98,12 @@ class PharmacySalesView(QWidget):
         footer.addStretch()
         
         # Requirement: Add credit button for loan purpose
-        credit_btn = QPushButton(" Credit Sale (Loan) ")
+        credit_btn = QPushButton(" " + lang_manager.get("credit_sale_loan") + " ")
         style_button(credit_btn, variant="warning", size="large")
         credit_btn.clicked.connect(lambda: self.process_checkout(force_credit=True))
         footer.addWidget(credit_btn)
         
-        checkout_btn = QPushButton(" Process Checkout ")
+        checkout_btn = QPushButton(" " + lang_manager.get("process_checkout") + " ")
         style_button(checkout_btn, variant="success", size="large")
         checkout_btn.clicked.connect(self.process_checkout)
         footer.addWidget(checkout_btn)
@@ -110,7 +114,7 @@ class PharmacySalesView(QWidget):
         curr_text = self.customer_combo.currentText()
         self.customer_combo.blockSignals(True)
         self.customer_combo.clear()
-        self.customer_combo.addItem("Walk-in Customer", None)
+        self.customer_combo.addItem(lang_manager.get("walk_in_customer"), None)
         try:
             with db_manager.get_pharmacy_connection() as conn:
                 rows = conn.execute("SELECT id, name FROM pharmacy_customers WHERE is_active=1").fetchall()
@@ -181,7 +185,7 @@ class PharmacySalesView(QWidget):
                 self.add_to_cart(product)
                 self.barcode_input.clear()
             else:
-                QMessageBox.warning(self, "Not Found", "Product not found in system.")
+                QMessageBox.warning(self, lang_manager.get("not_found"), lang_manager.get("not_found") + " in system.")
 
     def add_to_cart(self, p):
         #1. Existing Item Logic
@@ -264,7 +268,7 @@ class PharmacySalesView(QWidget):
             remove_btn.clicked.connect(lambda checked, idx=i: self.remove_item(idx))
             self.table.setCellWidget(i, 8, remove_btn)
             
-        self.total_lbl.setText(f"Total: {grant_total:.2f} AFN")
+        self.total_lbl.setText(f"{lang_manager.get('total')}: {grant_total:.2f} AFN")
         self.table.resizeColumnsToContents()
         self.table.resizeRowsToContents()
     

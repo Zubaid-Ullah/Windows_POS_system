@@ -226,18 +226,24 @@ class MainWindow(QMainWindow):
             has_perm = '*' in permissions or check_key in permissions or f"{check_key}_view" in permissions
             if not has_perm:
                 continue
+            
+            # Use localized text from lang_manager, fallback to hardcoded label
+            localized_label = lang_manager.get(key)
+            if localized_label == key:  # If no translation found, use fallback
+                localized_label = label
                 
-            btn = QPushButton(f"  {label}")
+            btn = QPushButton(f"  {localized_label}")
             btn.setIcon(qta.icon(icon, color="#a5b4fc"))
             btn.setObjectName("menu_button")
             btn.setProperty("view_key", key) # Durable ID
+            btn.setProperty("translation_key", key)  # Store key for language refresh
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda checked, k=key: self.switch_view(k))
             
             buttons_layout.addWidget(btn)
             self.menu_buttons.append(btn)
-            self.original_button_texts[btn] = f"  {label}"
+            self.original_button_texts[btn] = f"  {localized_label}"
 
         buttons_layout.addStretch()
         scroll_area.setWidget(buttons_container)

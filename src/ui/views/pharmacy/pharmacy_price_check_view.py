@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 import qtawesome as qta
 from src.database.db_manager import db_manager
+from src.core.localization import lang_manager
 
 class PharmacyPriceCheckView(QWidget):
     finished = pyqtSignal()
@@ -30,7 +31,7 @@ class PharmacyPriceCheckView(QWidget):
         search_layout.addWidget(search_icon)
         
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Scan Barcode or Type Medicine Name for Price Check...")
+        self.search_input.setPlaceholderText(lang_manager.get("search") + " " + lang_manager.get("medicine") + "...")
         self.search_input.setStyleSheet("border: none; font-size: 24px; padding: 10px; background: transparent;")
         self.search_input.textChanged.connect(self.search_product)
         search_layout.addWidget(self.search_input)
@@ -44,7 +45,7 @@ class PharmacyPriceCheckView(QWidget):
         self.result_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.result_layout.setSpacing(20)
         
-        self.placeholder_lbl = QLabel("Scan an item to see price and stock")
+        self.placeholder_lbl = QLabel(lang_manager.get("price_check_placeholder"))
         self.placeholder_lbl.setStyleSheet("font-size: 20px; color: #94a3b8;")
         self.result_layout.addWidget(self.placeholder_lbl)
         
@@ -90,7 +91,7 @@ class PharmacyPriceCheckView(QWidget):
         price_lbl.setStyleSheet("font-size: 72px; font-weight: 800; color: #059669;")
         
         qty = data['total_qty'] or 0
-        qty_lbl = QLabel(f"Available Quantity: {qty}")
+        qty_lbl = QLabel(f"{lang_manager.get('stock')}: {qty}")
         qty_lbl.setStyleSheet(f"font-size: 28px; font-weight: 600; color: {'#059669' if qty > 10 else '#dc2626'};")
         
         self.result_layout.addWidget(name_lbl)
@@ -111,7 +112,7 @@ class PharmacyPriceCheckView(QWidget):
             widget = self.result_layout.itemAt(i).widget()
             if widget:
                 widget.setParent(None)
-        placeholder_lbl = QLabel("Scan an item to see price and stock")
+        placeholder_lbl = QLabel(lang_manager.get("price_check_placeholder"))
         placeholder_lbl.setStyleSheet("font-size: 20px; color: #94a3b8;")
         self.result_layout.addWidget(placeholder_lbl)
 
@@ -122,7 +123,7 @@ class PharmacyPriceCheckView(QWidget):
             widget = self.result_layout.itemAt(i).widget()
             if widget:
                 widget.setParent(None)
-        nf = QLabel("Product Not Found")
+        nf = QLabel(lang_manager.get("not_found"))
         nf.setObjectName("page_header")
         nf.setStyleSheet("color: #ef4444;")
         self.result_layout.addWidget(nf)

@@ -124,7 +124,6 @@ def main():
             except Exception as e:
                 print(f"[WARNING] DB Integrity Check Failed: {e}")
                 return False
-
         def on_internet_gate_resolved(online):
             try:
                 print("="*60)
@@ -302,3 +301,17 @@ if __name__ == "__main__":
     import threading
     threading.Thread(target=bootstrap_installations_table, daemon=True).start()
     main()
+"""
+in pharmacy below windows needs localizations:
+finance window: table, QComboBoxes, QlineEdits, QPushButtons, QLabels, progit tab: summary cards
+inventory window: table, buttons.
+sales window: table, buttons, QComboBoxes, QLabels.
+customer window: table, buttons, QComboBoxes, QLabels, QlineEdits, QCheckBox.
+suppliers window: table, buttons, QLabels.
+loans window: table, buttons, QLabels, QlineEdits.
+report window: table, buttons, QComboBoxes, QLabels.
+price check window: QLineEdits, QLabels.
+returns window: table, buttons, QlineEdits, QLabels.
+users window: table, buttons, QComboBoxes, QLabels, QlineEdits, QCheckBoxes.
+settings window: buttons, QLabels, QLineEdits, tabs
+"""

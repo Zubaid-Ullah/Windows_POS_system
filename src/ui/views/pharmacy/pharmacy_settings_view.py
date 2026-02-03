@@ -88,9 +88,9 @@ class PharmacySettingsView(QWidget):
             }
         """)
 
-        tabs.addTab(self.create_company_tab(), "Pharmacy Info")
-        tabs.addTab(self.create_maintenance_tab(), "Maintenance")
-        tabs.addTab(self.create_backup_tab(), "Backup")
+        tabs.addTab(self.create_company_tab(), lang_manager.get("company_info"))
+        tabs.addTab(self.create_maintenance_tab(), lang_manager.get("maintenance"))
+        tabs.addTab(self.create_backup_tab(), lang_manager.get("backup"))
 
         main_layout.addWidget(tabs)
 
@@ -107,61 +107,61 @@ class PharmacySettingsView(QWidget):
 
         # Pharmacy Information Group
         style = "border: 1px solid #e0e5f2;"
-        company_group = QGroupBox("Pharmacy Information")
+        company_group = QGroupBox(lang_manager.get("pharmacy_info"))
         company_group.setStyleSheet(style)
         company_form = QFormLayout(company_group)
 
         self.company_name = QLineEdit()
         self.company_name.setStyleSheet(style)
         self.company_name.setMaximumHeight(300)
-        self.company_name.setPlaceholderText("Enter pharmacy name")
+        self.company_name.setPlaceholderText(lang_manager.get("pharmacy_name"))
 
         self.company_address = QTextEdit()
         self.company_address.setStyleSheet(style)
-        self.company_address.setMaximumHeight(300)
-        self.company_address.setPlaceholderText("Enter pharmacy address")
+        self.company_address.setMaximumHeight(80)
+        self.company_address.setPlaceholderText(lang_manager.get("address"))
 
         self.company_phone = QLineEdit()
         self.company_phone.setStyleSheet(style)
         self.company_phone.setMaximumHeight(300)
-        self.company_phone.setPlaceholderText("Enter phone number")
+        self.company_phone.setPlaceholderText(lang_manager.get("phone"))
 
         self.company_email = QLineEdit()
         self.company_email.setStyleSheet(style)
         self.company_email.setMaximumHeight(300)
-        self.company_email.setPlaceholderText("Enter email address")
+        self.company_email.setPlaceholderText(lang_manager.get("email"))
 
         self.walking_receipt_note = QTextEdit()
         self.walking_receipt_note.setStyleSheet(style)
         self.walking_receipt_note.setMinimumWidth(300)
-        self.walking_receipt_note.setMaximumHeight(80)
-        self.walking_receipt_note.setPlaceholderText("Message for Walking Customers (e.g., Thank you for your visit!)")
+        self.walking_receipt_note.setMaximumHeight(60)
+        self.walking_receipt_note.setPlaceholderText(lang_manager.get("walking_receipt_note_placeholder"))
 
         self.loan_receipt_note = QTextEdit()
         self.loan_receipt_note.setStyleSheet(style)
         self.loan_receipt_note.setMinimumWidth(300)
-        self.loan_receipt_note.setMaximumHeight(150)
-        self.loan_receipt_note.setPlaceholderText("Message for Trusty/Loan Customers (e.g., Please pay soon...)")
+        self.loan_receipt_note.setMaximumHeight(60)
+        self.loan_receipt_note.setPlaceholderText(lang_manager.get("loan_receipt_note_placeholder"))
 
-        company_form.addRow("Pharmacy Name:", self.company_name)
-        company_form.addRow("Address:", self.company_address)
-        company_form.addRow("Phone:", self.company_phone)
-        company_form.addRow("Email:", self.company_email)
-        company_form.addRow("Walking Receipt Note:", self.walking_receipt_note)
-        company_form.addRow("Loan/Trusty Receipt Note:", self.loan_receipt_note)
+        company_form.addRow(lang_manager.get("pharmacy_name") + ":", self.company_name)
+        company_form.addRow(lang_manager.get("address") + ":", self.company_address)
+        company_form.addRow(lang_manager.get("phone") + ":", self.company_phone)
+        company_form.addRow(lang_manager.get("email") + ":", self.company_email)
+        company_form.addRow(lang_manager.get("walking_receipt_note") + ":", self.walking_receipt_note)
+        company_form.addRow(lang_manager.get("loan_receipt_note") + ":", self.loan_receipt_note)
 
         layout.addWidget(company_group)
 
         # WhatsApp QR Code Group
-        whatsapp_group = QGroupBox("WhatsApp Integration")
+        whatsapp_group = QGroupBox(lang_manager.get("whatsapp_integration"))
         whatsapp_layout = QVBoxLayout(whatsapp_group)
 
         # WhatsApp number input
         whatsapp_form = QFormLayout()
         self.whatsapp_number = QLineEdit()
-        self.whatsapp_number.setPlaceholderText("Enter WhatsApp number (e.g., +1234567890)")
+        self.whatsapp_number.setPlaceholderText(lang_manager.get("enter_whatsapp_number"))
         self.whatsapp_number.setMinimumWidth(300)
-        whatsapp_form.addRow("WhatsApp Number:", self.whatsapp_number)
+        whatsapp_form.addRow(lang_manager.get("whatsapp_number") + ":", self.whatsapp_number)
 
         whatsapp_layout.addLayout(whatsapp_form)
 
@@ -176,11 +176,11 @@ class PharmacySettingsView(QWidget):
         qr_layout.addWidget(self.qr_label)
 
         qr_controls = QVBoxLayout()
-        self.generate_qr_btn = QPushButton("Generate QR Code")
+        self.generate_qr_btn = QPushButton(lang_manager.get("generate_qr_code"))
         style_button(self.generate_qr_btn, variant="primary")
         self.generate_qr_btn.clicked.connect(self.generate_whatsapp_qr)
 
-        self.save_qr_btn = QPushButton("Save QR Code")
+        self.save_qr_btn = QPushButton(lang_manager.get("save_qr_code"))
         style_button(self.save_qr_btn, variant="success")
         self.save_qr_btn.clicked.connect(self.save_qr_code)
 
@@ -193,7 +193,7 @@ class PharmacySettingsView(QWidget):
         whatsapp_layout.addLayout(qr_layout)
 
         # Instructions
-        instructions = QLabel("This QR code allows customers to quickly contact you via WhatsApp for support and inquiries.")
+        instructions = QLabel(lang_manager.get("whatsapp_qr_instructions"))
         instructions.setWordWrap(True)
         instructions.setStyleSheet("color: #666; font-size: 12px; margin-top: 10px;")
         whatsapp_layout.addWidget(instructions)
@@ -204,7 +204,7 @@ class PharmacySettingsView(QWidget):
         save_layout = QHBoxLayout()
         save_layout.addStretch()
 
-        self.save_settings_btn = QPushButton("Save All Settings")
+        self.save_settings_btn = QPushButton(lang_manager.get("save"))
         style_button(self.save_settings_btn, variant="success", size="large")
         self.save_settings_btn.clicked.connect(self.save_settings)
 
@@ -222,29 +222,29 @@ class PharmacySettingsView(QWidget):
         layout.setSpacing(25)
 
         # System Maintenance Section
-        conn_card, conn_layout = self.create_card("Connectivity Settings", "fa5s.wifi")
+        conn_card, conn_layout = self.create_card(lang_manager.get("maintenance"), "fa5s.wifi")
         
-        self.offline_mode_cb = QCheckBox("Enable Offline Mode")
+        self.offline_mode_cb = QCheckBox(lang_manager.get("offline_mode"))
         self.offline_mode_cb.setStyleSheet("font-size: 14px; font-weight: bold; color: #374151;")
         self.offline_mode_cb.setChecked(local_config.get("offline_mode"))
         self.offline_mode_cb.toggled.connect(self.toggle_offline_mode)
         conn_layout.addWidget(self.offline_mode_cb)
         
-        note_lbl = QLabel("Note: Enabling Offline Mode will disable daily cloud sync.\nMandatory contract validation will still occur upon expiry.")
+        note_lbl = QLabel(lang_manager.get("offline_mode_note"))
         note_lbl.setStyleSheet("color: #6b7280; font-style: italic; font-size: 12px;")
         conn_layout.addWidget(note_lbl)
         
         layout.addWidget(conn_card)
 
-        maint_card, maint_layout = self.create_card("Pharmacy System Maintenance", "fa5s.tools")
+        maint_card, maint_layout = self.create_card(lang_manager.get("maintenance"), "fa5s.tools")
 
-        vacuum_btn = QPushButton(" Optimize Database")
+        vacuum_btn = QPushButton(" " + lang_manager.get("optimize_database"))
         vacuum_btn.setIcon(qta.icon("fa5s.broom", color="white"))
         style_button(vacuum_btn, variant="primary")
         vacuum_btn.clicked.connect(self.run_vacuum)
         maint_layout.addWidget(vacuum_btn)
 
-        clean_logs_btn = QPushButton(" Clear Activity Logs")
+        clean_logs_btn = QPushButton(" " + lang_manager.get("clear_logs"))
         clean_logs_btn.setIcon(qta.icon("fa5s.history", color="white"))
         style_button(clean_logs_btn, variant="warning")
         clean_logs_btn.clicked.connect(self.clear_logs)
@@ -262,14 +262,14 @@ class PharmacySettingsView(QWidget):
         layout.setSpacing(25)
 
         # Backup Section
-        backup_card, backup_layout = self.create_card("Pharmacy Database Management", "fa5s.database")
+        backup_card, backup_layout = self.create_card(lang_manager.get("backup"), "fa5s.database")
 
-        backup_btn = QPushButton(" Create Full Backup")
+        backup_btn = QPushButton(" " + lang_manager.get("full_backup"))
         backup_btn.setIcon(qta.icon("fa5s.file-export", color="white"))
         style_button(backup_btn, variant="success")
         backup_btn.clicked.connect(self.run_backup)
 
-        restore_btn = QPushButton(" Restore from Backup")
+        restore_btn = QPushButton(" " + lang_manager.get("restore_backup"))
         restore_btn.setIcon(qta.icon("fa5s.file-import", color="white"))
         style_button(restore_btn, variant="info")
         restore_btn.clicked.connect(self.run_restore)
