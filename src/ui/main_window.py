@@ -24,7 +24,9 @@ from src.ui.views.super_admin_view import SuperAdminView
 from src.ui.views.dashboard_view import DashboardView
 from src.ui.views.finance_view import FinanceView
 from src.ui.views.user_management_view import UserManagementView
-from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QTimer
+from src.core.github_update_checker import update_checker
+from src.core.app_version import APP_VERSION
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -43,6 +45,14 @@ class MainWindow(QMainWindow):
         self.apply_theme()
         lang_manager.language_changed.connect(self.on_language_changed)
         theme_manager.theme_changed.connect(self.apply_theme)
+        
+        # Update Checker signals
+        update_checker.update_available.connect(self.on_update_available)
+        update_checker.download_completed.connect(self.on_update_downloaded)
+        update_checker.download_failed.connect(self.on_update_failed)
+        
+        # Check for updates on startup with a slight delay
+        QTimer.singleShot(5000, update_checker.check_for_updates)
 
     def on_language_changed(self, lang):
         # Only refresh main app if user is logged in
@@ -262,7 +272,16 @@ class MainWindow(QMainWindow):
         logout_btn = QPushButton(qta.icon("fa5s.power-off", color="#f87171"), "")
         logout_btn.setStyleSheet("background: transparent; border: none;")
         logout_btn.clicked.connect(self.handle_logout)
+        logout_btn.setToolTip("Logout")
         prof_lay.addWidget(logout_btn)
+        
+        # Update Button (Hidden by default)
+        self.update_btn = QPushButton(qta.icon("fa5s.arrow-alt-circle-up", color="#fbbf24"), "")
+        self.update_btn.setStyleSheet("background: transparent; border: none;")
+        self.update_btn.setToolTip("Update available")
+        self.update_btn.clicked.connect(self.show_update_dialog)
+        self.update_btn.hide()
+        prof_lay.addWidget(self.update_btn)
         
         sidebar_layout.addWidget(self.profile_frame)
         layout.addWidget(self.sidebar)
@@ -508,3 +527,43 @@ class MainWindow(QMainWindow):
             self.pharmacy_hub = None
         self.login_view.stack.setCurrentIndex(0)
         self.central_widget.setCurrentWidget(self.login_view)
+
+    def on_update_available(self, version, notes):
+        """Show update notification"""
+        self.latest_version = version
+        self.release_notes = notes
+        self.update_btn.show()
+        self.show_update_dialog()
+
+    def show_update_dialog(self):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("Update Available")
+        msg.setText(f"A new version is available: v{self.latest_version}\n(Current: v{APP_VERSION})")
+        msg.setInformativeText("Would you like to download and install it now?")
+        
+        update_btn = msg.addButton("Update", QMessageBox.ButtonRole.AcceptRole)
+        logout_btn = msg.addButton("Logout", QMessageBox.ButtonRole.RejectRole)
+        cancel_btn = msg.addButton("Later", QMessageBox.ButtonRole.ActionRole)
+        
+        msg.exec()
+        
+        if msg.clickedButton() == update_btn:
+            self.start_update_download()
+        elif msg.clickedButton() == logout_btn:
+            self.handle_logout()
+
+    def start_update_download(self):
+        self.update_btn.setEnabled(False)
+        self.update_btn.setToolTip("Downloading update...")
+        QMessageBox.information(self, "Downloading", "The update is downloading in the background. The app will restart once complete.")
+        update_checker.download_update()
+
+    def on_update_downloaded(self, path):
+        """Launcher installer"""
+        update_checker.launch_installer(path)
+
+    def on_update_failed(self, error):
+        self.update_btn.setEnabled(True)
+        self.update_btn.setToolTip("Update failed - Click to retry")
+        QMessageBox.critical(self, "Update Failed", f"Failed to download update: {error}")

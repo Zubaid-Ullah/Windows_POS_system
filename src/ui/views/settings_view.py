@@ -12,7 +12,9 @@ from src.database.db_manager import db_manager
 from src.ui.button_styles import style_button
 from src.core.supabase_manager import supabase_manager
 from src.core.local_config import local_config
+from src.core.autostart_helper import AutoStartHelper
 import os
+import platform
 
 class SettingsView(QWidget):
     def __init__(self):
@@ -281,6 +283,20 @@ class SettingsView(QWidget):
         conn_layout.addWidget(note_lbl)
         
         layout.addWidget(conn_card)
+        
+        # Auto-Start Section (Windows Only)
+        if AutoStartHelper.is_windows():
+            autostart_card, autostart_layout = self.create_card("System Startup", "fa5s.clock")
+            self.autostart_cb = QCheckBox("Launch on Startup")
+            self.autostart_cb.setStyleSheet("font-size: 14px; font-weight: bold; color: #374151;")
+            self.autostart_cb.setChecked(AutoStartHelper.is_enabled())
+            self.autostart_cb.toggled.connect(self.toggle_autostart)
+            autostart_layout.addWidget(self.autostart_cb)
+            
+            auto_note = QLabel("Note: This registers the application in Windows Task Scheduler to start automatically when you log in.")
+            auto_note.setStyleSheet("color: #6b7280; font-style: italic; font-size: 12px;")
+            autostart_layout.addWidget(auto_note)
+            layout.addWidget(autostart_card)
 
         # System Maintenance Section
         maint_card, maint_layout = self.create_card("System Maintenance", "fa5s.tools")
@@ -565,3 +581,19 @@ class SettingsView(QWidget):
         mode = "OFFLINE" if checked else "ONLINE"
         print(f"📡 System switched to {mode} mode.")
         QMessageBox.information(self, "Connectivity", f"{status}\nRestart may be required for full effect.")
+
+    def toggle_autostart(self, checked):
+        if checked:
+            success = AutoStartHelper.enable_autostart()
+            if success:
+                QMessageBox.information(self, "Success", "Launch on Startup enabled.")
+            else:
+                self.autostart_cb.setChecked(False)
+                QMessageBox.critical(self, "Error", "Failed to enable Launch on Startup. You may need administrator privileges.")
+        else:
+            success = AutoStartHelper.disable_autostart()
+            if success:
+                QMessageBox.information(self, "Success", "Launch on Startup disabled.")
+            else:
+                self.autostart_cb.setChecked(True)
+                QMessageBox.critical(self, "Error", "Failed to disable Launch on Startup.")
