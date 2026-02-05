@@ -266,9 +266,19 @@ class PharmacyDashboardView(QWidget):
                     SELECT 
                         p.id, 
                         p.name_en,
-                        (SELECT COALESCE(SUM(si.quantity), 0) FROM pharmacy_sale_items si WHERE si.product_id = p.id) as sold_qty,
-                        (SELECT COALESCE(SUM(inv.quantity), 0) FROM pharmacy_inventory inv WHERE inv.product_id = p.id) as current_qty
+                        COALESCE(sales.total_sold, 0) as sold_qty,
+                        COALESCE(inv.total_current, 0) as current_qty
                     FROM pharmacy_products p
+                    LEFT JOIN (
+                        SELECT product_id, SUM(quantity) as total_sold 
+                        FROM pharmacy_sale_items 
+                        GROUP BY product_id
+                    ) sales ON p.id = sales.product_id
+                    LEFT JOIN (
+                        SELECT product_id, SUM(quantity) as total_current 
+                        FROM pharmacy_inventory 
+                        GROUP BY product_id
+                    ) inv ON p.id = inv.product_id
                     WHERE p.is_active = 1
                     ORDER BY p.name_en ASC
                 """).fetchall()

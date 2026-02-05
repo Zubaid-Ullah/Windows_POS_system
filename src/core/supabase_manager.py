@@ -92,16 +92,8 @@ class SupabaseManager:
 
     def _log(self, msg):
         try:
-            # Log to file next to executable/script
-            import sys
-            if getattr(sys, 'frozen', False):
-                base = os.path.dirname(sys.executable)
-            else:
-                base = os.path.dirname(os.path.abspath(__file__))
-            
             sanitized_msg = self._sanitize(msg)
-            with open(os.path.join(base, "debug_connectivity.txt"), "a", encoding='utf-8') as f:
-                f.write(f"[{datetime.now().time()}] {sanitized_msg}\n")
+            print(f"[{datetime.now().time()}] {sanitized_msg}")
         except: pass
 
     def _headers(self) -> Dict[str, str]:
@@ -431,7 +423,7 @@ class SupabaseManager:
 
             # Added pharmacy_active and store_active for modular activation control
             params = {
-                "select": "status,company_name,phone,email,address,location,license,contract_expiry,system_id,pc_name,serial_key,installation_time,installed_by,contract_duration_days,pharmacy_active,store_active",
+                "select": "status,company_name,phone,email,address,location,license,contract_expiry,system_id,pc_name,serial_key,installation_time,installed_by,contract_duration_days,pharmacy_active,store_active,shutdown_time",
                 "system_id": f"eq.{system_id}",
                 "limit": "1",
             }

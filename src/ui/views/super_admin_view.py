@@ -127,12 +127,14 @@ class SuperAdminView(QWidget):
         return tab
 
     def load_credentials_data(self):
-        data = []
+        """Loads credentials from local files and then triggers background cloud fetch."""
+        self.cred_table.setRowCount(0)
+        self.all_data_rows = []
         
-        # 1. Load from local_config
+        # 1. Load from local_config immediately
         sid = local_config.get("system_id")
-        data.append(("Local System ID", sid))
-        data.append(("Registration Status", str(local_config.get("account_created"))))
+        self.all_data_rows.append(("Local System ID", sid))
+        self.all_data_rows.append(("Registration Status", str(local_config.get("account_created"))))
         
         # 2. Load from useraccount.txt
         txt_path = os.path.join("credentials", "useraccount.txt")
@@ -140,28 +142,50 @@ class SuperAdminView(QWidget):
             try:
                 with open(txt_path, "r") as f:
                     content = f.read()
-                    data.append(("Local File Content", "--- useraccount.txt ---"))
+                    self.all_data_rows.append(("Local File Content", "--- useraccount.txt ---"))
                     for line in content.splitlines():
                         if ":" in line:
                             k, v = line.split(":", 1)
-                            data.append((k.strip(), v.strip()))
+                            self.all_data_rows.append((k.strip(), v.strip()))
             except: pass
             
-        # 3. Load from Cloud (installations table)
+        # Update table with local data first
+        self._update_table_ui()
+
+        # 3. Background Cloud Fetch
         if sid:
-            cloud_data = supabase_manager.get_installation_status(sid)
-            if cloud_data:
-                data.append(("--- CLOUD DATA ---", "--- (installations table) ---"))
-                for k, v in cloud_data.items():
-                    data.append((f"Cloud: {k}", str(v)))
-        
+            self._start_cloud_fetch(sid)
+
+    def _update_table_ui(self):
         self.cred_table.setRowCount(0)
-        for i, (k, v) in enumerate(data):
+        for i, (k, v) in enumerate(self.all_data_rows):
             self.cred_table.insertRow(i)
             self.cred_table.setItem(i, 0, QTableWidgetItem(k))
             self.cred_table.setItem(i, 1, QTableWidgetItem(v))
-        
         self.cred_table.resizeRowsToContents()
+
+    def _start_cloud_fetch(self, sid):
+        from PyQt6.QtCore import QThread, pyqtSignal
+        
+        class CloudWorker(QThread):
+            data_received = pyqtSignal(dict)
+            def run(self):
+                try:
+                    cloud_data = supabase_manager.get_installation_status(sid)
+                    if cloud_data:
+                        self.data_received.emit(cloud_data)
+                except: pass
+
+        self.worker = CloudWorker()
+        self.worker.data_received.connect(self._on_cloud_data_received)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.start()
+
+    def _on_cloud_data_received(self, cloud_data):
+        self.all_data_rows.append(("--- CLOUD DATA ---", "--- (installations table) ---"))
+        for k, v in cloud_data.items():
+            self.all_data_rows.append((f"Cloud: {k}", str(v)))
+        self._update_table_ui()
 
     def load_system_settings(self):
         with db_manager.get_connection() as conn:

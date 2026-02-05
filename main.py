@@ -4,30 +4,21 @@ import os
 import traceback
 from datetime import datetime
 
-LOG_PATH = os.path.expanduser("~/Desktop/AfexPOS_startup.log")
-
+# Logging removed for security as requested
 def log_msg(msg):
-    try:
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat()} - {msg}\n")
-    except: pass
+    pass
 
 try:
-    # Redirect print and errors to file to prevent crash on Finder launch
-    log_file = open(LOG_PATH, "w", buffering=1, encoding="utf-8") # Clear log on start
-    log_file.write("--- Afex POS GUI Startup Session ---\n")
-    log_file.write(f"Executable: {sys.executable}\n")
-    log_file.write(f"CWD: {os.getcwd()}\n")
+    print("--- Afex POS GUI Startup Session ---")
+    print(f"Executable: {sys.executable}")
+    print(f"CWD: {os.getcwd()}")
     
     # If we are in a .app bundle, let's fix CWD to Resources
     if getattr(sys, 'frozen', False) and "Contents/MacOS" in sys.executable:
         res_path = os.path.join(os.path.dirname(sys.executable), "..", "Resources")
         if os.path.exists(res_path):
             os.chdir(res_path)
-            log_file.write(f"Changed CWD to Bundle Resources: {os.getcwd()}\n")
-
-    sys.stdout = log_file
-    sys.stderr = log_file
+            print(f"Changed CWD to Bundle Resources: {os.getcwd()}")
 except Exception as e:
     pass
 

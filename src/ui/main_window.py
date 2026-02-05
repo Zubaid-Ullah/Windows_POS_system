@@ -276,7 +276,7 @@ class MainWindow(QMainWindow):
                 ]
                 # Modular Activation: If pharmacy is available, show button to switch
                 if local_config.get("pharmacy_active", True):
-                    menus.insert(1, ("pharm_dashboard", "fa5s.prescription-bottle-alt", "Pharmacy"))
+                    menus.insert(1, ("pharmacy", "fa5s.prescription-bottle-alt", "Pharmacy"))
 
             if user.get('is_super_admin'):
                 menus.insert(-1, ("credentials", "fa5s.key", "Credentials"))
@@ -302,7 +302,7 @@ class MainWindow(QMainWindow):
                 ]
                 # Modular Activation: If store is available, show button to switch
                 if local_config.get("store_active", True):
-                    menus.insert(1, ("dashboard", "fa5s.store", "Store"))
+                    menus.insert(1, ("store", "fa5s.store", "Store"))
 
             if user.get('is_super_admin'):
                 menus.append(("pharm_credentials", "fa5s.key", "Credentials"))
@@ -422,6 +422,19 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Access Denied", "Only Admin or Manager can access this panel.")
 
     def switch_view(self, view_key):
+        # Module Switching Logic: Intercept clicks that move between Store and Pharmacy
+        if view_key == "store":
+            if self.business_mode == "STORE": return # Already here
+            self.show_main_app("STORE")
+            return
+        if view_key == "pharmacy":
+            if self.business_mode == "PHARMACY":
+                # If already in pharmacy, redirect to dashboard as sub-view
+                view_key = "pharm_dashboard" 
+            else:
+                self.show_main_app("PHARMACY")
+                return
+
         # Determine Auth Class
         user_auth = PharmacyAuth if self.business_mode == "PHARMACY" else Auth
         

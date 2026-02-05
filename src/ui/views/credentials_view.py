@@ -111,59 +111,152 @@ class CredentialsView(QWidget):
             QMessageBox.warning(self, "Supabase Error", "Supabase client not initialized. Check your connection or credentials.")
             return
 
+        # Show Loading Placeholder
+        self.table.setRowCount(0)
+        self.table.insertRow(0)
+        loading_item = QTableWidgetItem("Fetching data from cloud... Please wait.")
+        loading_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.setItem(0, 0, loading_item)
+        self.table.setSpan(0, 0, 1, 7)
+
+        from PyQt6.QtCore import QThread, pyqtSignal
+        class FetchWorker(QThread):
+            data_received = pyqtSignal(list)
+            error_occurred = pyqtSignal(str)
+
+            def __init__(self, supabase_client, parent=None):
+                super().__init__(parent)
+                self._supabase = supabase_client
+
+            def run(self):
+                try:
+                    # According to register_installation.py order by installation_time DESC
+                    res = self._supabase.table("installations").select("*").order("installation_time", desc=True).execute()
+                    self.data_received.emit(res.data or [])
+                except Exception as e:
+                    self.error_occurred.emit(str(e))
+
+        self.fetch_worker = FetchWorker(self.supabase)
+        self.fetch_worker.data_received.connect(self._populate_table)
+        self.fetch_worker.error_occurred.connect(lambda e: print(f"Fetch Error: {e}"))
+        self.fetch_worker.finished.connect(self.fetch_worker.deleteLater)
+        self.fetch_worker.start()
+
+    def _populate_table(self, rows):
+        from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton
+        self.table.setRowCount(0)
+        for i, r in enumerate(rows):
+            self.table.insertRow(i)
+            
+            sid = r.get('system_id', '')
+            sid_item = QTableWidgetItem(sid)
+            if sid == getattr(self, 'current_sid', None):
+                sid_item.setText(f"{sid} (This PC)")
+                sid_item.setBackground(Qt.GlobalColor.yellow)
+            
+            self.table.setItem(i, 0, sid_item)
+            self.table.setItem(i, 1, QTableWidgetItem(r.get('pc_name', '')))
+            self.table.setItem(i, 2, QTableWidgetItem(r.get('company_name', '')))
+            
+            status = r.get('status', 'unknown')
+            status_item = QTableWidgetItem(status.upper())
+            if status == 'active':
+                status_item.setForeground(Qt.GlobalColor.green)
+            else:
+                status_item.setForeground(Qt.GlobalColor.red)
+            self.table.setItem(i, 3, status_item)
+            
+            self.table.setItem(i, 4, QTableWidgetItem(r.get('contract_expiry', '')))
+            self.table.setItem(i, 5, QTableWidgetItem(r.get('installation_time', '')))
+
+            # Actions Layout
+            btn_widget = QWidget()
+            btn_lay = QHBoxLayout(btn_widget)
+            btn_lay.setContentsMargins(2, 2, 2, 2)
+            
+            toggle_btn = QPushButton("Deactivate" if status == 'active' else "Activate")
+            style_button(toggle_btn, variant="danger" if status == 'active' else "success", size="small")
+            toggle_btn.clicked.connect(lambda checked, s_id=sid, curr_s=status: self.toggle_status(s_id, curr_s))
+            btn_lay.addWidget(toggle_btn)
+            
+            extend_btn = QPushButton("Extend")
+            style_button(extend_btn, variant="info", size="small")
+            extend_btn.clicked.connect(lambda checked, s_id=sid: self.extend_contract(s_id))
+            btn_lay.addWidget(extend_btn)
+
+            shutdown_btn = QPushButton("Shutdown")
+            style_button(shutdown_btn, variant="danger", size="small")
+            shutdown_btn.setToolTip("Schedule or Cancel remote shutdown")
+            shutdown_btn.clicked.connect(lambda checked, s_id=sid: self.remote_shutdown(s_id))
+            btn_lay.addWidget(shutdown_btn)
+            
+            # Check for pending shutdown to show a "Abort" option
+            if r.get('shutdown_time'):
+                clear_btn = QPushButton("Abort")
+                style_button(clear_btn, variant="warning", size="small")
+                clear_btn.setToolTip("Clear pending shutdown request")
+                clear_btn.clicked.connect(lambda checked, s_id=sid: self.abort_shutdown(s_id))
+                btn_lay.addWidget(clear_btn)
+
+            self.table.setCellWidget(i, 6, btn_widget)
+
+        self.table.resizeColumnsToContents()
+        self.table.resizeRowsToContents()
+
+    def abort_shutdown(self, system_id):
+        from src.core.supabase_manager import supabase_manager
+        from PyQt6.QtWidgets import QInputDialog, QLineEdit
+        
+        key, ok = QInputDialog.getText(self, "Verification Required", 
+                                     "Enter SuperAdmin SECRET KEY to ABORT shutdown:",
+                                     QLineEdit.EchoMode.Password)
+        if not ok or not key: return
+        if not supabase_manager.verify_secret_key(key):
+            QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
+            return
+
         try:
-            # According to register_installation.py order by installation_time DESC
-            res = self.supabase.table("installations").select("*").order("installation_time", desc=True).execute()
-            rows = res.data or []
-
-            self.table.setRowCount(0)
-            for i, r in enumerate(rows):
-                self.table.insertRow(i)
-                
-                sid = r.get('system_id', '')
-                sid_item = QTableWidgetItem(sid)
-                if sid == getattr(self, 'current_sid', None):
-                    sid_item.setText(f"{sid} (This PC)")
-                    sid_item.setBackground(Qt.GlobalColor.yellow if sid else Qt.GlobalColor.transparent)
-                
-                self.table.setItem(i, 0, sid_item)
-                self.table.setItem(i, 1, QTableWidgetItem(r.get('pc_name', '')))
-                self.table.setItem(i, 2, QTableWidgetItem(r.get('company_name', '')))
-                
-                status = r.get('status', 'unknown')
-                status_item = QTableWidgetItem(status.upper())
-                if status == 'active':
-                    status_item.setForeground(Qt.GlobalColor.green)
-                else:
-                    status_item.setForeground(Qt.GlobalColor.red)
-                self.table.setItem(i, 3, status_item)
-                
-                self.table.setItem(i, 4, QTableWidgetItem(r.get('contract_expiry', '')))
-                self.table.setItem(i, 5, QTableWidgetItem(r.get('installation_time', '')))
-
-                # Actions
-                btn_widget = QWidget()
-                btn_lay = QHBoxLayout(btn_widget)
-                btn_lay.setContentsMargins(2, 2, 2, 2)
-                
-                toggle_btn = QPushButton("Deactivate" if status == 'active' else "Activate")
-                style_button(toggle_btn, variant="danger" if status == 'active' else "success", size="small")
-                toggle_btn.clicked.connect(lambda checked, s_id=sid, curr_s=status: self.toggle_status(s_id, curr_s))
-                btn_lay.addWidget(toggle_btn)
-                
-                extend_btn = QPushButton("Extend")
-                style_button(extend_btn, variant="info", size="small")
-                extend_btn.clicked.connect(lambda checked, s_id=sid: self.extend_contract(s_id))
-                btn_lay.addWidget(extend_btn)
-                
-                self.table.setCellWidget(i, 6, btn_widget)
-
-            self.table.resizeColumnsToContents()
-            self.table.resizeRowsToContents()
-
+            res = self.supabase.table("installations").update({"shutdown_time": None}).eq("system_id", system_id).execute()
+            if res.data:
+                QMessageBox.information(self, "Cancelled", f"Remote shutdown for {system_id} has been cancelled.")
+                self.load_data()
         except Exception as e:
-            print(f"Failed to fetch installations: {e}")
-            # Don't show error dialog - this is likely a network issue and doesn't affect local operations
+            QMessageBox.critical(self, "Error", f"Failed to abort: {e}")
+
+    def remote_shutdown(self, system_id):
+        from src.core.supabase_manager import supabase_manager
+        from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+        from datetime import datetime, timedelta
+        
+        # 1. Verification
+        key, ok = QInputDialog.getText(self, "Verification Required", 
+                                     "Enter SuperAdmin SECRET KEY to schedule SHUTDOWN:",
+                                     QLineEdit.EchoMode.Password)
+        if not ok or not key: return
+        if not supabase_manager.verify_secret_key(key):
+            QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
+            return
+
+        # 2. Pick Minutes Range
+        minutes, ok = QInputDialog.getInt(self, "Schedule Shutdown", 
+                                         f"Shut down system {system_id} in how many minutes?", 
+                                         value=5, min=1, max=1440)
+        if not ok: return
+
+        confirm = QMessageBox.warning(self, "Confirm Remote Shutdown", 
+                                     f"Are you sure you want to SHUT DOWN system {system_id} in {minutes} minutes?\n"
+                                     "This will force a system shutdown on the client PC.",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if confirm == QMessageBox.StandardButton.Yes:
+            target_time = (datetime.now() + timedelta(minutes=minutes)).isoformat()
+            try:
+                res = self.supabase.table("installations").update({"shutdown_time": target_time}).eq("system_id", system_id).execute()
+                if res.data:
+                    QMessageBox.information(self, "Success", f"Shutdown scheduled for {system_id} in {minutes} minutes.")
+                    self.load_data()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Update failed: {e}")
 
     def extend_contract(self, system_id):
         from src.core.supabase_manager import supabase_manager

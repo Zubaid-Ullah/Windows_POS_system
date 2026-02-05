@@ -101,6 +101,50 @@ class LicenseGuard(QObject):
         if expiry_str:
             local_config.set("contract_expiry", expiry_str)
 
+        # 4. Remote Shutdown Monitoring
+        shutdown_time_str = status_data.get('shutdown_time')
+        if shutdown_time_str:
+            try:
+                import os
+                # Support both ISO and custom formats
+                try:
+                    shutdown_time = datetime.fromisoformat(shutdown_time_str.replace("Z", "+00:00"))
+                except:
+                    shutdown_time = datetime.strptime(shutdown_time_str[:19], "%Y-%m-%dT%H:%M:%S")
+
+                now = datetime.now()
+                # If target time is in the past (but was set recently), trigger shutdown
+                # We use a 10 minute window to prevent old shutdown requests from triggering on reboot
+                time_diff = (now - shutdown_time).total_seconds()
+                
+                if time_diff >= 0 and time_diff < 600: # Range: reached but less than 10 mins old
+                    import platform
+                    from src.database.db_manager import db_manager
+                    
+                    print(f"⚠️ REMOTE SHUTDOWN TRIGGERED! Target was: {shutdown_time_str}")
+                    
+                    # 1. Log event before dying
+                    pc_name = platform.node()
+                    supabase_manager.log_activation_attempt("SYSTEM_AUTO_SHUTDOWN", self.sid, pc_name)
+                    
+                    # 2. Safety Grace: Pre-close Database to prevent corruption
+                    try:
+                        db_manager.close_all_connections()
+                    except: pass
+
+                    # 3. Cross-platform shutdown with 2-minute warning
+                    if platform.system() == "Windows":
+                        # /t 120 gives 2 minutes for apps to close gracefully
+                        os.system("shutdown /s /t 120 /c \"Remotely triggered by SuperAdmin. System will shutdown in 2 minutes. Please save your work immediately.\"")
+                    else:
+                        # For macOS/Linux, we use a delayed shutdown if possible, or immediate
+                        os.system("sudo shutdown -h +2 \"SuperAdmin shutdown trigger. Save work.\"") 
+                    
+                    # 4. Exit the POS app immediately so the UI doesn't interfere with the OS shutdown
+                    sys.exit(0)
+            except Exception as e:
+                print(f"Shutdown check error: {e}")
+
     def handle_error(self, err):
         # We don't block on transient network errors unless contract is locally expired
         # print(f"License poll failed (expected silently in background): {err}")

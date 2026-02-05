@@ -43,64 +43,29 @@ class PharmacyHub(QWidget):
             self.on_login_success()
 
     def on_login_success(self):
-        # Once logged in, initialize all other modules
-        self.nav_items = [
-            ("pharmacy_login", QWidget), # Placeholder for index 0
-            ("pharmacy_dashboard", PharmacyDashboardView),
-            ("pharmacy_finance", PharmacyFinanceView),
-            ("pharmacy_inventory", PharmacyInventoryView),
-            ("pharmacy_sales", PharmacySalesView),
-            ("pharmacy_customers", PharmacyCustomerView),
-            ("pharmacy_suppliers", PharmacySupplierView),
-            ("pharmacy_loans", PharmacyLoanView),
-            ("pharmacy_reports", PharmacyReportsView),
-            ("pharmacy_price_check", PharmacyPriceCheckView),
-            ("pharmacy_returns", PharmacyReturnsView),
-            ("pharmacy_users", PharmacyUsersView),
-            ("pharmacy_settings", PharmacySettingsView),
-            ("pharmacy_credentials", CredentialsView),
-        ]
+        # Once logged in, define all other modules (DO NOT INSTANTIATE YET - Lazy Load)
+        self.nav_classes = {
+            "pharmacy_dashboard": PharmacyDashboardView,
+            "pharmacy_finance": PharmacyFinanceView,
+            "pharmacy_inventory": PharmacyInventoryView,
+            "pharmacy_sales": PharmacySalesView,
+            "pharmacy_customers": PharmacyCustomerView,
+            "pharmacy_suppliers": PharmacySupplierView,
+            "pharmacy_loans": PharmacyLoanView,
+            "pharmacy_reports": PharmacyReportsView,
+            "pharmacy_price_check": PharmacyPriceCheckView,
+            "pharmacy_returns": PharmacyReturnsView,
+            "pharmacy_users": PharmacyUsersView,
+            "pharmacy_settings": PharmacySettingsView,
+            "pharmacy_credentials": CredentialsView,
+        }
 
         self.views = {"pharmacy_login": self.login_view}
+        self.nav_order = ["pharmacy_login"] + list(self.nav_classes.keys())
         
-        # We need to skip index 0
-        for key, ViewClass in self.nav_items[1:]:
-            try:
-                view = ViewClass()
-                self.views[key] = view
-                if key == "pharmacy_dashboard":
-                    view.navigation_requested.connect(self.handle_dashboard_navigation)
-                if key == "pharmacy_price_check":
-                    view.finished.connect(lambda: self.switch_module("pharmacy_dashboard"))
-            except Exception as e:
-                view = QLabel(f"Error loading {key}: {str(e)}")
-                self.views[key] = view
-            self.stack.addWidget(view)
-
-        # Connect Sales & Returns to Reports and Dashboard (Live Update)
-        if "pharmacy_reports" in self.views and hasattr(self.views["pharmacy_reports"], "load_data"):
-            reports_view = self.views["pharmacy_reports"]
-            dashboard_view = self.views.get("pharmacy_dashboard")
-            
-            if "pharmacy_sales" in self.views and hasattr(self.views["pharmacy_sales"], "sale_completed"):
-                sales_view = self.views["pharmacy_sales"]
-                sales_view.sale_completed.connect(reports_view.load_data)
-                if dashboard_view and hasattr(dashboard_view, "load_products_data"):
-                    sales_view.sale_completed.connect(dashboard_view.load_products_data)
-            
-            if "pharmacy_returns" in self.views and hasattr(self.views["pharmacy_returns"], "return_processed"):
-                returns_view = self.views["pharmacy_returns"]
-                returns_view.return_processed.connect(reports_view.load_data)
-                if dashboard_view and hasattr(dashboard_view, "load_products_data"):
-                    returns_view.return_processed.connect(dashboard_view.load_products_data)
-
-        # Connect Customers to Sales (Live Update)
-        if "pharmacy_sales" in self.views and "pharmacy_customers" in self.views:
-            sales_view = self.views["pharmacy_sales"]
-            cust_view = self.views["pharmacy_customers"]
-            if hasattr(cust_view, "customers_updated") and hasattr(sales_view, "load_customers"):
-                cust_view.customers_updated.connect(sales_view.load_customers)
-
+        # We only add the login view to the stack initially
+        # Others will be added dynamically by switch_module
+        
         self.switch_module("pharmacy_dashboard")
 
     def switch_module(self, module_key):
@@ -109,9 +74,59 @@ class PharmacyHub(QWidget):
             self.stack.setCurrentIndex(0)
             return
 
-        mapping = {item[0]: i for i, item in enumerate(self.nav_items)}
-        idx = mapping.get(module_key, 1)
-        self.stack.setCurrentIndex(idx)
+        if module_key not in self.views and module_key in self.nav_classes:
+            # Lazy Instantiate
+            try:
+                ViewClass = self.nav_classes[module_key]
+                view = ViewClass()
+                self.views[module_key] = view
+                
+                # Setup specific connections
+                if module_key == "pharmacy_dashboard":
+                    view.navigation_requested.connect(self.handle_dashboard_navigation)
+                elif module_key == "pharmacy_price_check":
+                    view.finished.connect(lambda: self.switch_module("pharmacy_dashboard"))
+                
+                # Cross-view linking (if peers exist)
+                self._link_view_signals(module_key, view)
+                
+                self.stack.addWidget(view)
+            except Exception as e:
+                print(f"Error lazy loading {module_key}: {e}")
+                error_lbl = QLabel(f"Error loading {module_key}: {str(e)}")
+                self.views[module_key] = error_lbl
+                self.stack.addWidget(error_lbl)
+
+        # Get the index in the stack
+        target_view = self.views.get(module_key)
+        if target_view:
+            self.stack.setCurrentWidget(target_view)
+
+    def _link_view_signals(self, key, view):
+        """Wires up signals between a newly instantiated view and existing peers."""
+        # This ensures live updates between sales/returns/reports even with lazy loading
+        r_view = self.views.get("pharmacy_reports")
+        d_view = self.views.get("pharmacy_dashboard")
+        s_view = self.views.get("pharmacy_sales")
+        ret_view = self.views.get("pharmacy_returns")
+        c_view = self.views.get("pharmacy_customers")
+
+        # 1. If we just created Sales, link to Reports/Dashboard if they exist
+        if key == "pharmacy_sales":
+            if r_view and hasattr(r_view, 'load_data'): view.sale_completed.connect(r_view.load_data)
+            if d_view and hasattr(d_view, 'load_products_data'): view.sale_completed.connect(d_view.load_products_data)
+        
+        # 2. If we just created Reports/Dashboard, look for Sales/Returns
+        elif key in ["pharmacy_reports", "pharmacy_dashboard"]:
+            slot = view.load_data if key == "pharmacy_reports" else view.load_products_data
+            if s_view: s_view.sale_completed.connect(slot)
+            if ret_view: ret_view.return_processed.connect(slot)
+
+        # 3. Customer -> Sales link
+        if key == "pharmacy_customers" and s_view:
+            if hasattr(s_view, 'load_customers'): view.customers_updated.connect(s_view.load_customers)
+        elif key == "pharmacy_sales" and c_view:
+            if hasattr(c_view, 'customers_updated'): c_view.customers_updated.connect(view.load_customers)
 
     def handle_dashboard_navigation(self, key):
         # This will be used if the dashboard cards are clicked
