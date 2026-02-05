@@ -148,7 +148,7 @@ class PharmacySupplierView(QWidget):
             self.load_suppliers()
 
     def delete_supplier(self, sid):
-        if QMessageBox.question(self, "Confirm", "Delete this supplier?") == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, lang_manager.get("confirm"), lang_manager.get("confirm_delete_supplier")) == QMessageBox.StandardButton.Yes:
             with db_manager.get_pharmacy_connection() as conn:
                 conn.execute("UPDATE pharmacy_suppliers SET is_active=0 WHERE id=?", (sid,))
                 conn.commit()

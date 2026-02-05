@@ -1,99 +1,122 @@
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QThread
 from src.core.supabase_manager import supabase_manager
 from src.core.local_config import local_config
 from datetime import datetime
 import sys
+import platform
+
+class LicenseWorker(QObject):
+    """Background worker to poll Supabase status without blocking UI."""
+    status_received = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, sid):
+        super().__init__()
+        self.sid = sid
+
+    def run(self):
+        try:
+            status_data = supabase_manager.get_installation_status(self.sid)
+            if status_data:
+                self.status_received.emit(status_data)
+            else:
+                self.error_occurred.emit("Empty status received")
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 class LicenseGuard(QObject):
-    system_deactivated = pyqtSignal(dict) # info dictionary
+    # Signals for UI to react immediately
+    system_deactivated = pyqtSignal(dict)
+    system_activated = pyqtSignal(dict) # Triggered when account is re-enabled remotely
+    modules_updated = pyqtSignal(bool, bool) # store_active, pharmacy_active
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.sid = local_config.get("system_id")
+        self.last_status = None
+        self.is_currently_locked = False
+        self.store_active = True
+        self.pharmacy_active = True
         
-        # Periodic check timer (every 10 minutes)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.check_status)
-        self.timer.start(600000) # 10 mins
+        # Periodic check timer: 60 seconds for "immediate" cloud response
+        self.poll_timer = QTimer(self)
+        self.poll_timer.timeout.connect(self.start_async_check)
+        self.poll_timer.start(60000) # 1 Minute
 
-    def check_status(self):
-        # 1. Check Contract Expiry
-        expiry_str = local_config.get("contract_expiry")
-        is_expired = False
+        # Keep reference to active thread to avoid GC and overwriting
+        self._active_thread = None
+
+    def start_async_check(self):
+        """Launches a one-off thread for the network poll."""
+        # Check if thread is valid AND running
         try:
-            expiry_date = datetime.fromisoformat(expiry_str)
-            if datetime.now() > expiry_date:
-                is_expired = True
-                print(f"⚠️ Contract Expired on {expiry_str}")
-        except Exception as e:
-            print(f"Error parsing expiry: {e}")
-            is_expired = True # Fail safe
+            if self._active_thread and self._active_thread.isRunning():
+                return
+        except RuntimeError:
+            # Object was deleted but reference exists
+            self._active_thread = None
 
-        # 2. Handle Expiry (Force Online Check)
-        if is_expired:
-            print("⏳ Contract expired. Forcing online check...")
-            try:
-                status_data = supabase_manager.get_installation_status(self.sid)
-                if not status_data:
-                    print("❌ Failed to fetch online status during expiry check.")
-                    # In a real strict system, we might block here. 
-                    # For now, let's emit deactivated if we can't verify renewal.
-                    self.system_deactivated.emit({'message': 'Contract Expired. Internet required to renew.'})
-                    return False
-                
-                # Check if cloud has new date
-                cloud_expiry = status_data.get('contract_expiry')
-                if cloud_expiry and cloud_expiry != expiry_str:
-                    print(f"✅ Contract renewed! New expiry: {cloud_expiry}")
-                    local_config.set("contract_expiry", cloud_expiry)
-                    # Also update other fields if needed
-                    if status_data.get('company_name'): local_config.set("company_name", status_data.get('company_name'))
-                    if status_data.get('uuid'): local_config.set("uuid", status_data.get('uuid'))
-                    
-                    # Re-check locally
-                    new_expiry = datetime.fromisoformat(cloud_expiry)
-                    if datetime.now() < new_expiry:
-                        print("🎉 System reactivated.")
-                        return True
-                
-                if status_data.get('status') == 'deactivated':
-                    self.system_deactivated.emit(status_data)
-                    return False
-                
-                # If we are here, it means we connected but expiry is still old
-                print("❌ Contract is still expired in cloud.")
-                self.system_deactivated.emit({'message': 'Contract Expired. Please contact support.'})
-                return False
+        self._active_thread = QThread()
+        self.worker = LicenseWorker(self.sid)
+        self.worker.moveToThread(self._active_thread)
+        
+        self._active_thread.started.connect(self.worker.run)
+        self.worker.status_received.connect(self.handle_status)
+        self.worker.error_occurred.connect(self.handle_error)
+        
+        # Cleanup
+        self.worker.status_received.connect(self._active_thread.quit)
+        self.worker.error_occurred.connect(self._active_thread.quit)
+        self._active_thread.finished.connect(self.worker.deleteLater)
+        self._active_thread.finished.connect(self._active_thread.deleteLater)
+        self._active_thread.finished.connect(self._on_thread_finished)
+        
+        self._active_thread.start()
 
-            except Exception as e:
-                print(f"❌ Error during expiry check: {e}")
-                self.system_deactivated.emit({'message': f'Contract Expired. Connection Error: {e}'})
-                return False
+    def _on_thread_finished(self):
+        """Nullify reference after QThread.deleteLater finishes."""
+        self._active_thread = None
 
-        # 3. If Valid Duration, Check Offline Mode
-        if local_config.get("offline_mode"):
-            # print("📡 Offline Mode Active - Skipping periodic cloud check.")
-            return True
+    def handle_status(self, status_data):
+        self.last_status = status_data
+        
+        # 1. Modular Activation Flags (Admin can toggle Store/Pharmacy separately)
+        store_active = status_data.get('store_active', True)
+        pharmacy_active = status_data.get('pharmacy_active', True)
+        self.modules_updated.emit(bool(store_active), bool(pharmacy_active))
 
-        # 4. Standard Online Check (if not offline mode)
+        # 2. Critical Deactivation Check
+        status = status_data.get('status', 'active')
+        if status == 'deactivated':
+            if not self.is_currently_locked:
+                self.is_currently_locked = True
+                self.system_deactivated.emit(status_data)
+        else:
+            if self.is_currently_locked:
+                self.is_currently_locked = False
+                self.system_activated.emit(status_data) # Auto-Unlock signal
+
+        # 3. Sync Contract Expiry
+        expiry_str = status_data.get('contract_expiry')
+        if expiry_str:
+            local_config.set("contract_expiry", expiry_str)
+
+    def handle_error(self, err):
+        # We don't block on transient network errors unless contract is locally expired
+        # print(f"License poll failed (expected silently in background): {err}")
+        pass
+
+    def log_activation_attempt(self, installer_name):
+        """Helper to log installer activity to cloud."""
+        pc_name = platform.node()
+        supabase_manager.log_activation_attempt(installer_name, self.sid, pc_name)
+
+    def boot_check(self):
+        """Sync check used during app startup."""
         try:
             status_data = supabase_manager.get_installation_status(self.sid)
             if status_data:
-                # Sync expiry just in case it changed silently
-                if status_data.get('contract_expiry'):
-                    if status_data.get('contract_expiry') != expiry_str:
-                         local_config.set("contract_expiry", status_data.get('contract_expiry'))
-                         
-                if status_data.get('status') == 'deactivated':
-                    self.system_deactivated.emit(status_data)
-                    return False
-        except Exception as e:
-            print(f"Periodic check failed: {e}")
-            # If standard check fails, we don't block unless expired (handled above)
-            return True
-
-        return True
-
-    def boot_check(self):
-        # Quick check for bootstrap
-        return self.check_status()
+                self.handle_status(status_data)
+                return status_data.get('status') != 'deactivated'
+        except: pass
+        return True # Default to allow if offline at boot

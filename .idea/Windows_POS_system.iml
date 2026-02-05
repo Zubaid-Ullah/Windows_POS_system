@@ -3,9 +3,14 @@
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/pharmacy_pos_app/.dart_tool" />
+      <excludeFolder url="file://$MODULE_DIR$/pharmacy_pos_app/.pub" />
+      <excludeFolder url="file://$MODULE_DIR$/pharmacy_pos_app/build" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.14 virtualenv at ~/Documents/GitHub/POS platforms/Windows_POS_system/.venv" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="library" name="Dart SDK" level="project" />
+    <orderEntry type="library" name="Dart Packages" level="project" />
   </component>
   <component name="PyDocumentationSettings">
     <option name="format" value="PLAIN" />

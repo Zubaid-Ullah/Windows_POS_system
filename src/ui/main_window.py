@@ -26,6 +26,7 @@ from src.ui.views.finance_view import FinanceView
 from src.ui.views.user_management_view import UserManagementView
 from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QTimer
 from src.core.github_update_checker import update_checker
+from src.core.local_config import local_config
 from src.core.app_version import APP_VERSION
 
 class MainWindow(QMainWindow):
@@ -51,8 +52,8 @@ class MainWindow(QMainWindow):
         update_checker.download_completed.connect(self.on_update_downloaded)
         update_checker.download_failed.connect(self.on_update_failed)
         
-        # Check for updates on startup with a slight delay
-        QTimer.singleShot(5000, update_checker.check_for_updates)
+        # Check for updates on startup
+        update_checker.start()
 
     def on_language_changed(self, lang):
         # Only refresh main app if user is logged in
@@ -60,6 +61,36 @@ class MainWindow(QMainWindow):
             # Refresh Sidebar and Header
             self.show_main_app(self.business_mode) 
         self.apply_theme()
+
+    def set_modules_visibility(self, store_active, pharmacy_active):
+        """
+        Dynamically hides or shows entire modules (Store vs Pharmacy)
+        based on remote superadmin commands from Supabase.
+        """
+        self.store_active = store_active
+        self.pharmacy_active = pharmacy_active
+        
+        # If we are currently in a module that just got deactivated, switch to the other one or lock.
+        if self.business_mode == "STORE" and not store_active:
+            if pharmacy_active:
+                self.show_main_app("PHARMACY")
+            else:
+                # Both disabled? The LicenseGuard system_deactivated signal should handle this,
+                # but we hide the content as a second layer of security.
+                if hasattr(self, 'view_stack'): self.view_stack.hide()
+        
+        elif self.business_mode == "PHARMACY" and not pharmacy_active:
+            if store_active:
+                self.show_main_app("STORE")
+            else:
+                if hasattr(self, 'view_stack'): self.view_stack.hide()
+
+        # Update sidebar if it exists
+        if hasattr(self, 'menu_buttons'):
+            # This will refresh the menu buttons list in the next show_main_app call
+            # or we can force a partial refresh here if needed.
+            # For simplicity and robustness, we re-trigger the menu build if needed.
+            pass
 
     def apply_theme(self):
         self.setStyleSheet(theme_manager.get_style())
@@ -78,20 +109,30 @@ class MainWindow(QMainWindow):
         self.main_app_widget = QWidget()
         
         # Mode-based branding
+        # --- SIDEBAR COLOR CUSTOMIZATION START ---
+        # To change sidebar colors, modify the Hex codes in this 'branding' dictionary.
+        # 'color': The background color of the sidebar
+        # 'text': The color for labels and user profile name
+        # 'icon_color': The color for menu icons
         branding = {
             "STORE": {
                 "color": "#1a3a8a",
+                "text": "white",
+                "icon_color": "#a5b4fc",
                 "icon": "fa5s.store",
-                "title": "Afex POS",
+                "title": "Afex",
                 "auth_class": Auth
             },
             "PHARMACY": {
-                "color": "#065f46", # Emerald 900
+                "color": "#1a3a8a", # Primary sidebar background color for Pharmacy
+                "text": "white",   # Text color (use dark for light backgrounds)
+                "icon_color": "white",
                 "icon": "fa5s.prescription-bottle-alt",
-                "title": "Afex Pharmacy",
+                "title": "Afex",
                 "auth_class": PharmacyAuth
             }
         }[mode]
+        # --- SIDEBAR COLOR CUSTOMIZATION END ---
         
         user_auth = branding["auth_class"]
         user = user_auth.get_current_user()
@@ -147,7 +188,26 @@ class MainWindow(QMainWindow):
         self.sidebar.sidebar_ref = self.sidebar
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(260)
-        self.sidebar.setStyleSheet(f"background-color: {branding['color']};")
+        
+        # Enhanced Sidebar Styling for light/dark support
+        self.sidebar.setStyleSheet(f"""
+            QFrame#sidebar {{
+                background-color: {branding['color']};
+            }}
+            QPushButton#menu_button {{
+                color: {branding['text']};
+                border-left: 5px solid transparent;
+            }}
+            QPushButton#menu_button:hover {{
+                background-color: rgba(0, 0, 0, 0.05);
+                color: {branding['text']};
+            }}
+            QPushButton#menu_button:checked {{
+                background-color: rgba(0, 0, 0, 0.1);
+                color: {branding['text']};
+                border-left: 5px solid {branding['text']};
+            }}
+        """)
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(0, 30, 0, 30)
         
@@ -170,11 +230,11 @@ class MainWindow(QMainWindow):
         if mode == "STORE" and not logo_pix.isNull():
             self.logo_icon_lbl.setPixmap(logo_pix.scaled(45, 45, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         else:
-            self.logo_icon_lbl.setPixmap(qta.icon(branding["icon"], color="white").pixmap(35, 35))
+            self.logo_icon_lbl.setPixmap(qta.icon(branding["icon"], color=branding["icon_color"]).pixmap(35, 35))
         logo_lay.addWidget(self.logo_icon_lbl)
         
         self.logo_text = QLabel(branding["title"])
-        self.logo_text.setStyleSheet("color: white; font-size: 19px; font-weight: bold; border: none;")
+        self.logo_text.setStyleSheet(f"color: {branding['text']}; font-size: 19px; font-weight: bold; border: none;")
         logo_lay.addWidget(self.logo_text)
         sidebar_layout.addWidget(self.logo_container)
         sidebar_layout.addSpacing(30)
@@ -194,38 +254,56 @@ class MainWindow(QMainWindow):
         self.original_button_texts = {}
 
         if mode == "STORE":
-            menus = [
-                ("dashboard", "fa5s.th-large", "Dashboard"),
-                ("finance", "fa5s.chart-pie", "Finance"),
-                ("users", "fa5s.user-cog", "Users"),
-                ("inventory", "fa5s.boxes", "Inventory"),
-                ("sales", "fa5s.file-invoice-dollar", "Sales"),
-                ("customers", "fa5s.users", "Customers"),
-                ("suppliers", "fa5s.truck", "Suppliers"),
-                ("loans", "fa5s.hand-holding-usd", "Loans"),
-                ("reports", "fa5s.chart-line", "Reports"),
-                ("low_stock", "fa5s.bell", "Low Stock"),
-                ("returns", "fa5s.undo", "Returns"),
-                ("price_check", "fa5s.tag", "Price Check"),
-                ("settings", "fa5s.cog", "Settings")
-            ]
+            # Modular Activation Check: If store is disabled by superadmin, hide store items
+            store_active = getattr(self, 'store_active', local_config.get("store_active", True))
+            if not store_active:
+                menus = [("pharm_dashboard", "fa5s.prescription-bottle-alt", "Pharmacy")] # Only show switch to pharmacy if store is off
+            else:
+                menus = [
+                    ("dashboard", "fa5s.th-large", "Dashboard"),
+                    ("finance", "fa5s.chart-pie", "Finance"),
+                    ("users", "fa5s.user-cog", "Users"),
+                    ("inventory", "fa5s.boxes", "Inventory"),
+                    ("sales", "fa5s.file-invoice-dollar", "Sales"),
+                    ("customers", "fa5s.users", "Customers"),
+                    ("suppliers", "fa5s.truck", "Suppliers"),
+                    ("loans", "fa5s.hand-holding-usd", "Loans"),
+                    ("reports", "fa5s.chart-line", "Reports"),
+                    ("low_stock", "fa5s.bell", "Low Stock"),
+                    ("returns", "fa5s.undo", "Returns"),
+                    ("price_check", "fa5s.tag", "Price Check"),
+                    ("settings", "fa5s.cog", "Settings")
+                ]
+                # Modular Activation: If pharmacy is available, show button to switch
+                if local_config.get("pharmacy_active", True):
+                    menus.insert(1, ("pharm_dashboard", "fa5s.prescription-bottle-alt", "Pharmacy"))
+
             if user.get('is_super_admin'):
                 menus.insert(-1, ("credentials", "fa5s.key", "Credentials"))
         else: # PHARMACY
-            menus = [
-                ("pharm_dashboard", "fa5s.th-large", "Dashboard"),
-                ("pharm_finance", "fa5s.chart-pie", "Finance"),
-                ("pharm_inventory", "fa5s.boxes", "Inventory"),
-                ("pharm_sales", "fa5s.file-invoice-dollar", "Sales"),
-                ("pharm_customers", "fa5s.users", "Customers"),
-                ("pharm_suppliers", "fa5s.truck", "Suppliers"),
-                ("pharm_loans", "fa5s.hand-holding-usd", "Loans"),
-                ("pharm_reports", "fa5s.chart-line", "Reports"),
-                ("pharm_price_check", "fa5s.tag", "Price Check"),
-                ("pharm_returns", "fa5s.undo", "Returns"),
-                ("pharm_users", "fa5s.user-nurse", "Staff Mgmt"),
-                ("pharm_settings", "fa5s.cog", "Ph-Settings")
-            ]
+            # Modular Activation Check: If pharmacy is disabled, hide pharmacy items
+            pharmacy_active = getattr(self, 'pharmacy_active', local_config.get("pharmacy_active", True))
+            if not pharmacy_active:
+                menus = [("dashboard", "fa5s.store", "Store")] # Only show switch to store if pharmacy is off
+            else:
+                menus = [
+                    ("pharm_dashboard", "fa5s.th-large", "Dashboard"),
+                    ("pharm_finance", "fa5s.chart-pie", "Finance"),
+                    ("pharm_inventory", "fa5s.boxes", "Inventory"),
+                    ("pharm_sales", "fa5s.file-invoice-dollar", "Sales"),
+                    ("pharm_customers", "fa5s.users", "Customers"),
+                    ("pharm_suppliers", "fa5s.truck", "Suppliers"),
+                    ("pharm_loans", "fa5s.hand-holding-usd", "Loans"),
+                    ("pharm_reports", "fa5s.chart-line", "Reports"),
+                    ("pharm_price_check", "fa5s.tag", "Price Check"),
+                    ("pharm_returns", "fa5s.undo", "Returns"),
+                    ("pharm_users", "fa5s.user-nurse", "Staff Mgmt"),
+                    ("pharm_settings", "fa5s.cog", "Ph-Settings")
+                ]
+                # Modular Activation: If store is available, show button to switch
+                if local_config.get("store_active", True):
+                    menus.insert(1, ("dashboard", "fa5s.store", "Store"))
+
             if user.get('is_super_admin'):
                 menus.append(("pharm_credentials", "fa5s.key", "Credentials"))
 
@@ -243,7 +321,7 @@ class MainWindow(QMainWindow):
                 localized_label = label
                 
             btn = QPushButton(f"  {localized_label}")
-            btn.setIcon(qta.icon(icon, color="#a5b4fc"))
+            btn.setIcon(qta.icon(icon, color=branding["icon_color"]))
             btn.setObjectName("menu_button")
             btn.setProperty("view_key", key) # Durable ID
             btn.setProperty("translation_key", key)  # Store key for language refresh
@@ -261,11 +339,11 @@ class MainWindow(QMainWindow):
         
         # Profile section at bottom
         self.profile_frame = QFrame()
-        self.profile_frame.setStyleSheet(f"border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;")
+        self.profile_frame.setStyleSheet(f"border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;background:1a3a8a;")
         prof_lay = QHBoxLayout(self.profile_frame)
         
         self.user_name_lbl = QLabel(user.get('username', 'User').capitalize())
-        self.user_name_lbl.setStyleSheet("color: white; font-weight: bold; border: none;")
+        self.user_name_lbl.setStyleSheet(f"color: {branding['text']}; font-weight: bold; border: none;")
         prof_lay.addWidget(self.user_name_lbl)
         prof_lay.addStretch()
         
@@ -484,7 +562,7 @@ class MainWindow(QMainWindow):
              if sub_key != "pharmacy_sales" and hasattr(self.pharmacy_hub, 'views'):
                  target_ph_view = self.pharmacy_hub.views.get(sub_key)
                  if target_ph_view:
-                     for method_name in ['load_data', 'load_inventory', 'load_users', 'load_customers', 'load_suppliers', 'load_loans', 'refresh']:
+                     for method_name in ['load_data', 'load_products_data', 'load_inventory', 'load_users', 'load_customers', 'load_suppliers', 'load_loans', 'refresh']:
                          method = getattr(target_ph_view, method_name, None)
                          if method and callable(method):
                              method()

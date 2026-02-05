@@ -53,7 +53,7 @@ class CreateAccountWindow(QWidget):
         self.setFixedSize(700, 800)
         self.current_step = 0
         
-        # Set Window Icon explicitly to AFEX Logo
+        # Set Window Icon explicitly to Afex Logo
         import sys, os
         from PyQt6.QtGui import QIcon
         if getattr(sys, 'frozen', False):
@@ -355,19 +355,20 @@ class CreateAccountWindow(QWidget):
         try:
             users = supabase_manager.get_installers()
             self.installer_user.clear()
+            
+            # Always ensure SuperAdmin is an option for activation
+            all_users = ["SuperAdmin"]
             if users:
-                self.installer_user.addItems(users)
-                print(f"[SUCCESS] Loaded {len(users)} installers strictly from Cloud")
-                self.installer_user.setEnabled(True)
-            else:
-                self.installer_user.addItem("❌ No online users found")
-                self.installer_user.setEnabled(False)
-                QMessageBox.critical(self, "Cloud Data Missing", "The authorized persons table is empty in the cloud. Registration cannot proceed.\n\nCheck debug_connectivity.txt in the app folder for details (RLS/Table errors).")
+                all_users.extend(users)
+            
+            self.installer_user.addItems(all_users)
+            print(f"[SUCCESS] Loaded {len(all_users)} installers (including SuperAdmin)")
+            self.installer_user.setEnabled(True)
         except Exception as e:
             print(f"[ERROR] Cloud Error: {e}")
-            self.installer_user.addItem("❌ Cloud connection failed")
-            self.installer_user.setEnabled(False)
-            QMessageBox.critical(self, "Connection Error", "Could not connect to the cloud authorization server.")
+            self.installer_user.addItem("SuperAdmin") # Fallback to just SuperAdmin if cloud offline
+            self.installer_user.setEnabled(True)
+            QMessageBox.warning(self, "Cloud Warning", "Could not fetch installer list. You can still activate using SuperAdmin Secret Key if you have one.")
 
     def get_system_serial(self):
         """Find OS and run appropriate command to read the system serial number without sudo."""

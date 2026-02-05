@@ -10,7 +10,7 @@ class ConnectivityGateWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AFEX POS System Check")
+        self.setWindowTitle("Afex POS System Check")
         self.setFixedSize(450, 420)
         self.init_ui()
         

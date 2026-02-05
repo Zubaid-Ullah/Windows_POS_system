@@ -15,7 +15,7 @@ def log_msg(msg):
 try:
     # Redirect print and errors to file to prevent crash on Finder launch
     log_file = open(LOG_PATH, "w", buffering=1, encoding="utf-8") # Clear log on start
-    log_file.write("--- AfexPOS GUI Startup Session ---\n")
+    log_file.write("--- Afex POS GUI Startup Session ---\n")
     log_file.write(f"Executable: {sys.executable}\n")
     log_file.write(f"CWD: {os.getcwd()}\n")
     
@@ -71,11 +71,51 @@ def main():
         onboarding_window = None
         installer_login_window = None
         app_login_window = None
+        locked_screen = None # Track the active lock screen
         gate = ConnectivityGateWindow()
+        
+        # Security Guard Integration
         guard = LicenseGuard()
+
+        def show_locked_screen(info):
+            nonlocal locked_screen
+            if not locked_screen:
+                locked_screen = LockedWindow(contact_info=info)
+                locked_screen.show()
+            if main_window: main_window.hide()
+
+        def hide_locked_screen():
+            nonlocal locked_screen
+            if locked_screen:
+                locked_screen.close()
+                locked_screen = None
+            if main_window: main_window.show()
+
+        def handle_modular_access(store_active, pharmacy_active):
+            """Applies module-level permissions globally."""
+            if main_window:
+                main_window.set_modules_visibility(store_active, pharmacy_active)
+            # Store these in local config for session persistence
+            local_config.set("store_active", store_active)
+            local_config.set("pharmacy_active", pharmacy_active)
+
+        # Connect Real-time Security Signals
+        guard.system_deactivated.connect(show_locked_screen)
+        guard.system_activated.connect(hide_locked_screen)
+        guard.modules_updated.connect(handle_modular_access)
 
         def start_main_app(mode="STORE", role="user"):
             if app_login_window: app_login_window.close()
+            
+            # Smart Module Selection: If default mode is deactivated, pick the other one
+            store_on = local_config.get("store_active", True)
+            pharmacy_on = local_config.get("pharmacy_active", True)
+            
+            if mode == "STORE" and not store_on:
+                if pharmacy_on: mode = "PHARMACY"
+            elif mode == "PHARMACY" and not pharmacy_on:
+                if store_on: mode = "STORE"
+
             if role != "superadmin":
                 if not check_contract_validity():
                     print("[WARNING] Contract expired. Auto-login disabled.")
@@ -83,8 +123,10 @@ def main():
                     return
                 
             nonlocal main_window
-            print("[INFO] Launching Main POS Interface...")
+            print(f"[INFO] Launching Main POS Interface (Mode: {mode})...")
             main_window = MainWindow()
+            main_window.set_modules_visibility(store_on, pharmacy_on)
+            main_window.show_main_app(mode)
             main_window.show()
 
         def check_contract_validity():
@@ -107,11 +149,6 @@ def main():
             except Exception as e:
                 print(f"Contract check warning: {e}")
                 return False
-
-        def show_locked_screen(info):
-            lock = LockedWindow(contact_info=info)
-            lock.show()
-            if main_window: main_window.hide()
 
         def verify_local_data_integrity():
             try:
@@ -174,6 +211,16 @@ def main():
                     print("[DEBUG] Setting local config...")
                     local_config.set("account_created", True)
                     local_config.set("status", status)
+                    
+                    # Store modular activation flags
+                    store_active = cloud_record.get('store_active', True)
+                    pharmacy_active = cloud_record.get('pharmacy_active', True)
+                    local_config.set("store_active", store_active)
+                    local_config.set("pharmacy_active", pharmacy_active)
+                    
+                    # Update guard state
+                    if hasattr(guard, 'store_active'): guard.store_active = store_active
+                    if hasattr(guard, 'pharmacy_active'): guard.pharmacy_active = pharmacy_active
                     
                     print("[DEBUG] Verifying local data integrity...")
                     if not verify_local_data_integrity():
@@ -249,6 +296,13 @@ def main():
             try:
                 print("\n" + "="*60)
                 print("[DEBUG] jump_to_app() START")
+                
+                # Security Check: Even offline, respect last known cloud status
+                if local_config.get("status") == "deactivated":
+                     print("[DEBUG] Last known status is deactivated. Blocking.")
+                     show_locked_screen({"status": "deactivated", "message": "System deactivated. Connect to internet to refresh status."})
+                     return
+
                 print("[DEBUG] Checking contract validity...")
                 if not check_contract_validity():
                     print("[DEBUG] Contract invalid, showing app login")

@@ -203,11 +203,16 @@ class PharmacyUsersView(QWidget):
                     if not password:
                          QMessageBox.warning(self, "Error", "Password is required for new users")
                          return
+                    
+                    # Get current logged in user ID
+                    curr_user = Auth.get_current_user()
+                    curr_user_id = curr_user.get('id') if curr_user else None
+
                     # Create new user
                     conn.execute("""
-                        INSERT INTO pharmacy_users (username, password_hash, title, permissions, role)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (username, hashed_pw, title, perms_json, role_name))
+                        INSERT INTO pharmacy_users (username, password_hash, title, permissions, role, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (username, hashed_pw, title, perms_json, role_name, curr_user_id))
                 
                 conn.commit()
             

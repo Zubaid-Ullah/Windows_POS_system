@@ -25,7 +25,7 @@ python platform\windows\scripts\build_windows.py
 ## 📂 Directory Structure
 - `scripts\`: Protection and build scripts.
 - `windows_secured_dist\`: Output of the protection script.
-- `windows_exe_dist\`: Contains the final standalone `AfexPOS.exe`.
+- `windows_exe_dist\`: Contains the final standalone `FaqiriTechPOS.exe`.
 - `windows_build_temp\`: PyInstaller temporary build cache.
 
 ## 🛠 Features

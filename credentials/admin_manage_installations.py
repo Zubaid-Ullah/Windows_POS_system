@@ -1,8 +1,12 @@
 import os
 import json
+import platform
+import subprocess
 import uuid
 import socket
 from datetime import datetime, timedelta, timezone, date
+from random import random
+
 from dateutil.parser import isoparse
 from supabase import create_client
 
@@ -58,6 +62,50 @@ def upsert_installation(payload: dict) -> dict:
     print("system_id:", row["system_id"], "| status:", row["status"])
     return row
 
+
+def get_serial_number():
+    current_os = platform.system().lower()
+    serial = "Unknown"
+
+    try:
+        if "windows" in current_os:
+            # Uses WMIC to query the BIOS serial number
+            command = "wmic bios get serialnumber"
+            output = subprocess.check_output(command, shell=True).decode()
+            serial = output.split("\n")[1].strip()
+
+        elif "darwin" in current_os:
+            # Uses ioreg to get the hardware serial number on macOS
+            command = "ioreg -l | grep IOPlatformSerialNumber"
+            output = subprocess.check_output(command, shell=True).decode()
+            serial = output.split("=")[-1].replace('"', "").strip()
+
+        elif "linux" in current_os:
+            # Tries to read from the DMI sysfs files which are often world-readable
+            # Fallback for systems where dmidecode requires sudo
+            paths = [
+                "/sys/class/dmi/id/product_serial",
+                "/sys/class/dmi/id/board_serial"
+            ]
+            for path in paths:
+                if os.path.exists(path):
+                    with open(path, "r") as f:
+                        serial = f.read().strip()
+                        if serial: break
+
+            # If sysfs fails, try unprivileged udevadm (common on many distros)
+            if not serial or serial == "Unknown":
+                try:
+                    output = subprocess.check_output(
+                        "udevadm info --query=property --name=/dev/sda | grep ID_SERIAL_SHORT", shell=True).decode()
+                    serial = output.split("=")[-1].strip()
+                except:
+                    pass
+
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+    return serial
 def main():
     system_id = load_or_create_system_id()
 
@@ -65,14 +113,14 @@ def main():
     pc_name = socket.gethostname()
 
     # ---- YOU FILL THESE (from your installer UI / config) ----
-    serial_key = "SERIAL-XXXX-YYYY"
-    company_name = "AFEX Technology"
+    serial_key = f"{get_serial_number()}"
+    company_name = "Afexnology"
     company_whatsapp_url = "https://wa.me/937XXXXXXXXX"
     phone = "+93XXXXXXXXX"
     address = "Kabul, Afghanistan, ... full address"
     email = "support@yourdomain.com"
     location = address  # or separate
-    license_name = "AFEX-POS-LICENSE-001"
+    license_name = f"Afex-POS-LICENSE-{random.randint(0, 9999):04}"
     installed_by = "developer-or-superadmin-name"
     contract_duration_days = 180
     # ----------------------------------------------------------

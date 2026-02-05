@@ -6,7 +6,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QMessageBox, QFrame, QScrollArea)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QDate
 from src.ui.table_styles import style_table
 from src.ui.button_styles import style_button
 
@@ -151,6 +151,11 @@ class CredentialsView(QWidget):
                 toggle_btn.clicked.connect(lambda checked, s_id=sid, curr_s=status: self.toggle_status(s_id, curr_s))
                 btn_lay.addWidget(toggle_btn)
                 
+                extend_btn = QPushButton("Extend")
+                style_button(extend_btn, variant="info", size="small")
+                extend_btn.clicked.connect(lambda checked, s_id=sid: self.extend_contract(s_id))
+                btn_lay.addWidget(extend_btn)
+                
                 self.table.setCellWidget(i, 6, btn_widget)
 
             self.table.resizeColumnsToContents()
@@ -160,8 +165,57 @@ class CredentialsView(QWidget):
             print(f"Failed to fetch installations: {e}")
             # Don't show error dialog - this is likely a network issue and doesn't affect local operations
 
+    def extend_contract(self, system_id):
+        from src.core.supabase_manager import supabase_manager
+        from PyQt6.QtWidgets import QInputDialog, QLineEdit, QCalendarWidget, QDialog, QVBoxLayout
+        
+        # 1. Verification
+        key, ok = QInputDialog.getText(self, "Verification Required", 
+                                     "Enter SuperAdmin SECRET KEY to extend contract:",
+                                     QLineEdit.EchoMode.Password)
+        if not ok or not key: return
+        if not supabase_manager.verify_secret_key(key):
+            QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
+            return
+
+        # 2. Pick Date
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select New Expiry Date")
+        vbox = QVBoxLayout(dialog)
+        cal = QCalendarWidget()
+        cal.setMinimumDate(QDate.currentDate())
+        vbox.addWidget(cal)
+        btn = QPushButton("Update Expiry Date")
+        btn.clicked.connect(dialog.accept)
+        vbox.addWidget(btn)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_date = cal.selectedDate().toString("yyyy-MM-dd")
+            try:
+                res = self.supabase.table("installations").update({"contract_expiry": new_date}).eq("system_id", system_id).execute()
+                if res.data:
+                    QMessageBox.information(self, "Success", f"Contract for {system_id} extended to {new_date}")
+                    self.load_data()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Update failed: {e}")
+
     def toggle_status(self, system_id, current_status):
+        from src.core.supabase_manager import supabase_manager
+        from PyQt6.QtWidgets import QInputDialog, QLineEdit
+        
         new_status = "deactivated" if current_status == "active" else "active"
+        
+        key, ok = QInputDialog.getText(self, "Verification Required", 
+                                     f"Enter SuperAdmin SECRET KEY to {new_status} system {system_id}:",
+                                     QLineEdit.EchoMode.Password)
+        
+        if not ok or not key:
+            return
+
+        if not supabase_manager.verify_secret_key(key):
+            QMessageBox.critical(self, "Access Denied", "Invalid Secret Key. Action aborted.")
+            return
+
         confirm = QMessageBox.question(self, "Confirm", f"Are you sure you want to {new_status} system {system_id}?",
                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         

@@ -86,41 +86,49 @@ class PharmacyLoanView(QWidget):
                     
                     detail_btn = QPushButton(lang_manager.get("details"))
                     style_button(detail_btn, variant="info", size="small")
-                    detail_btn.clicked.connect(lambda ch, cid=row['customer_id']: self.show_visual_details(cid))
+                    detail_btn.clicked.connect(lambda ch, cid=row['customer_id'], name=row['customer_name']: self.show_visual_details(cid, name))
 
                     act_layout.addWidget(pay_btn)
                     act_layout.addWidget(detail_btn)
                     self.table.setCellWidget(i, 5, actions)
+                
+                # Autofit logic
+                self.table.resizeColumnsToContents()
+                if self.table.horizontalHeader().length() < self.table.width():
+                    self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                else:
+                    self.table.horizontalHeader().setStretchLastSection(True)
         except Exception as e:
             print(f"Error loading loans: {e}")
 
-    def show_visual_details(self, customer_id, name):
+    def show_visual_details(self, customer_id, name=None):
         try:
             with db_manager.get_pharmacy_connection() as conn:
                 row = conn.execute("SELECT * FROM pharmacy_customers WHERE id=?", (customer_id,)).fetchone()
                 if not row:
-                    QMessageBox.warning(self, "Error", "Customer details not found")
+                    QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("customer_not_found"))
                     return
                 
+                display_name = name or row['name'] or "Unknown"
                 dialog = QDialog(self)
-                dialog.setWindowTitle(f"Customer Information - {name}")
+                dialog.setWindowTitle(lang_manager.get("customer_info") + f" - {display_name}")
                 dialog.setMinimumWidth(700)
                 l = QVBoxLayout(dialog)
 
                 # Data Section
-                data_gb = QGroupBox("Basic Information")
+                data_gb = QGroupBox(lang_manager.get("basic_info"))
                 data_layout = QFormLayout(data_gb)
-                data_layout.addRow("<b>Full Name:</b>", QLabel(row['name']))
-                data_layout.addRow("<b>Phone:</b>", QLabel(row['phone']))
-                data_layout.addRow("<b>Address:</b>", QLabel(row['address'] or "N/A"))
+                data_layout.addRow(f"<b>{lang_manager.get('name')}:</b>", QLabel(row['name']))
+                data_layout.addRow(f"<b>{lang_manager.get('phone')}:</b>", QLabel(row['phone']))
+                data_layout.addRow(f"<b>{lang_manager.get('address')}:</b>", QLabel(row['address'] or "N/A"))
                 
                 balance_lbl = QLabel(f"<b>{row['balance']:,.2f} AFN</b>")
                 balance_lbl.setStyleSheet("color: #ef4444; font-size: 16px;" if row['balance'] > 0 else "color: #10b981;")
-                data_layout.addRow("<b>Current Balance:</b>", balance_lbl)
+                data_layout.addRow(f"<b>{lang_manager.get('balance')}:</b>", balance_lbl)
                 
-                loan_status = "Enabled" if row['loan_enabled'] else "Disabled"
-                data_layout.addRow("<b>Loan Feature:</b>", QLabel(loan_status))
-                data_layout.addRow("<b>Loan Limit:</b>", QLabel(f"{row['loan_limit']:,.2f} AFN"))
+                loan_status = lang_manager.get("active") if row['loan_enabled'] else "Disabled"
+                data_layout.addRow(f"<b>{lang_manager.get('loans')}:</b>", QLabel(loan_status))
+                data_layout.addRow(f"<b>{lang_manager.get('reorder_level').split()[1] if ' ' in lang_manager.get('reorder_level') else 'Limit'}:</b>", QLabel(f"{row['loan_limit']:,.2f} AFN"))
                 l.addWidget(data_gb)
 
                 img_layout = QHBoxLayout()
@@ -136,7 +144,7 @@ class PharmacyLoanView(QWidget):
                     if not pix.isNull(): photo_img.setPixmap(pix.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
                     else: photo_img.setText("Photo File Missing")
                 else: photo_img.setText("No Photo")
-                photo_v.addWidget(QLabel("<b>Customer Photo:</b>"))
+                photo_v.addWidget(QLabel(f"<b>{lang_manager.get('customer_photo')}:</b>"))
                 photo_v.addWidget(photo_img)
                 img_layout.addLayout(photo_v)
                 
@@ -151,12 +159,12 @@ class PharmacyLoanView(QWidget):
                     if not pix_id.isNull(): id_img.setPixmap(pix_id.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
                     else: id_img.setText("ID File Missing")
                 else: id_img.setText("No ID")
-                id_v.addWidget(QLabel("<b>ID Card / Document:</b>"))
+                id_v.addWidget(QLabel(f"<b>{lang_manager.get('id_card_photo')}:</b>"))
                 id_v.addWidget(id_img)
                 img_layout.addLayout(id_v)
                 
                 l.addLayout(img_layout)
-                close_btn = QPushButton("Close Details")
+                close_btn = QPushButton(lang_manager.get("close"))
                 style_button(close_btn, variant="outline")
                 close_btn.clicked.connect(dialog.accept)
                 l.addWidget(close_btn)
@@ -193,7 +201,7 @@ class PharmacyLoanView(QWidget):
                     
                     conn.commit()
                 
-                QMessageBox.information(self, "Success", f"Payment of ${amount:,.2f} received.")
+                QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('payment_received')}: {amount:,.2f} AFN")
                 self.load_loans()
             except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+                QMessageBox.critical(self, lang_manager.get("error"), str(e))

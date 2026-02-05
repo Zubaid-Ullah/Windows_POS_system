@@ -228,7 +228,7 @@ class DashboardView(QWidget):
         bg_layout.setSpacing(30)
         
         # Header
-        self.header = QLabel("Afex POS Smart Control")
+        self.header = QLabel("Fairi Tech POS Smart Control")
         # Ensure header is transparent to show bg
         self.header.setStyleSheet("font-size: 14px; font-weight: 500; background: transparent;")
         self.header.setAlignment(Qt.AlignmentFlag.AlignCenter)

@@ -47,7 +47,7 @@ class PharmacyReportsView(QWidget):
             lang_manager.get("daily_report"), 
             lang_manager.get("weekly_report"), 
             lang_manager.get("monthly_report"), 
-            lang_manager.get("preset") + " Range"
+            lang_manager.get("custom_range")
         ])
         self.filter_combo.setMinimumWidth(300)
         self.filter_combo.currentIndexChanged.connect(self.load_data)
@@ -65,7 +65,7 @@ class PharmacyReportsView(QWidget):
                 
         filter_btn = QPushButton(lang_manager.get("search"))
         style_button(filter_btn, variant="info", size="small")
-        filter_btn.clicked.connect(lambda: [self.filter_combo.setCurrentText("Custom Range"), self.load_data()])
+        filter_btn.clicked.connect(lambda: [self.filter_combo.setCurrentText(lang_manager.get("custom_range")), self.load_data()])
         
         self.month_close_btn = QPushButton(lang_manager.get("monthly_close"))
         style_button(self.month_close_btn, variant="warning")
@@ -131,6 +131,19 @@ class PharmacyReportsView(QWidget):
         ret_group = QGroupBox(lang_manager.get("returned_items_details"))
         ret_layout = QVBoxLayout(ret_group)
         
+        ret_header = QHBoxLayout()
+        ret_title = QLabel(f"<b>{lang_manager.get('returned_items_details')}</b>")
+        ret_title.setStyleSheet("border:none; background:transparent;")
+        ret_header.addWidget(ret_title)
+
+        ret_header.addStretch()
+        self.ret_print_btn = QPushButton(lang_manager.get("print_returns") or "🖨️ Print Returns")
+        style_button(self.ret_print_btn, variant="info", size="small")
+        self.ret_print_btn.clicked.connect(lambda: self.print_table_report(lang_manager.get("returned_items_details"), self.ret_table))
+        ret_header.addWidget(self.ret_print_btn)
+
+        ret_layout.addLayout(ret_header)
+
         self.ret_table = QTableWidget(0, 6)
         self.ret_table.setHorizontalHeaderLabels([
             lang_manager.get("invoice"), lang_manager.get("customer"), 
@@ -574,6 +587,16 @@ class PharmacyReportsView(QWidget):
                     self.expiry_table.setItem(row_idx, 2, expiry_item)
                     self.expiry_table.setItem(row_idx, 3, days_item)
                     self.expiry_table.setItem(row_idx, 4, status_item_obj)
+                
+            # Autofit all tables to content
+            for table in [self.trans_table, self.ret_table, self.loan_table, self.low_stock_table, self.expiry_table]:
+                table.resizeColumnsToContents()
+                # If the table is too narrow, make it stretch to fill space
+                if table.horizontalHeader().length() < table.width():
+                    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                else:
+                    # Keep the last column stretched if it's already fitting well
+                    table.horizontalHeader().setStretchLastSection(True)
                     
         except Exception as e:
             print(f"Error loading report data: {e}")
@@ -631,7 +654,7 @@ class PharmacyReportsView(QWidget):
                         bill_text = thermal_printer.generate_sales_bill(sale_id, is_credit, is_pharmacy=True)
                         if bill_text:
                             # Ask to print
-                            if QMessageBox.question(self, "Reprint Bill", f"Reprint Bill for {invoice_num}?", 
+                            if QMessageBox.question(self, lang_manager.get("reprint_bill"), f"{lang_manager.get('reprint_bill')} {invoice_num}?", 
                                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
                                 thermal_printer.print_bill(bill_text)
                     else:
@@ -734,7 +757,7 @@ class PharmacyReportsView(QWidget):
             low_stock_count = table.rowCount()
             cursor.insertText(f"{lang_manager.get('total_low_stock_items')}: {low_stock_count}\n", footer_format)
 
-        elif "Transactions" in title and table == self.trans_table:
+        elif lang_manager.get("transaction_details") in title:
             total_sales = 0
             total_items = 0
             for row in range(table.rowCount()):
@@ -755,7 +778,7 @@ class PharmacyReportsView(QWidget):
             cursor.insertText(f"{lang_manager.get('total_items_sold')}: {total_items}\n", footer_format)
             cursor.insertText(f"{lang_manager.get('total_sales_amount')}: {total_sales:,.2f} AFN\n", footer_format)
 
-        elif "Loans" in title and table == self.loan_table:
+        elif lang_manager.get("credit_loan_info") in title:
             total_loans = 0
             total_balance = 0
             for row in range(table.rowCount()):
@@ -775,7 +798,7 @@ class PharmacyReportsView(QWidget):
             cursor.insertText(f"{lang_manager.get('total_loan_amount')}: {total_loans:,.2f} AFN\n", footer_format)
             cursor.insertText(f"{lang_manager.get('total_outstanding_balance')}: {total_balance:,.2f} AFN\n", footer_format)
 
-        elif "Expiry Alert" in title and table == self.expiry_table:
+        elif lang_manager.get("medicine_expiry_status") in title:
             expired_count = 0
             for row in range(table.rowCount()):
                 status_item = table.item(row, 4)

@@ -46,15 +46,16 @@ class PharmacyReturnsView(QWidget):
         layout.addLayout(refund_layout)
 
         # 3. Table for items in the invoice
-        # Columns: Barcode, Name, Size, Sold Qty, Returned Qty, Price, Status, Return Action
-        self.table = QTableWidget(0, 8)
+        # Columns: Product, Sold, Already Ret, Price, Remaining, Ret Qty, Action, Refund Mode, Process
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
             lang_manager.get("product"), lang_manager.get("quantity") + " (Sold)", 
             lang_manager.get("already_returned"), lang_manager.get("price"), 
             lang_manager.get("remaining"), lang_manager.get("return_quantity"), 
-            lang_manager.get("action"), lang_manager.get("confirm")
+            lang_manager.get("action"), lang_manager.get("refund_mode"), lang_manager.get("confirm")
         ])
         style_table(self.table, variant="premium")
+        # Initialize with Stretch, but load_invoice will adjust
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
 
@@ -114,18 +115,26 @@ class PharmacyReturnsView(QWidget):
                     self.table.setCellWidget(i, 5, qty_input) # Return Qty
                     
                     action_combo = QComboBox()
-                    refund_mode_combo.addItems(["ACCOUNT", "CASH"])
-                    # Default to ACCOUNT if it was a credit sale, otherwise CASH
-                    if sale['payment_type'] == 'CREDIT':
-                        refund_mode_combo.setCurrentText("ACCOUNT")
-                    else:
-                        refund_mode_combo.setCurrentText("CASH")
-                    self.table.setCellWidget(i, 7, refund_mode_combo)
+                    action_combo.addItems(["RETURN", "REPLACEMENT"])
+                    self.table.setCellWidget(i, 6, action_combo)
                     
-                    btn = QPushButton("Process")
-                    if remaining <= 0:
+                    row_refund_combo = QComboBox()
+                    row_refund_combo.addItems([lang_manager.get("account"), lang_manager.get("cash")])
+                    # Map to DB values
+                    row_refund_combo.setItemData(0, "ACCOUNT")
+                    row_refund_combo.setItemData(1, "CASH")
+                    
+                    # Default based on sale type
+                    if sale['payment_type'] == 'CREDIT':
+                        row_refund_combo.setCurrentIndex(0)
+                    else:
+                        row_refund_combo.setCurrentIndex(1)
+                    self.table.setCellWidget(i, 7, row_refund_combo)
+                    
+                    btn = QPushButton(lang_manager.get("process"))
+                    if remaining_qty <= 0:
                         btn.setEnabled(False)
-                        btn.setText("Fully Ret.")
+                        btn.setText(lang_manager.get("fully_returned"))
                         style_button(btn, variant="secondary", size="small")
                     else:
                         style_button(btn, variant="warning", size="small")
@@ -133,32 +142,43 @@ class PharmacyReturnsView(QWidget):
                     btn.clicked.connect(lambda ch, it=item, r=i: self.process_return(it, r))
                     self.table.setCellWidget(i, 8, btn)
                     
+                self.table.resizeColumnsToContents()
+                # If table is narrow, stretch columns
+                if self.table.horizontalHeader().length() < self.table.width():
+                     self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                else:
+                     self.table.horizontalHeader().setStretchLastSection(True)
+                    
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
     def process_return(self, sale_item, row):
         qty = self.table.cellWidget(row, 5).value()
         action = self.table.cellWidget(row, 6).currentText()
-        refund_mode = self.table.cellWidget(row, 7).currentText()
+        
+        # Get DB-ready refund mode from item data
+        refund_combo = self.table.cellWidget(row, 7)
+        refund_mode = refund_combo.itemData(refund_combo.currentIndex())
         
         if qty <= 0:
-            QMessageBox.warning(self, "Error", "Please select a quantity to return.")
+            QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("select_quantity"))
             return
             
-        # Double check remaining one last time
-        remaining = float(self.table.item(row, 3).text())
+        # Double check remaining one last time - Remaining is column 4
+        remaining_str = self.table.item(row, 4).text()
+        remaining = float(remaining_str)
         if qty > remaining:
-            QMessageBox.warning(self, "Error", f"Cannot return more than remaining quantity ({remaining}).")
+            QMessageBox.warning(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {qty} > {remaining}")
             return
         
-        ok = QMessageBox.question(self, "Confirm", f"Process {action} for {qty} units via {refund_mode}?", 
+        ok = QMessageBox.question(self, lang_manager.get("confirm"), f"{lang_manager.get('process')} {action} {lang_manager.get('for')} {qty} {lang_manager.get('units')} via {refund_mode}?", 
                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                  QMessageBox.StandardButton.Yes)
         if ok != QMessageBox.StandardButton.Yes: return
         
         # Reason dialog
         from PyQt6.QtWidgets import QInputDialog
-        reason_text, ok = QInputDialog.getText(self, "Reason", "Enter reason for return/replacement:")
+        reason_text, ok = QInputDialog.getText(self, lang_manager.get("reason"), f"{lang_manager.get('enter_reason')}:")
         if not ok: return
 
         from src.core.pharmacy_auth import PharmacyAuth
@@ -214,8 +234,8 @@ class PharmacyReturnsView(QWidget):
 
                 conn.commit()
             
-            QMessageBox.information(self, "Success", f"Item {action} processed successfully.")
+            QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('success')}: {action}")
             self.load_invoice()
             self.return_processed.emit()
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, lang_manager.get("error"), str(e))

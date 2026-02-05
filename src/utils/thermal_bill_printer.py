@@ -31,7 +31,7 @@ class ThermalBillPrinter:
                     'name': 'Kabul City Center' if not is_pharmacy else 'Afex Pharmacy',
                     'address': 'Main Road, Kabul, Afghanistan',
                     'phone': '0700000000',
-                    'email': 'info@mall.af' if not is_pharmacy else 'pharmacy@afex.com'
+                    'email': 'info@mall.af' if not is_pharmacy else 'pharmacy@Afex.com'
                 }
                 
                 # Try pharmacy_info/company_info first
@@ -428,7 +428,7 @@ class ThermalBillPrinter:
     def print_bill(self, bill_text):
         """Auto-print the bill (still writes a temp file, but prints it immediately)"""
         try:
-            bills_dir = os.path.join("data", "bills")
+            bills_dir = os.path.join("data", "receipts")
             os.makedirs(bills_dir, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = os.path.join(bills_dir, f"bill_{timestamp}.txt")

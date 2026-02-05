@@ -77,13 +77,22 @@ class PharmacyHub(QWidget):
                 self.views[key] = view
             self.stack.addWidget(view)
 
-        # Connect Sales & Returns to Reports
+        # Connect Sales & Returns to Reports and Dashboard (Live Update)
         if "pharmacy_reports" in self.views and hasattr(self.views["pharmacy_reports"], "load_data"):
             reports_view = self.views["pharmacy_reports"]
+            dashboard_view = self.views.get("pharmacy_dashboard")
+            
             if "pharmacy_sales" in self.views and hasattr(self.views["pharmacy_sales"], "sale_completed"):
-                self.views["pharmacy_sales"].sale_completed.connect(reports_view.load_data)
+                sales_view = self.views["pharmacy_sales"]
+                sales_view.sale_completed.connect(reports_view.load_data)
+                if dashboard_view and hasattr(dashboard_view, "load_products_data"):
+                    sales_view.sale_completed.connect(dashboard_view.load_products_data)
+            
             if "pharmacy_returns" in self.views and hasattr(self.views["pharmacy_returns"], "return_processed"):
-                self.views["pharmacy_returns"].return_processed.connect(reports_view.load_data)
+                returns_view = self.views["pharmacy_returns"]
+                returns_view.return_processed.connect(reports_view.load_data)
+                if dashboard_view and hasattr(dashboard_view, "load_products_data"):
+                    returns_view.return_processed.connect(dashboard_view.load_products_data)
 
         # Connect Customers to Sales (Live Update)
         if "pharmacy_sales" in self.views and "pharmacy_customers" in self.views:

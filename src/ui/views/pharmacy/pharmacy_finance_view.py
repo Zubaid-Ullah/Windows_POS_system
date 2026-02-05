@@ -8,6 +8,7 @@ from src.ui.button_styles import style_button
 from src.ui.table_styles import style_table
 from src.database.db_manager import db_manager
 from src.core.localization import lang_manager
+from src.core.pharmacy_auth import PharmacyAuth as Auth
 
 class PharmacyFinanceView(QWidget):
     def __init__(self):
@@ -99,21 +100,29 @@ class PharmacyFinanceView(QWidget):
             lang_manager.get("utility"), 
             lang_manager.get("other")
         ])
+        self.exp_type.setStyleSheet("border:1px solid #7b90ab;")
         self.exp_type.setMinimumWidth(500)
+        self.exp_type.sizePolicy().horizontalPolicy().Expanding
         
         self.exp_amount = QDoubleSpinBox()
         self.exp_amount.setRange(0, 1000000)
         self.exp_amount.setSuffix(" AFN")
         self.exp_amount.setMinimumWidth(500)
+        self.exp_amount.setStyleSheet("border:1px solid #7b90ab;")
+        self.exp_amount.sizePolicy().horizontalPolicy().Expanding
         
         self.exp_purpose = QLineEdit()
         self.exp_purpose.setPlaceholderText(lang_manager.get("description_of_expense"))
         self.exp_purpose.setMinimumWidth(500)
+        self.exp_purpose.setStyleSheet("border:1px solid #7b90ab;")
+        self.exp_purpose.sizePolicy().horizontalPolicy().Expanding
         
         self.exp_date = QDateEdit()
         self.exp_date.setDate(QDate.currentDate())
         self.exp_date.setCalendarPopup(True)
         self.exp_date.setMinimumWidth(500)
+        self.exp_date.setStyleSheet("border:1px solid #7b90ab;")
+        self.exp_date.sizePolicy().horizontalPolicy().Expanding
         
         self.save_btn = QPushButton(lang_manager.get("save"))
         style_button(self.save_btn, variant="primary")
@@ -160,11 +169,16 @@ class PharmacyFinanceView(QWidget):
         
         self.user_combo = QComboBox()
         self.user_combo.setMinimumWidth(500)
+        self.user_combo.setStyleSheet("border:1px solid #7b90ab;")
+        self.user_combo.sizePolicy().horizontalPolicy().Expanding
         self.load_users_combo()
+
         
         self.salary_amount = QDoubleSpinBox()
         self.salary_amount.setRange(0, 100000)
         self.salary_amount.setMinimumWidth(500)
+        self.salary_amount.setStyleSheet("border:1px solid #7b90ab;")
+        self.salary_amount.sizePolicy().horizontalPolicy().Expanding
         
         self.salary_type = QComboBox()
         self.salary_type.setMinimumWidth(500)
@@ -173,7 +187,8 @@ class PharmacyFinanceView(QWidget):
             "Weekly", 
             lang_manager.get("daily_report").replace(" Report", "")
         ]) # Note: We should probably add specific salary type keys, but for now reusing
-        
+        self.salary_type.setStyleSheet("border:1px solid #7b90ab;")
+        self.salary_type.sizePolicy().horizontalPolicy().Expanding
         self.assign_btn = QPushButton(lang_manager.get("assign_salary"))
         self.assign_btn.setMinimumWidth(500)
         style_button(self.assign_btn, variant="success")
@@ -200,17 +215,31 @@ class PharmacyFinanceView(QWidget):
 
     def load_users_combo(self):
         self.user_combo.clear()
+        
+        curr_user = Auth.get_current_user()
+        is_super = curr_user and (curr_user.get('is_super_admin') or curr_user.get('username') == 'admin')
+        curr_user_id = curr_user.get('id') if curr_user else None
 
         main_users = []
-        try:
-            with db_manager.get_connection() as conn:
-                main_users = conn.execute("SELECT id, username, 'Main' as source FROM users WHERE is_active=1").fetchall()
-        except: pass
+        if is_super:
+            try:
+                with db_manager.get_connection() as conn:
+                    main_users = conn.execute("SELECT id, username, 'Main' as source FROM users WHERE is_active=1").fetchall()
+            except: pass
 
         pharmacy_users = []
         try:
             with db_manager.get_pharmacy_connection() as conn:
-                pharmacy_users = conn.execute("SELECT id, username, 'Pharmacy' as source FROM pharmacy_users WHERE is_active=1").fetchall()
+                if is_super:
+                    # SuperAdmin sees everyone
+                    pharmacy_users = conn.execute("SELECT id, username, 'Pharmacy' as source FROM pharmacy_users WHERE is_active=1").fetchall()
+                else:
+                    # Normal admin only sees users they created
+                    pharmacy_users = conn.execute("""
+                        SELECT id, username, 'Pharmacy' as source 
+                        FROM pharmacy_users 
+                        WHERE is_active=1 AND created_by=?
+                    """, (curr_user_id,)).fetchall()
         except: pass
 
         # Combine and sort all users
@@ -233,7 +262,7 @@ class PharmacyFinanceView(QWidget):
         user_id = user['id'] if user else 1
         
         if amt <= 0 or not purpose:
-            QMessageBox.warning(self, "Error", "Amount and Purpose are required")
+            QMessageBox.warning(self, lang_manager.get("error"), f"{lang_manager.get('amount')} {lang_manager.get('and')} {lang_manager.get('description')} {lang_manager.get('required')}")
             return
             
         try:
@@ -271,15 +300,22 @@ class PharmacyFinanceView(QWidget):
                     if row['expense_date'] == today: daily_sum += row['amount']
                     if row['expense_date'].startswith(month): monthly_sum += row['amount']
                     
-            self.daily_total_lbl.setText(f"Daily Total: {daily_sum:,.2f} AFN")
+                self.daily_total_lbl.setText(f"Daily Total: {daily_sum:,.2f} AFN")
             self.monthly_total_lbl.setText(f"Monthly Total: {monthly_sum:,.2f} AFN")
+            
+            # Autofit logic
+            self.exp_table.resizeColumnsToContents()
+            if self.exp_table.horizontalHeader().length() < self.exp_table.width():
+                self.exp_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            else:
+                self.exp_table.horizontalHeader().setStretchLastSection(True)
         except Exception as e:
             print(f"Error loading expenses: {e}")
 
     def assign_salary(self):
         user_data = self.user_combo.currentData()
         if not user_data:
-            QMessageBox.warning(self, "Error", "Please select a staff member")
+            QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("select_staff"))
             return
 
         user_id, user_source = user_data
@@ -291,7 +327,7 @@ class PharmacyFinanceView(QWidget):
                 if user_source == 'Main':
                     # For main users, we need to use the main salary table or expenses
                     # Since pharmacy_employee_salary is for pharmacy users, we'll use a different approach
-                    QMessageBox.warning(self, "Info", "Salary assignment for main system users should be done from the main Finance module.")
+                    QMessageBox.warning(self, lang_manager.get("warning"), lang_manager.get("main_finance_notice"))
                     return
                 else:
                     # For pharmacy users
@@ -303,9 +339,9 @@ class PharmacyFinanceView(QWidget):
                     conn.commit()
 
             self.load_salaries()
-            QMessageBox.information(self, "Success", "Salary configured successfully")
+            QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("salary_configured_success"))
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to configure salary: {str(e)}")
+            QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {str(e)}")
 
     def load_salaries(self):
         self.salary_table.setRowCount(0)
@@ -328,16 +364,23 @@ class PharmacyFinanceView(QWidget):
                     self.salary_table.setItem(i, 0, QTableWidgetItem(row['username']))
                     self.salary_table.setItem(i, 1, QTableWidgetItem(row['salary_type']))
                     self.salary_table.setItem(i, 2, QTableWidgetItem(f"{row['amount']:,.2f} AFN"))
-                    self.salary_table.setItem(i, 3, QTableWidgetItem("Active"))
+                    self.salary_table.setItem(i, 3, QTableWidgetItem(lang_manager.get("active")))
                     
                     actions = QWidget()
                     act_layout = QHBoxLayout(actions)
                     act_layout.setContentsMargins(0,0,0,0)
-                    btn = QPushButton("Remove")
+                    btn = QPushButton(lang_manager.get("remove"))
                     style_button(btn, variant="danger", size="small")
                     btn.clicked.connect(lambda ch, sid=row['id']: self.remove_salary(sid))
                     act_layout.addWidget(btn)
                     self.salary_table.setCellWidget(i, 4, actions)
+                    
+                # Autofit logic
+                self.salary_table.resizeColumnsToContents()
+                if self.salary_table.horizontalHeader().length() < self.salary_table.width():
+                    self.salary_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                else:
+                    self.salary_table.horizontalHeader().setStretchLastSection(True)
         except Exception as e:
             print(f"Error loading salaries: {e}")
 
@@ -345,8 +388,39 @@ class PharmacyFinanceView(QWidget):
         layout = QVBoxLayout(self.summary_tab)
         layout.setSpacing(15)
         
+        # Filter controls
+        filter_layout = QHBoxLayout()
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems([
+            lang_manager.get("daily_report"), 
+            lang_manager.get("weekly_report"), 
+            lang_manager.get("monthly_report"), 
+            lang_manager.get("custom_range")
+        ])
+        self.filter_combo.setCurrentText(lang_manager.get("monthly_report"))
+        self.filter_combo.currentIndexChanged.connect(self.load_summary)
+
+        self.date_from = QDateEdit(QDate.currentDate().addDays(-30))
+        self.date_from.setCalendarPopup(True)
+        self.date_to = QDateEdit(QDate.currentDate())
+        self.date_to.setCalendarPopup(True)
+        
+        filter_btn = QPushButton(lang_manager.get("search"))
+        style_button(filter_btn, variant="info", size="small")
+        filter_btn.clicked.connect(self.load_summary)
+
+        filter_layout.addWidget(QLabel(lang_manager.get("preset") + ":"))
+        filter_layout.addWidget(self.filter_combo)
+        filter_layout.addWidget(QLabel(lang_manager.get("from") + ":"))
+        filter_layout.addWidget(self.date_from)
+        filter_layout.addWidget(QLabel(lang_manager.get("to") + ":"))
+        filter_layout.addWidget(self.date_to)
+        filter_layout.addWidget(filter_btn)
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+
         # Header with current month
-        self.month_lbl = QLabel(lang_manager.get("overview") + " " + QDate.currentDate().toString('MMMM yyyy'))
+        self.month_lbl = QLabel(lang_manager.get("overview"))
         self.month_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #3b82f6;")
         layout.addWidget(self.month_lbl)
         
@@ -402,55 +476,81 @@ class PharmacyFinanceView(QWidget):
         l.addWidget(t_lbl)
         l.addWidget(v_lbl)
         
+        card.title_lbl = t_lbl
         card.value_lbl = v_lbl
         return card
 
     def load_summary(self):
-        month = QDate.currentDate().toString("yyyy-MM")
-        self.month_lbl.setText(f"Summary for {QDate.currentDate().toString('MMMM yyyy')}")
         try:
             with db_manager.get_pharmacy_connection() as conn:
+                filter_text = self.filter_combo.currentText()
+                days_count = 30 # Default for monthly
+                
+                if lang_manager.get("daily_report") in filter_text:
+                    time_filter = "date({T}.created_at) = date('now')"
+                    exp_filter = "date({T}.expense_date) = date('now')"
+                    period_name = lang_manager.get("today")
+                    days_count = 1
+                elif lang_manager.get("weekly_report") in filter_text:
+                    time_filter = "date({T}.created_at) >= date('now', '-7 days')"
+                    exp_filter = "date({T}.expense_date) >= date('now', '-7 days')"
+                    period_name = lang_manager.get("last_7_days")
+                    days_count = 7
+                elif lang_manager.get("monthly_report") in filter_text:
+                    time_filter = "date({T}.created_at) >= date('now', 'start of month')"
+                    exp_filter = "date({T}.expense_date) >= date('now', 'start of month')"
+                    period_name = lang_manager.get("this_month")
+                    days_count = 30
+                else:
+                    # Custom Range
+                    d_from = self.date_from.date().toString("yyyy-MM-dd")
+                    d_to = self.date_to.date().toString("yyyy-MM-dd")
+                    time_filter = f"date({{T}}.created_at) BETWEEN '{d_from}' AND '{d_to}'"
+                    exp_filter = f"date({{T}}.expense_date) BETWEEN '{d_from}' AND '{d_to}'"
+                    period_name = f"{d_from} {lang_manager.get('to')} {d_to}"
+                    days_count = self.date_from.date().daysTo(self.date_to.date()) + 1
+                    if days_count <= 0: days_count = 1
+
+                self.month_lbl.setText(f"{lang_manager.get('overview')} ({period_name})")
+
                 # 1. Net Sales (Gross - Returns)
-                sale_row = conn.execute(f"SELECT SUM(total_amount) as total FROM pharmacy_sales WHERE created_at LIKE '{month}%'").fetchone()
+                sale_row = conn.execute(f"SELECT SUM(total_amount) as total FROM pharmacy_sales s WHERE {time_filter.format(T='s')}").fetchone()
                 gross_sales = sale_row['total'] or 0
                 
-                # Deduct Returns for this month
-                ret_row = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns WHERE created_at LIKE '{month}%'").fetchone()
+                ret_row = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE {time_filter.format(T='r')}").fetchone()
                 returns_total = ret_row['total'] or 0
                 
                 net_sales = gross_sales - returns_total
 
-                # 2. Net Cost of Goods (Cost of Sales - Cost of Returns)
-                # Cost of Sales
+                # 2. Net Cost of Goods
                 cost_data = conn.execute(f"""
                     SELECT SUM(si.quantity * p.cost_price) as cost
                     FROM pharmacy_sale_items si
                     JOIN pharmacy_products p ON si.product_id = p.id
                     JOIN pharmacy_sales s ON si.sale_id = s.id
-                    WHERE s.created_at LIKE '{month}%'
+                    WHERE {time_filter.format(T='s')}
                 """).fetchone()
                 gross_cost = cost_data['cost'] or 0
 
-                # Cost of Returns (Items returned back to stock)
                 ret_cost_data = conn.execute(f"""
                     SELECT SUM(ri.quantity * p.cost_price) as cost
                     FROM pharmacy_return_items ri
                     JOIN pharmacy_products p ON ri.product_id = p.id
                     JOIN pharmacy_returns r ON ri.return_id = r.id
-                    WHERE r.created_at LIKE '{month}%'
+                    WHERE {time_filter.format(T='r')}
                 """).fetchone()
                 return_cost = ret_cost_data['cost'] or 0
                 
                 net_cost = gross_cost - return_cost
-                
                 trading_profit = net_sales - net_cost
                 
-                # 3. Total Salaries
-                salary_data = conn.execute("SELECT SUM(amount) as total FROM pharmacy_employee_salary WHERE is_active=1").fetchone()
-                total_salaries = salary_data['total'] or 0
+                # 3. Total Salaries (Pro-rated for the period)
+                full_monthly_salaries = conn.execute("SELECT SUM(amount) as total FROM pharmacy_employee_salary WHERE is_active=1").fetchone()
+                total_salaries_config = full_monthly_salaries['total'] or 0
+                total_salaries = (total_salaries_config / 30.0) * days_count
                 
                 # 4. Total Expenses
-                expense_data = conn.execute(f"SELECT SUM(amount) as total FROM pharmacy_expenses WHERE expense_date LIKE '{month}%'").fetchone()
+                expense_data = conn.execute(f"SELECT SUM(amount) as total FROM pharmacy_expenses e WHERE {exp_filter.format(T='e')}").fetchone()
                 total_expenses = expense_data['total'] or 0
                 
                 final_net = trading_profit - total_salaries - total_expenses
@@ -467,6 +567,14 @@ class PharmacyFinanceView(QWidget):
                 self.total_exp_card.value_lbl.setText(f"{(total_salaries + total_expenses):,.2f} AFN")
                 self.final_net_card.value_lbl.setText(f"{final_net:,.2f} AFN")
                 
+                # Update final net label based on periodicity
+                if days_count == 1:
+                    self.final_net_card.title_lbl.setText(lang_manager.get("net_profit"))
+                elif days_count <= 7:
+                    self.final_net_card.title_lbl.setText(lang_manager.get("weekly_report"))
+                else:
+                    self.final_net_card.title_lbl.setText(lang_manager.get("net_monthly_profit"))
+
                 if final_net < 0:
                     self.final_net_card.value_lbl.setStyleSheet("font-size: 22px; font-weight: bold; color: #f43f5e;")
                 else:
@@ -482,7 +590,7 @@ class PharmacyFinanceView(QWidget):
         self.load_summary()
 
     def remove_salary(self, sid):
-        if QMessageBox.question(self, "Confirm", "Remove this salary configuration?") == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, lang_manager.get("confirm"), lang_manager.get("confirm_remove_salary")) == QMessageBox.StandardButton.Yes:
             with db_manager.get_pharmacy_connection() as conn:
                 conn.execute("UPDATE pharmacy_employee_salary SET is_active=0 WHERE id=?", (sid,))
                 conn.commit()

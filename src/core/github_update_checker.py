@@ -24,7 +24,13 @@ class GitHubUpdateChecker(QObject):
         self.check_timer = QTimer(self)
         self.check_timer.setInterval(12 * 60 * 60 * 1000) 
         self.check_timer.timeout.connect(self.check_for_updates)
-        self.check_timer.start()
+
+    def start(self):
+        """Starts the periodic check timer safely."""
+        if not self.check_timer.isActive():
+            self.check_timer.start()
+            # Also do an immediate check
+            QTimer.singleShot(5000, self.check_for_updates)
 
     def _load_token(self):
         # 1. Check environment variable

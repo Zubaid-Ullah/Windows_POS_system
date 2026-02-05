@@ -1,9 +1,97 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QPushButton, 
-                             QLabel, QFrame)
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPropertyAnimation, QEasingCurve, QVariantAnimation
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
+                             QPushButton, QLabel, QFrame, QScrollArea, 
+                             QListWidget, QListWidgetItem)
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPropertyAnimation, QEasingCurve, QVariantAnimation, QRectF
+from PyQt6.QtGui import QPainter, QColor, QFont
 import qtawesome as qta
 from src.ui.theme_manager import theme_manager
 from src.core.localization import lang_manager
+from src.database.db_manager import db_manager
+
+class DonutChartWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.percentage = 0
+        self.product_name = ""
+        self.visible_chart = False
+        self.setMinimumHeight(400)
+
+    def set_data(self, name, percentage):
+        self.product_name = name
+        self.percentage = float(percentage)
+        self.visible_chart = True
+        self.update()
+
+    def clear(self):
+        self.visible_chart = False
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        is_dark = theme_manager.is_dark
+
+        if not self.visible_chart:
+            # Draw placeholder message
+            painter.setPen(QColor("#64748b")) # slate-400
+            painter.setFont(QFont("Arial", 14))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, 
+                             lang_manager.get("select_product_info") or "Select a product to view stats")
+            return
+
+        width = self.width()
+        height = self.height()
+        # Leave room for title/name
+        size = min(width, height - 100) - 60
+        rect = QRectF((width - size) / 2, (height - size) / 2 - 20, size, size)
+        
+        # Determine color for "Sold" portion
+        if self.percentage <= 25:
+            color = QColor("#ef4444") # Red
+        elif self.percentage <= 75:
+            color = QColor("#3b82f6") # Blue
+        else:
+            color = QColor("#10b981") # Green
+            
+        # Draw background circle (Remaining/Total)
+        painter.setPen(Qt.PenStyle.NoPen)
+        bg_color = QColor("#334155" if is_dark else "#e2e8f0")
+        painter.setBrush(bg_color)
+        painter.drawEllipse(rect)
+        
+        # Draw sold arc
+        start_angle = 90 * 16 # 12 o'clock
+        span_angle = int(-self.percentage * 3.6 * 16)
+        
+        painter.setBrush(color)
+        painter.drawPie(rect, start_angle, span_angle)
+        
+        # Draw inner circle (donut hole)
+        inner_size = size * 0.7
+        inner_rect = QRectF((width - inner_size) / 2, (height - inner_size) / 2 - 20, inner_size, inner_size)
+        
+        # Use white for the hole to match the forced white background
+        hole_color = QColor("white")
+        painter.setBrush(hole_color)
+        painter.drawEllipse(inner_rect)
+        
+        # Draw percentage text in middle - always dark for white background
+        painter.setPen(QColor("#1e293b"))
+        font = QFont("Arial", 28, QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.drawText(inner_rect, Qt.AlignmentFlag.AlignCenter, f"{self.percentage:.1f}%")
+        
+        # Draw product name below
+        font.setPointSize(18)
+        painter.setFont(font)
+        name_rect = QRectF(20, rect.bottom() + 30, width - 40, 40)
+        painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, self.product_name)
+        
+        font.setPointSize(12)
+        font.setBold(False)
+        painter.setFont(font)
+        subtitle_rect = QRectF(20, name_rect.bottom(), width - 40, 30)
+        painter.drawText(subtitle_rect, Qt.AlignmentFlag.AlignCenter, "Inventory Sold Percentage")
 
 class PharmacyDashboardCard(QFrame):
     clicked = pyqtSignal(str)
@@ -70,14 +158,27 @@ class PharmacyDashboardView(QWidget):
         self.update_theme()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Scroll Area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background: #afcdf4;")
+
+        
+        content_widget = QWidget()
+        content_widget.setObjectName("dashboard_content")
+        self.container_layout = QVBoxLayout(content_widget)
+        self.container_layout.setSpacing(30)
+        self.container_layout.setContentsMargins(20, 20, 20, 20)
 
         # Quick Actions Grid
-        grid = QGridLayout()
+        grid_container = QWidget()
+        grid = QGridLayout(grid_container)
         grid.setSpacing(20)
         
-        # (translation_key, icon, nav_key, color)
         actions = [
             ("pharmacy_finance", "fa5s.chart-pie", "pharmacy_finance", "#3b82f6"),
             ("inventory", "fa5s.boxes", "pharmacy_inventory", "#10b981"),
@@ -97,17 +198,15 @@ class PharmacyDashboardView(QWidget):
 
         row = 0
         col = 0
-        max_cols = 4 # 4 columns
+        max_cols = 4
 
         for trans_key, icon, key, color in actions:
-            # Check permissions
             has_perm = "*" in user_perms or key in user_perms or f"{key}_view" in user_perms
             if not has_perm:
                 continue
             
             label = lang_manager.get(trans_key)
             card = PharmacyDashboardCard(label, icon, key, color, translation_key=trans_key)
-            # Store icon name for hover logic
             card.icon_lbl.setProperty("icon_name", icon)
             card.clicked.connect(self.navigation_requested.emit)
             grid.addWidget(card, row, col)
@@ -117,45 +216,145 @@ class PharmacyDashboardView(QWidget):
                 col = 0
                 row += 1
         
-        layout.addLayout(grid)
-        layout.addStretch()
-    
+        self.container_layout.addWidget(grid_container)
+
+        # Statistics Section (70/30)
+        stats_frame = QFrame()
+        stats_frame.setObjectName("stats_frame")
+        stats_frame.setMinimumHeight(550)
+        stats_frame.setStyleSheet("background: white;")
+        stats_layout = QHBoxLayout(stats_frame)
+        stats_layout.setContentsMargins(15, 15, 15, 15)
+        stats_layout.setSpacing(25)
+
+        # Left: Donut Chart area (70%)
+        self.chart_widget = DonutChartWidget()
+        stats_layout.addWidget(self.chart_widget, 7)
+
+        # Right: Product List (30%)
+        list_container = QWidget()
+        list_vbox = QVBoxLayout(list_container)
+        
+        list_label = QLabel(lang_manager.get("inventory_stats") or "Inventory Statistics")
+        list_label.setStyleSheet("font-weight: bold; font-size: 18px;")
+        list_vbox.addWidget(list_label)
+        
+        self.product_list = QListWidget()
+        self.product_list.setObjectName("product_stats_list")
+        self.product_list.itemClicked.connect(self.on_product_selected)
+        list_vbox.addWidget(self.product_list)
+        
+        stats_layout.addWidget(list_container, 3)
+
+        self.container_layout.addWidget(stats_frame)
+        self.container_layout.addStretch()
+
+        scroll.setWidget(content_widget)
+        main_layout.addWidget(scroll)
+
+        self.load_products_data()
+
+    def load_products_data(self):
+        try:
+            # Remember selection
+            selected_items = self.product_list.selectedItems()
+            selected_name = selected_items[0].text() if selected_items else None
+
+            self.product_list.clear()
+            with db_manager.get_pharmacy_connection() as conn:
+                products = conn.execute("""
+                    SELECT 
+                        p.id, 
+                        p.name_en,
+                        (SELECT COALESCE(SUM(si.quantity), 0) FROM pharmacy_sale_items si WHERE si.product_id = p.id) as sold_qty,
+                        (SELECT COALESCE(SUM(inv.quantity), 0) FROM pharmacy_inventory inv WHERE inv.product_id = p.id) as current_qty
+                    FROM pharmacy_products p
+                    WHERE p.is_active = 1
+                    ORDER BY p.name_en ASC
+                """).fetchall()
+
+                for p in products:
+                    sold_qty = p['sold_qty']
+                    current_qty = p['current_qty']
+                    total = sold_qty + current_qty
+                    
+                    percentage = (sold_qty / total * 100) if total > 0 else 0
+                    
+                    item = QListWidgetItem(p['name_en'])
+                    item.setData(Qt.ItemDataRole.UserRole, percentage)
+                    self.product_list.addItem(item)
+                    
+                    # Restore selection and update chart
+                    if selected_name and p['name_en'] == selected_name:
+                        item.setSelected(True)
+                        if self.chart_widget.visible_chart:
+                            self.chart_widget.set_data(p['name_en'], percentage)
+        except Exception as e:
+            print(f"Error loading dashboard stats: {e}")
+
+    def on_product_selected(self, item):
+        name = item.text()
+        percentage = item.data(Qt.ItemDataRole.UserRole)
+        self.chart_widget.set_data(name, percentage)
+
+    def mousePressEvent(self, event):
+        # Deselect if clicking empty space in the dashboard
+        if not self.product_list.geometry().contains(self.mapFromGlobal(event.globalPosition().toPoint())):
+             self.product_list.clearSelection()
+             self.chart_widget.clear()
+        super().mousePressEvent(event)
+
     def update_labels(self):
         for card in self.cards:
             card.update_label()
-
-    def create_action_card(self, label, icon_name, key, color_hex):
-        # Deprecated, moved to PharmacyDashboardCard class
-        pass
+        self.load_products_data() # Refresh list with new names if needed
 
     def update_theme(self):
         is_dark = theme_manager.is_dark
         text_color = "#f8fafc" if is_dark else "#1e293b"
+        card_bg = "#1e293b" if is_dark else "white"
+        hover_bg = "#334155" if is_dark else "#f1f5f9"
         
-        # Don't override main window background
-        # self.setStyleSheet(f"background-color: {bg_color};")
-        if hasattr(self, 'welcome_lbl'):
-            self.welcome_lbl.setStyleSheet(f"font-size: 24px; font-weight: bold; color: {text_color}; background: transparent;")
+        stats_bg = "white"
+        list_bg = "white"
 
-        for card in self.findChildren(QFrame):
-            if card.objectName() == "action_card":
-                card_bg = "#1e293b" if is_dark else "white"
-                hover_bg = "#334155" if is_dark else "#f1f5f9"
-                card.setStyleSheet(f"""
-                    QFrame#action_card {{
-                        background-color: {card_bg};
-                        border: none;
-                        border-radius: 16px;
-                        padding: 20px;
-                    }}
-                    QFrame#action_card:hover {{
-                        background-color: {hover_bg};
-                    }}
-                """)
-                for lbl in card.findChildren(QLabel):
-                    lbl.setStyleSheet(f"font-weight: bold; font-size: 16px; color: {text_color}; margin-top: 10px; border: none; background: transparent;")
+        self.setStyleSheet(f"""
+            QFrame#stats_frame {{
+                background-color: {stats_bg};
+                border-radius: 20px;
+                border: 1px solid {"#334155" if is_dark else "#e2e8f0"};
+            }}
+            QListWidget#product_stats_list {{
+                background-color: {list_bg};
+                border: 1px solid {"#334155" if is_dark else "#e2e8f0"};
+                border-radius: 10px;
+                padding: 5px;
+                color: #1e293b;
+            }}
+            QListWidget#product_stats_list::item {{
+                padding: 8px;
+                border-radius: 5px;
+            }}
+            QListWidget#product_stats_list::item:selected {{
+                background-color: #3b82f6;
+                color: white;
+            }}
+            QLabel {{
+                color: #1e293b;
+            }}
+        """)
 
-    # Override mousePress on the card? 
-    # For simplicity, users click the icon/text which are inside the layout.
-    # To improve UX, let's wrap logic in a button that FILLS the card.
-    
+        for card in self.cards:
+            card.setStyleSheet(f"""
+                QFrame#action_card {{
+                    background-color: {card_bg};
+                    border: none;
+                    border-radius: 16px;
+                    padding: 20px;
+                }}
+                QFrame#action_card:hover {{
+                    background-color: {hover_bg};
+                }}
+            """)
+            for lbl in card.findChildren(QLabel):
+                lbl.setStyleSheet(f"font-weight: bold; font-size: 16px; color: {text_color}; margin-top: 10px; border: none; background: transparent;")

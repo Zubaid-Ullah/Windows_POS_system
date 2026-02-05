@@ -261,6 +261,11 @@ class DatabaseManager:
                 )
             ''')
             
+            # Migration: Add created_by to pharmacy_users if missing
+            try:
+                cursor.execute("ALTER TABLE pharmacy_users ADD COLUMN created_by INTEGER")
+            except: pass
+            
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS pharmacy_products (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, barcode TEXT UNIQUE NOT NULL, name_en TEXT NOT NULL,
@@ -308,9 +313,13 @@ class DatabaseManager:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS pharmacy_suppliers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT, balance REAL DEFAULT 0,
-                    company_name TEXT, is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    company_name TEXT, address TEXT, is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Migration: Add address to pharmacy_suppliers if missing
+            try:
+                cursor.execute("ALTER TABLE pharmacy_suppliers ADD COLUMN address TEXT")
+            except: pass
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS pharmacy_loans (

@@ -195,6 +195,16 @@ class SuperAdminView(QWidget):
                     except: pass
 
     def update_validity(self):
+        from PyQt6.QtWidgets import QInputDialog, QLineEdit
+        key, ok = QInputDialog.getText(self, "Verification Required", 
+                                     "Enter SuperAdmin SECRET KEY to extend license:",
+                                     QLineEdit.EchoMode.Password)
+        if not ok or not key: return
+        
+        if not supabase_manager.verify_secret_key(key):
+            QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
+            return
+
         new_date = self.valid_date.date().toString("yyyy-MM-dd 23:59:59")
         # Update both databases for consistency
         for db_func in [db_manager.get_connection, db_manager.get_pharmacy_connection]:
@@ -206,12 +216,24 @@ class SuperAdminView(QWidget):
         QMessageBox.information(self, "Success", f"System license extended until {new_date}")
 
     def toggle_system_status(self):
+        from PyQt6.QtWidgets import QInputDialog, QLineEdit
+        
         with db_manager.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT is_active FROM system_settings WHERE id = 1")
             current = cursor.fetchone()['is_active']
             new_status = 0 if current else 1
-            
+        
+        action = "ACTIVATE" if new_status else "DEACTIVATE"
+        key, ok = QInputDialog.getText(self, "Verification Required", 
+                                     f"Enter SuperAdmin SECRET KEY to {action} system:",
+                                     QLineEdit.EchoMode.Password)
+        if not ok or not key: return
+        
+        if not supabase_manager.verify_secret_key(key):
+            QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
+            return
+
         # Apply to both
         for db_func in [db_manager.get_connection, db_manager.get_pharmacy_connection]:
             try:

@@ -11,7 +11,7 @@ class LoginWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AFEX POS Login")
+        self.setWindowTitle("Afex POS Login")
         self.setFixedSize(450, 600)
         self.init_ui()
         self.refresh_installers()
@@ -84,21 +84,23 @@ class LoginWindow(QWidget):
             # Fetch authorized installers for login (as per spec)
             users = supabase_manager.get_installers()
             self.user_combo.clear()
+            
+            # Always allow SuperAdmin login mode for secret key bypass
+            all_users = ["SuperAdmin"]
             if users:
-                self.user_combo.addItems(users)
-                # Try to select the installer we used during registration
-                prev_user = local_config.get("installed_by")
-                if prev_user:
-                    idx = self.user_combo.findText(prev_user)
-                    if idx >= 0: self.user_combo.setCurrentIndex(idx)
-            else:
-                # If no installers found, show error
-                self.user_combo.addItem("No installers available")
-                print("❌ No installers found in authorized_persons table")
+                all_users.extend(users)
+            
+            self.user_combo.addItems(all_users)
+            
+            # Try to select the installer we used during registration
+            prev_user = local_config.get("installed_by")
+            if prev_user:
+                idx = self.user_combo.findText(prev_user)
+                if idx >= 0: self.user_combo.setCurrentIndex(idx)
         except Exception as e:
             print(f"Error loading installers: {e}")
             self.user_combo.clear()
-            self.user_combo.addItem("Connection error")
+            self.user_combo.addItem("SuperAdmin")
         self.user_combo.setEnabled(True)
         
     def handle_login(self):
@@ -110,6 +112,19 @@ class LoginWindow(QWidget):
             return
 
         print(f"🔑 Authenticating installer {username} online...")
+        
+        # Log attempt for superadmin monitoring (Backgrounded to stay 'light')
+        import platform, threading
+        def _log_bg():
+            try:
+                supabase_manager.log_activation_attempt(
+                     installer_name=username,
+                     system_id=local_config.get("system_id"),
+                     pc_name=platform.node()
+                )
+            except: pass
+        threading.Thread(target=_log_bg, daemon=True).start()
+
         # 1. Verify credentials against authorized_persons table
         if supabase_manager.verify_installer(username, password):
             # 2. Safety check: Verify this machine's status

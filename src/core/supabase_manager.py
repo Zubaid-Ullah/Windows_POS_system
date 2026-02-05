@@ -253,28 +253,76 @@ class SupabaseManager:
             return []
 
     def verify_installer(self, username, password) -> bool:
-        """Online verification for installers"""
+        """Online verification for installers / SuperAdmin"""
         try:
-            # Special handling for superadmin: check by role instead of username
-            if username.strip().lower() == "superadmin":
-                # Query for any user with role='superadmin'
-                params = {"role": "eq.superadmin", "select": "passwords"}
+            username_cleaned = username.strip().lower()
+            password_cleaned = password.strip()
+
+            # 1. SuperAdmin Special Handling
+            if username_cleaned == "superadmin":
+                self._log("🛡️ SuperAdmin Login Attempt detected...")
+                
+                # A. Try Secret Key from 'keystable' first
+                if self.verify_secret_key(password_cleaned):
+                    self._log("✅ SuperAdmin authenticated via Secret Key.")
+                    return True
+                
+                # B. Try Fallback: Check if any user in 'authorized_persons' has role='superadmin' and matching password
+                self._log("🔄 Secret Key failed. Trying fallback to Cloud SuperAdmin password...")
+                params = {"role": "eq.superadmin", "passwords": f"eq.{password_cleaned}", "select": "id"}
                 r = requests.get(self._url(self.USERS_TABLE), params=params, headers=self._headers(), timeout=10)
                 
-                if r.status_code == 200:
-                    data = r.json() or []
-                    if data and len(data) > 0:
-                        # Get the password from cloud
-                        cloud_password = data[0].get('passwords', '')
-                        # Compare with provided password
-                        return password.strip() == cloud_password.strip()
+                if r.status_code == 200 and len(r.json() or []) > 0:
+                    self._log("✅ SuperAdmin authenticated via Cloud Role/Password.")
+                    return True
+                
+                self._log("❌ SuperAdmin authentication failed (Both Secret Key and Cloud Role check).")
                 return False
+            
             else:
-                # Regular installer verification by username and password
-                params = {"names": f"eq.{username.strip()}", "passwords": f"eq.{password.strip()}", "select": "id"}
+                # 2. Regular installer verification by username and password
+                params = {"names": f"eq.{username.strip()}", "passwords": f"eq.{password_cleaned}", "select": "id"}
                 r = requests.get(self._url(self.USERS_TABLE), params=params, headers=self._headers(), timeout=10)
-                return r.status_code == 200 and len(r.json() or []) > 0
-        except:
+                
+                if r.status_code == 200 and len(r.json() or []) > 0:
+                    return True
+                
+                self._log(f"❌ Regular installer verification failed for user: {username}")
+                return False
+        except Exception as e:
+            self._log(f"❌ verify_installer Exception: {e}")
+            return False
+
+    def verify_secret_key(self, key: str) -> bool:
+        """
+        Verifies a secret key against the 'keystable' in Supabase.
+        Used for superadmin-level activations and contract updates.
+        """
+        try:
+            key_val = key.strip()
+            params = {"secret_key": f"eq.{key_val}", "select": "id"}
+            url = self._url("keystable")
+            self._log(f"🔍 Checking keystable for key [HIDDEN] at {url}")
+            
+            r = requests.get(url, params=params, headers=self._headers(), timeout=10)
+            
+            if r.status_code == 200:
+                data = r.json() or []
+                match = len(data) > 0
+                self._log(f"✅ Keystable response received. Match found: {match}")
+                return match
+            else:
+                self._log(f"❌ Keystable query failed. Status: {r.status_code} - {r.text}")
+                # Try fallback column name 'secret key' just in case
+                self._log("🔄 Trying fallback column name 'secret key'...")
+                params_fb = {"secret key": f"eq.{key_val}", "select": "id"}
+                r_fb = requests.get(url, params=params_fb, headers=self._headers(), timeout=10)
+                if r_fb.status_code == 200 and len(r_fb.json() or []) > 0:
+                     self._log("✅ Match found using fallback column name 'secret key'.")
+                     return True
+                return False
+        except Exception as e:
+            self._log(f"❌ verify_secret_key error: {e}")
             return False
 
 
@@ -381,8 +429,9 @@ class SupabaseManager:
             if not system_id:
                 return None
 
+            # Added pharmacy_active and store_active for modular activation control
             params = {
-                "select": "status,company_name,phone,email,address,location,license,contract_expiry,system_id,pc_name,serial_key,installation_time,installed_by,contract_duration_days",
+                "select": "status,company_name,phone,email,address,location,license,contract_expiry,system_id,pc_name,serial_key,installation_time,installed_by,contract_duration_days,pharmacy_active,store_active",
                 "system_id": f"eq.{system_id}",
                 "limit": "1",
             }
@@ -398,6 +447,26 @@ class SupabaseManager:
         except Exception as e:
             print(self._sanitize(f"❌ get_installation_status error: {e}"))
             return None
+
+    def log_activation_attempt(self, installer_name: str, system_id: str, pc_name: str) -> bool:
+        """
+        Securely logs an activation attempt by an installer to the cloud.
+        Useful for superadmin to monitor unauthorized or repeated activation attempts.
+        """
+        try:
+            payload = {
+                "installer_name": installer_name,
+                "system_id": system_id,
+                "pc_name": pc_name,
+                "attempt_time": datetime.now().isoformat(),
+                "details": "Local activation attempt detected."
+            }
+            # Note: Superadmin should create a table named 'activation_logs' in Supabase
+            r = requests.post(self._url("activation_logs"), json=payload, headers=self._headers(), timeout=10)
+            return r.status_code in (200, 201, 204)
+        except Exception as e:
+            print(self._sanitize(f"❌ log_activation_attempt error: {e}"))
+            return False
 
 
 # Singleton instance

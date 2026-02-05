@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QFormLayout, QLineEdit, QComboBox, QMessageBox, QTableWidgetItem,
                              QCheckBox, QFileDialog, QDialog, QFrame, QGridLayout, QDoubleSpinBox)
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QFont
 from src.ui.button_styles import style_button
 from src.ui.table_styles import style_table
 from src.database.db_manager import db_manager
@@ -21,13 +21,14 @@ class PharmacyCustomerView(QWidget):
         layout.setSpacing(15)
 
         # Header
-        header = QLabel("Pharmacy Customer Management & KYC")
+        header = QLabel(lang_manager.get("kyc_management"))
         header.setStyleSheet("font-size: 18px; font-weight: bold; color: #065f46; margin-bottom: 10px;")
         layout.addWidget(header)
 
         # Basic Information Group
         basic_group = QFrame()
         basic_group.setObjectName("pharmacy_customer_basic_group")
+        #
         basic_group.setStyleSheet("""
             QFrame#pharmacy_customer_basic_group {
                 background-color: #f0fdf4;
@@ -38,7 +39,7 @@ class PharmacyCustomerView(QWidget):
         basic_layout = QVBoxLayout(basic_group)
         basic_layout.setContentsMargins(15, 15, 15, 15)
 
-        basic_title = QLabel("Basic Information")
+        basic_title = QLabel(lang_manager.get("basic_info"))
         basic_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #166534; margin-bottom: 10px;")
         basic_layout.addWidget(basic_title)
         # Basic Info Inputs
@@ -73,6 +74,7 @@ class PharmacyCustomerView(QWidget):
         
         self.loan_cb = QCheckBox(lang_manager.get("allow_credit_sales"))
         self.loan_cb.setChecked(True)
+        self.loan_cb.setFont(QFont("Arial", 18))
         
         self.loan_limit = QDoubleSpinBox()
         self.loan_limit.setRange(0, 1000000)
@@ -137,12 +139,12 @@ class PharmacyCustomerView(QWidget):
         """Ask user whether to upload from system or take photo"""
         # Create custom dialog with proper buttons
         msg = QMessageBox(self)
-        msg.setWindowTitle("Upload Method")
-        msg.setText(f"Choose how to upload {k_type.replace('_', ' ').title()}:")
+        msg.setWindowTitle(lang_manager.get("upload_method"))
+        msg.setText(lang_manager.get("upload_method") + ":")
         
-        camera_btn = msg.addButton("Open Camera", QMessageBox.ButtonRole.ActionRole)
-        upload_btn = msg.addButton("Upload Photo", QMessageBox.ButtonRole.ActionRole)
-        cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        camera_btn = msg.addButton(lang_manager.get("open_camera"), QMessageBox.ButtonRole.ActionRole)
+        upload_btn = msg.addButton(lang_manager.get("upload_photo"), QMessageBox.ButtonRole.ActionRole)
+        cancel_btn = msg.addButton(lang_manager.get("cancel"), QMessageBox.ButtonRole.RejectRole)
         
         msg.exec()
         clicked = msg.clickedButton()
@@ -276,7 +278,7 @@ class PharmacyCustomerView(QWidget):
         id_card = self.id_card_path.text()
         
         if not name or not phone:
-             QMessageBox.warning(self, "Error", "Name and Phone are required")
+             QMessageBox.warning(self, lang_manager.get("error"), f"{lang_manager.get('name')} {lang_manager.get('and')} {lang_manager.get('phone')} {lang_manager.get('required')}")
              return
              
         try:
@@ -298,9 +300,9 @@ class PharmacyCustomerView(QWidget):
             self.load_customers()
             self.clear_form()
             self.customers_updated.emit()
-            QMessageBox.information(self, "Success", "Customer data saved")
+            QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, lang_manager.get("error"), str(e))
 
     def load_customers(self):
         self.table.setRowCount(0)
@@ -326,18 +328,18 @@ class PharmacyCustomerView(QWidget):
                     act_layout.setContentsMargins(0,0,0,0)
                     act_layout.setSpacing(5)
                     
-                    pay_btn = QPushButton("Cash")
+                    pay_btn = QPushButton(lang_manager.get("cash"))
                     style_button(pay_btn, variant="info", size="small")
                     
-                    edit_btn = QPushButton("Edit")
+                    edit_btn = QPushButton(lang_manager.get("edit"))
                     style_button(edit_btn, variant="success", size="small")
                     edit_btn.clicked.connect(lambda ch, r=row: self.edit_customer(r))
                     
-                    del_btn = QPushButton("Del")
+                    del_btn = QPushButton(lang_manager.get("delete"))
                     style_button(del_btn, variant="danger", size="small")
                     del_btn.clicked.connect(lambda ch, cid=row['id']: self.delete_customer(cid))
                     
-                    view_btn = QPushButton("Details")
+                    view_btn = QPushButton(lang_manager.get("details"))
                     style_button(view_btn, variant="outline", size="small")
                     view_btn.clicked.connect(lambda ch, r=row: self.show_visual_details(r))
                     
@@ -351,15 +353,15 @@ class PharmacyCustomerView(QWidget):
 
     def show_visual_details(self, row):
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Customer Information - {row['name']}")
+        dialog.setWindowTitle(f"{lang_manager.get('customer_info')} - {row['name']}")
         dialog.setMinimumWidth(700)
         
         l = QVBoxLayout(dialog)
         
         # Data Section
-        data_gb = QGroupBox("Basic Information")
+        data_gb = QGroupBox(lang_manager.get("basic_info"))
         data_layout = QFormLayout(data_gb)
-        data_layout.addRow("<b>Full Name:</b>", QLabel(row['name']))
+        data_layout.addRow(f"<b>{lang_manager.get('name')}:</b>", QLabel(row['name']))
         data_layout.addRow("<b>Phone:</b>", QLabel(row['phone']))
         data_layout.addRow("<b>Address:</b>", QLabel(row['address'] or "N/A"))
         
@@ -372,11 +374,11 @@ class PharmacyCustomerView(QWidget):
         else:
             balance_lbl = QLabel("<b>0.00 AFN</b>")
             balance_lbl.setStyleSheet("color: #64748b; font-size: 16px;")
-        data_layout.addRow("<b>Current Balance:</b>", balance_lbl)
+        data_layout.addRow(f"<b>{lang_manager.get('balance')}:</b>", balance_lbl)
         
-        loan_status = "Enabled" if row['loan_enabled'] else "Disabled"
-        data_layout.addRow("<b>Loan Feature:</b>", QLabel(loan_status))
-        data_layout.addRow("<b>Loan Limit:</b>", QLabel(f"{row['loan_limit']:,.2f} AFN"))
+        loan_status = lang_manager.get("active") if row['loan_enabled'] else "Disabled"
+        data_layout.addRow(f"<b>{lang_manager.get('loans')}:</b>", QLabel(loan_status))
+        data_layout.addRow(f"<b>{lang_manager.get('limit_exceeded').split()[0]}:</b>", QLabel(f"{row['loan_limit']:,.2f} AFN"))
         
         l.addWidget(data_gb)
         
@@ -426,7 +428,7 @@ class PharmacyCustomerView(QWidget):
         
         l.addLayout(img_layout)
         
-        close_btn = QPushButton("Close Details")
+        close_btn = QPushButton(lang_manager.get("close"))
         style_button(close_btn, variant="outline")
         close_btn.clicked.connect(dialog.accept)
         l.addWidget(close_btn)

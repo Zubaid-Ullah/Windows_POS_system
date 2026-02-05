@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
                              QPushButton, QLabel, QFrame, QComboBox, QMessageBox, QFileDialog, QGridLayout,
                              QTabWidget, QGroupBox, QFormLayout, QTextEdit, QScrollArea, QCheckBox)
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QFont
 import qtawesome as qta
 import qrcode
 from src.core.localization import lang_manager
@@ -106,41 +106,48 @@ class PharmacySettingsView(QWidget):
         layout.setSpacing(20)
 
         # Pharmacy Information Group
-        style = "border: 1px solid #e0e5f2;"
+        # style = "border: 1px solid #e0e5f2;"
         company_group = QGroupBox(lang_manager.get("pharmacy_info"))
-        company_group.setStyleSheet(style)
         company_form = QFormLayout(company_group)
 
         self.company_name = QLineEdit()
-        self.company_name.setStyleSheet(style)
         self.company_name.setMaximumHeight(300)
+        self.company_name.setMinimumWidth(300)
         self.company_name.setPlaceholderText(lang_manager.get("pharmacy_name"))
+        self.company_name.setStyleSheet("border: 1px solid #e0e0e0;")
+        self.company_name.sizePolicy().horizontalPolicy().Expanding
 
         self.company_address = QTextEdit()
-        self.company_address.setStyleSheet(style)
         self.company_address.setMaximumHeight(80)
+        self.company_address.setMinimumWidth(300)
         self.company_address.setPlaceholderText(lang_manager.get("address"))
+        self.company_address.setStyleSheet("border: 1px solid #e0e0e0;")
+        self.company_address.sizePolicy().horizontalPolicy().Expanding
 
         self.company_phone = QLineEdit()
-        self.company_phone.setStyleSheet(style)
         self.company_phone.setMaximumHeight(300)
+        self.company_phone.setMinimumWidth(300)
         self.company_phone.setPlaceholderText(lang_manager.get("phone"))
+        self.company_phone.setStyleSheet("border: 1px solid #e0e0e0;")
+        self.company_phone.sizePolicy().horizontalPolicy().Expanding
 
         self.company_email = QLineEdit()
-        self.company_email.setStyleSheet(style)
         self.company_email.setMaximumHeight(300)
+        self.company_email.setMinimumWidth(300)
         self.company_email.setPlaceholderText(lang_manager.get("email"))
+        self.company_email.setStyleSheet("border: 1px solid #e0e0e0;")
+        self.company_email.sizePolicy().horizontalPolicy().Expanding
 
         self.walking_receipt_note = QTextEdit()
-        self.walking_receipt_note.setStyleSheet(style)
         self.walking_receipt_note.setMinimumWidth(300)
-        self.walking_receipt_note.setMaximumHeight(60)
         self.walking_receipt_note.setPlaceholderText(lang_manager.get("walking_receipt_note_placeholder"))
+        self.walking_receipt_note.setStyleSheet("border: 1px solid #e0e0e0;")
+        self.walking_receipt_note.sizePolicy().horizontalPolicy().Expanding
 
         self.loan_receipt_note = QTextEdit()
-        self.loan_receipt_note.setStyleSheet(style)
         self.loan_receipt_note.setMinimumWidth(300)
-        self.loan_receipt_note.setMaximumHeight(60)
+        self.loan_receipt_note.setStyleSheet("border: 1px solid #e0e0e0;")
+        self.loan_receipt_note.sizePolicy().horizontalPolicy().Expanding
         self.loan_receipt_note.setPlaceholderText(lang_manager.get("loan_receipt_note_placeholder"))
 
         company_form.addRow(lang_manager.get("pharmacy_name") + ":", self.company_name)
@@ -159,8 +166,11 @@ class PharmacySettingsView(QWidget):
         # WhatsApp number input
         whatsapp_form = QFormLayout()
         self.whatsapp_number = QLineEdit()
-        self.whatsapp_number.setPlaceholderText(lang_manager.get("enter_whatsapp_number"))
+        self.whatsapp_number.setPlaceholderText("+93 your number")
         self.whatsapp_number.setMinimumWidth(300)
+        self.whatsapp_number.setStyleSheet("border: 1px solid #e0e0e0;")
+        self.whatsapp_number.sizePolicy().horizontalPolicy().Expanding
+        self.whatsapp_number.setStyleSheet("font-family: Arial; font-size: 18pt; font-weight: bold;")
         whatsapp_form.addRow(lang_manager.get("whatsapp_number") + ":", self.whatsapp_number)
 
         whatsapp_layout.addLayout(whatsapp_form)
