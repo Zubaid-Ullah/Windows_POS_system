@@ -80,27 +80,28 @@ class LoginWindow(QWidget):
         QTimer.singleShot(100, self._do_refresh_installers)
 
     def _do_refresh_installers(self):
-        try:
-            # Fetch authorized installers for login (as per spec)
-            users = supabase_manager.get_installers()
-            self.user_combo.clear()
-            
-            # Always allow SuperAdmin login mode for secret key bypass
-            all_users = ["SuperAdmin"]
-            if users:
-                all_users.extend(users)
-            
-            self.user_combo.addItems(all_users)
-            
-            # Try to select the installer we used during registration
-            prev_user = local_config.get("installed_by")
-            if prev_user:
-                idx = self.user_combo.findText(prev_user)
-                if idx >= 0: self.user_combo.setCurrentIndex(idx)
-        except Exception as e:
-            print(f"Error loading installers: {e}")
-            self.user_combo.clear()
-            self.user_combo.addItem("SuperAdmin")
+        class UserFetcher(QThread):
+            users_received = pyqtSignal(list)
+            def run(self):
+                try:
+                    users = supabase_manager.get_installers()
+                    self.users_received.emit(users or [])
+                except: self.users_received.emit([])
+
+        self.fetch_thread = UserFetcher()
+        self.fetch_thread.users_received.connect(self._on_users_fetched)
+        self.fetch_thread.start()
+
+    def _on_users_fetched(self, users):
+        self.user_combo.clear()
+        all_options = ["SuperAdmin"]
+        if users: all_options.extend(users)
+        self.user_combo.addItems(all_options)
+        
+        prev_user = local_config.get("installed_by")
+        if prev_user:
+            idx = self.user_combo.findText(prev_user)
+            if idx >= 0: self.user_combo.setCurrentIndex(idx)
         self.user_combo.setEnabled(True)
         
     def handle_login(self):
@@ -111,37 +112,51 @@ class LoginWindow(QWidget):
             QMessageBox.warning(self, "Required", "Please enter password.")
             return
 
-        print(f"🔑 Authenticating installer {username} online...")
+        self.login_btn.setEnabled(False)
+        self.login_btn.setText(" Verifying...")
         
-        # Log attempt for superadmin monitoring (Backgrounded to stay 'light')
-        import platform, threading
-        def _log_bg():
-            try:
-                supabase_manager.log_activation_attempt(
-                     installer_name=username,
-                     system_id=local_config.get("system_id"),
-                     pc_name=platform.node()
-                )
-            except: pass
-        threading.Thread(target=_log_bg, daemon=True).start()
+        # 1. Start background auth thread
+        class AuthWorker(QThread):
+            result = pyqtSignal(bool, dict) # success, status_data
+            def __init__(self, username, password, system_id):
+                super().__init__()
+                self.username = username
+                self.password = password
+                self.system_id = system_id
 
-        # 1. Verify credentials against authorized_persons table
-        if supabase_manager.verify_installer(username, password):
-            # 2. Safety check: Verify this machine's status
-            status_data = supabase_manager.get_installation_status(local_config.get("system_id"))
-            if status_data:
-                if status_data.get('status') == 'deactivated':
-                    QMessageBox.critical(self, "System Locked", "This installation has been deactivated. Contact support.")
-                    return
-                
-                # Success - Login established
-                local_config.set("client_username", username)
-                local_config.save()
-                
-                self.pass_edit.clear()
-                self.login_success.emit()
-                self.close()
-            else:
-                 QMessageBox.critical(self, "Registration Error", "Machine ID not recognized in cloud.")
+            def run(self):
+                try:
+                    # Log attempt
+                    import platform
+                    supabase_manager.log_activation_attempt(self.username, self.system_id, platform.node())
+                    
+                    if supabase_manager.verify_installer(self.username, self.password):
+                        status = supabase_manager.get_installation_status(self.system_id)
+                        self.result.emit(True, status or {})
+                    else:
+                        self.result.emit(False, {})
+                except Exception as e:
+                    print(f"AuthWorker error: {e}")
+                    self.result.emit(False, {})
+
+        self.auth_thread = AuthWorker(username, password, local_config.get("system_id"))
+        self.auth_thread.result.connect(self._on_auth_result)
+        self.auth_thread.finished.connect(self.auth_thread.deleteLater)
+        self.auth_thread.start()
+
+    def _on_auth_result(self, success, status_data):
+        self.login_btn.setEnabled(True)
+        self.login_btn.setText(" Login Securely")
+        
+        if success:
+            if status_data.get('status') == 'deactivated':
+                QMessageBox.critical(self, "System Locked", "This installation has been deactivated. Contact support.")
+                return
+            
+            local_config.set("client_username", self.user_combo.currentText())
+            local_config.save()
+            self.pass_edit.clear() # Clear password on success
+            self.login_success.emit()
+            self.close()
         else:
-            QMessageBox.warning(self, "Login Failed", "Invalid username or password.")
+            QMessageBox.warning(self, "Login Failed", "Invalid credentials or network error.")

@@ -435,6 +435,20 @@ class DatabaseManager:
                     conn.commit()
             except: pass
 
+    def run_maintenance(self):
+        """Runs heavy DB tasks in a background thread to prevent UI freezing."""
+        import threading
+        def _maintenance():
+            try:
+                self._auto_backup()
+                self.seed_initial_data()
+                self.cleanup_old_data()
+            except Exception as e:
+                print(f"Background maintenance error: {e}")
+        
+        m_thread = threading.Thread(target=_maintenance, daemon=True)
+        m_thread.start()
+
 db_manager = DatabaseManager()
-db_manager.seed_initial_data()
-db_manager.cleanup_old_data()
+# Trigger maintenance in background so GUI doesn't hang at splash/login
+db_manager.run_maintenance()

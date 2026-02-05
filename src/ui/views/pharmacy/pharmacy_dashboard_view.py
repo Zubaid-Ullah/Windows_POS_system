@@ -255,57 +255,83 @@ class PharmacyDashboardView(QWidget):
         self.load_products_data()
 
     def load_products_data(self):
-        try:
-            # Remember selection
-            selected_items = self.product_list.selectedItems()
-            selected_name = selected_items[0].text() if selected_items else None
+        # Prevent multiple simultaneous loads
+        if hasattr(self, '_loading_thread') and self._loading_thread.isRunning():
+            return
 
-            self.product_list.clear()
-            with db_manager.get_pharmacy_connection() as conn:
-                products = conn.execute("""
-                    SELECT 
-                        p.id, 
-                        p.name_en,
-                        COALESCE(sales.total_sold, 0) as sold_qty,
-                        COALESCE(inv.total_current, 0) as current_qty
-                    FROM pharmacy_products p
-                    LEFT JOIN (
-                        SELECT product_id, SUM(quantity) as total_sold 
-                        FROM pharmacy_sale_items 
-                        GROUP BY product_id
-                    ) sales ON p.id = sales.product_id
-                    LEFT JOIN (
-                        SELECT product_id, SUM(quantity) as total_current 
-                        FROM pharmacy_inventory 
-                        GROUP BY product_id
-                    ) inv ON p.id = inv.product_id
-                    WHERE p.is_active = 1
-                    ORDER BY p.name_en ASC
-                """).fetchall()
+        self.product_list.clear()
+        self.product_list.addItem("Loading statistics...")
 
-                for p in products:
-                    sold_qty = p['sold_qty']
-                    current_qty = p['current_qty']
-                    total = sold_qty + current_qty
-                    
-                    percentage = (sold_qty / total * 100) if total > 0 else 0
-                    
-                    item = QListWidgetItem(p['name_en'])
-                    item.setData(Qt.ItemDataRole.UserRole, percentage)
-                    self.product_list.addItem(item)
-                    
-                    # Restore selection and update chart
-                    if selected_name and p['name_en'] == selected_name:
-                        item.setSelected(True)
-                        if self.chart_widget.visible_chart:
-                            self.chart_widget.set_data(p['name_en'], percentage)
-        except Exception as e:
-            print(f"Error loading dashboard stats: {e}")
+        from PyQt6.QtCore import QThread, pyqtSignal
+        class StatsWorker(QThread):
+            data_received = pyqtSignal(list)
+            def run(self):
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        products = conn.execute("""
+                            SELECT 
+                                p.id, 
+                                p.name_en,
+                                COALESCE(sales.total_sold, 0) as sold_qty,
+                                COALESCE(inv.total_current, 0) as current_qty
+                            FROM pharmacy_products p
+                            LEFT JOIN (
+                                SELECT product_id, SUM(quantity) as total_sold 
+                                FROM pharmacy_sale_items 
+                                GROUP BY product_id
+                            ) sales ON p.id = sales.product_id
+                            LEFT JOIN (
+                                SELECT product_id, SUM(quantity) as total_current 
+                                FROM pharmacy_inventory 
+                                GROUP BY product_id
+                            ) inv ON p.id = inv.product_id
+                            WHERE p.is_active = 1
+                            ORDER BY p.name_en ASC
+                        """).fetchall()
+                        # Convert sqlite3.Row to list of dicts for safe thread passing
+                        self.data_received.emit([dict(p) for p in products])
+                except Exception as e:
+                    print(f"StatsWorker Error: {e}")
+                    self.data_received.emit([])
+
+        # Remember selection before clear
+        selected_items = self.product_list.selectedItems()
+        self.last_selected_name = selected_items[0].text() if selected_items else None
+
+        self._loading_thread = StatsWorker()
+        self._loading_thread.data_received.connect(self._on_stats_loaded)
+        self._loading_thread.finished.connect(self._loading_thread.deleteLater)
+        self._loading_thread.start()
+
+    def _on_stats_loaded(self, products):
+        self.product_list.clear()
+        if not products:
+            self.product_list.addItem("No statistics available")
+            return
+
+        for p in products:
+            sold_qty = p['sold_qty']
+            current_qty = p['current_qty']
+            total = sold_qty + current_qty
+            
+            percentage = (sold_qty / total * 100) if total > 0 else 0
+            
+            item = QListWidgetItem(p['name_en'])
+            item.setData(Qt.ItemDataRole.UserRole, percentage)
+            self.product_list.addItem(item)
+            
+            # Restore selection and update chart
+            if hasattr(self, 'last_selected_name') and p['name_en'] == self.last_selected_name:
+                item.setSelected(True)
+                if self.chart_widget.visible_chart:
+                    self.chart_widget.set_data(p['name_en'], percentage)
 
     def on_product_selected(self, item):
         name = item.text()
         percentage = item.data(Qt.ItemDataRole.UserRole)
-        self.chart_widget.set_data(name, percentage)
+        # Avoid trying to set data on the loading placeholder
+        if name != "Loading statistics...":
+            self.chart_widget.set_data(name, percentage)
 
     def mousePressEvent(self, event):
         # Deselect if clicking empty space in the dashboard

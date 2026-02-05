@@ -123,9 +123,14 @@ class LicenseGuard(QObject):
                     
                     print(f"⚠️ REMOTE SHUTDOWN TRIGGERED! Target was: {shutdown_time_str}")
                     
-                    # 1. Log event before dying
+                    # 1. Log event and CLEAR the command from cloud so it doesn't loop
                     pc_name = platform.node()
                     supabase_manager.log_activation_attempt("SYSTEM_AUTO_SHUTDOWN", self.sid, pc_name)
+                    
+                    # IMPORTANT: Clear the shutdown_time in Supabase so it doesn't trigger again on reboot
+                    try:
+                        supabase_manager.update_company_details(self.sid, {"shutdown_time": None})
+                    except: pass
                     
                     # 2. Safety Grace: Pre-close Database to prevent corruption
                     try:
@@ -134,13 +139,10 @@ class LicenseGuard(QObject):
 
                     # 3. Cross-platform shutdown with 2-minute warning
                     if platform.system() == "Windows":
-                        # /t 120 gives 2 minutes for apps to close gracefully
-                        os.system("shutdown /s /t 120 /c \"Remotely triggered by SuperAdmin. System will shutdown in 2 minutes. Please save your work immediately.\"")
+                        os.system("shutdown /s /t 120 /c \"Remotely triggered by SuperAdmin. System will shutdown in 2 minutes.\"")
                     else:
-                        # For macOS/Linux, we use a delayed shutdown if possible, or immediate
-                        os.system("sudo shutdown -h +2 \"SuperAdmin shutdown trigger. Save work.\"") 
+                        os.system("sudo shutdown -h +2 \"SuperAdmin shutdown trigger.\"") 
                     
-                    # 4. Exit the POS app immediately so the UI doesn't interfere with the OS shutdown
                     sys.exit(0)
             except Exception as e:
                 print(f"Shutdown check error: {e}")
