@@ -300,9 +300,7 @@ class MainWindow(QMainWindow):
                     ("pharm_users", "fa5s.user-nurse", "Staff Mgmt"),
                     ("pharm_settings", "fa5s.cog", "Ph-Settings")
                 ]
-                # Modular Activation: If store is available, show button to switch
-                if local_config.get("store_active", True):
-                    menus.insert(1, ("store", "fa5s.store", "Store"))
+                # Removed automatic Store button - users should use dedicated module switcher if needed
 
             if user.get('is_super_admin'):
                 menus.append(("pharm_credentials", "fa5s.key", "Credentials"))

@@ -165,6 +165,13 @@ class SuperAdminView(QWidget):
         self.cred_table.resizeRowsToContents()
 
     def _start_cloud_fetch(self, sid):
+        # Prevent double fetch + safely handle deleted C++ objects
+        try:
+            if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+                return
+        except RuntimeError:
+            self.worker = None
+
         from PyQt6.QtCore import QThread, pyqtSignal
         
         class CloudWorker(QThread):

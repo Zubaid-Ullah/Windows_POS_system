@@ -255,9 +255,12 @@ class PharmacyDashboardView(QWidget):
         self.load_products_data()
 
     def load_products_data(self):
-        # Prevent multiple simultaneous loads
-        if hasattr(self, '_loading_thread') and self._loading_thread.isRunning():
-            return
+        # Prevent multiple simultaneous loads - Safely handle deleted C++ objects
+        try:
+            if hasattr(self, '_loading_thread') and self._loading_thread and self._loading_thread.isRunning():
+                return
+        except RuntimeError:
+            self._loading_thread = None
 
         self.product_list.clear()
         self.product_list.addItem("Loading statistics...")
@@ -300,8 +303,13 @@ class PharmacyDashboardView(QWidget):
 
         self._loading_thread = StatsWorker()
         self._loading_thread.data_received.connect(self._on_stats_loaded)
+        self._loading_thread.finished.connect(self._cleanup_loading_thread)
         self._loading_thread.finished.connect(self._loading_thread.deleteLater)
         self._loading_thread.start()
+
+    def _cleanup_loading_thread(self):
+        """Nullify the thread reference after it finishes to prevent RuntimeError."""
+        self._loading_thread = None
 
     def _on_stats_loaded(self, products):
         self.product_list.clear()

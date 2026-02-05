@@ -111,6 +111,12 @@ class CredentialsView(QWidget):
             QMessageBox.warning(self, "Supabase Error", "Supabase client not initialized. Check your connection or credentials.")
             return
 
+        # Prevent double fetch + safely handle deleted C++ objects
+        try:
+            if hasattr(self, 'fetch_worker') and self.fetch_worker and self.fetch_worker.isRunning():
+                return
+        except RuntimeError: self.fetch_worker = None
+
         # Show Loading Placeholder
         self.table.setRowCount(0)
         self.table.insertRow(0)
