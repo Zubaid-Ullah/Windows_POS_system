@@ -180,11 +180,11 @@ class SalesView(QWidget):
             "ID", "Barcode", "Product Name", "Price", "Qty", "Stock", "Total", "Action"
         ])
         style_table(self.cart_table, variant="premium")
-        self.cart_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.cart_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.cart_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.cart_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch) # Name breathes
         self.cart_table.cellChanged.connect(self.handle_qty_edit)
         main_layout.addWidget(self.cart_table)
-        
+
         # Price Check Stats Card (Hidden by default)
         self.display_card = QFrame()
         self.display_card.setObjectName("card")

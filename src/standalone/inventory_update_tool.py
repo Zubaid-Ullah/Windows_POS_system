@@ -7,7 +7,7 @@ import os
 class InventoryUpdater(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Afex Inventory Sync Tool")
+        self.setWindowTitle("FaqiriTech Inventory Sync Tool")
         self.setMinimumSize(600, 400)
         self.main_db = os.path.join("..", "..", "pos_system.db") if os.path.exists(os.path.join("..", "..", "pos_system.db")) else "pos_system.db"
         self.local_db = "update_inventory.db"

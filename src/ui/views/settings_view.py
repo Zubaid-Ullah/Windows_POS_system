@@ -318,11 +318,7 @@ class SettingsView(QWidget):
         self.offline_mode_cb.toggled.connect(self.toggle_offline_mode)
         conn_layout.addWidget(self.offline_mode_cb)
         
-        self.update_check_cb = QCheckBox("Check for Updates Automatically")
-        self.update_check_cb.setStyleSheet("font-size: 14px; font-weight: bold; color: #374151;")
-        self.update_check_cb.setChecked(local_config.get("check_updates", True))
-        self.update_check_cb.toggled.connect(self.toggle_update_checks)
-        conn_layout.addWidget(self.update_check_cb)
+
         
         note_lbl = QLabel("Note: Enabling Offline Mode will disable daily cloud sync.\nMandatory contract validation will still occur upon expiry.")
         note_lbl.setStyleSheet("color: #6b7280; font-style: italic; font-size: 12px;")
@@ -637,16 +633,7 @@ class SettingsView(QWidget):
         print(f"📡 System switched to {mode} mode.")
         QMessageBox.information(self, "Connectivity", f"{status}\nRestart may be required for full effect.")
 
-    def toggle_update_checks(self, checked):
-        local_config.set("check_updates", checked)
-        from src.core.github_update_checker import update_checker
-        if checked:
-            update_checker.start()
-        else:
-            if hasattr(update_checker, 'check_timer'):
-                update_checker.check_timer.stop()
-        msg = "Update checks enabled." if checked else "Update checks disabled."
-        QMessageBox.information(self, "Updates", f"{msg}")
+
 
     def toggle_autostart(self, checked):
         if checked:

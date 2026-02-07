@@ -100,8 +100,12 @@ class PharmacyInventoryView(QWidget):
             lang_manager.get("actions")
         ])
         style_table(self.table, variant="premium")
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        # Global ResizeToContents will handle most, but let's stretch the Name column
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         main_layout.addWidget(self.table)
+        
+        # Ensure scroll bar is always visible if content overflows
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
     def load_inventory(self):
         if self.is_loading: return

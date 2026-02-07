@@ -41,15 +41,17 @@ class DataLoadWorker(QObject):
             self.error.emit(str(e))
     
     def _load_sales(self, conn):
-        """Load sales transactions"""
+        """Load sales transactions with item counts in a single query"""
         trans_query = f"""
-            SELECT s.*, c.name as customer_name
+            SELECT s.*, c.name as customer_name,
+                   (SELECT COALESCE(SUM(quantity), 0) FROM pharmacy_sale_items WHERE sale_id = s.id) as total_items
             FROM pharmacy_sales s
             LEFT JOIN pharmacy_customers c ON s.customer_id = c.id
             WHERE {self.time_filter.format(T='s')}
             ORDER BY s.created_at DESC
         """
-        return conn.execute(trans_query).fetchall()
+        rows = conn.execute(trans_query).fetchall()
+        return [dict(r) for r in rows]
     
     def _load_returns(self, conn):
         """Load returns with replacement details"""
@@ -149,15 +151,23 @@ class DataLoadWorker(QObject):
         return filtered_expiry_rows
     
     def _load_stats(self, conn):
-        """Load statistics"""
+        """Load statistics using a cash-received model (Profit/Income only counts when paid)"""
         stats = {}
         
-        # Gross Sales
-        sale_row = conn.execute(f"SELECT SUM(total_amount) as total FROM pharmacy_sales s WHERE {self.time_filter.format(T='s')}").fetchone()
+        # Gross Sales - Only count CASH sales + Payments received in this period
+        # We use separate subqueries to ensure we only get money that actually entered the drawer.
+        sql = f"""
+            SELECT (
+                (SELECT COALESCE(SUM(total_amount), 0) FROM pharmacy_sales s WHERE payment_type='CASH' AND {self.time_filter.format(T='s')}) +
+                (SELECT COALESCE(SUM(amount), 0) FROM pharmacy_payments p WHERE {self.time_filter.format(T='p')})
+            ) as total
+        """
+        sale_row = conn.execute(sql).fetchone()
         stats['gross_sales'] = sale_row['total'] or 0
         
-        # Returns Value
-        ret_val_row = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE {self.time_filter.format(T='r')}").fetchone()
+        # Returns Value - Only count CASH refunds (ACCOUNT refunds are just loan adjustments)
+        sql_ret = f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE refund_type='CASH' AND {self.time_filter.format(T='r')}"
+        ret_val_row = conn.execute(sql_ret).fetchone()
         stats['returned_amount'] = ret_val_row['total'] or 0
         
         # Return Items Count
@@ -588,50 +598,48 @@ class PharmacyReportsView(QWidget):
             self.trans_table.setRowCount(0)
             trans = data['sales']
             
-            with db_manager.get_pharmacy_connection() as conn:
-                for i, row in enumerate(trans):
-                    self.trans_table.insertRow(i)
-                    self.trans_table.setItem(i, 0, QTableWidgetItem(row['invoice_number']))
-                    self.table_item(self.trans_table, i, 1, row['customer_name'] or lang_manager.get("walk_in"))
-                    
-                    # Item count
-                    cnt = conn.execute("SELECT SUM(quantity) as q FROM pharmacy_sale_items WHERE sale_id=?", (row['id'],)).fetchone()
-                    self.table_item(self.trans_table, i, 2, str(int(cnt['q'] or 0)))
-                    self.table_item(self.trans_table, i, 3, f"{row['total_amount']:,.2f} AFN")
-                    method = lang_manager.get("credit") if row['payment_type'] == 'CREDIT' else lang_manager.get("cash")
-                    self.table_item(self.trans_table, i, 4, method)
+            for i, row in enumerate(trans):
+                self.trans_table.insertRow(i)
+                self.trans_table.setItem(i, 0, QTableWidgetItem(row['invoice_number']))
+                self.table_item(self.trans_table, i, 1, row['customer_name'] or lang_manager.get("walk_in"))
                 
-                # Add totals row
-                if trans:
-                    total_row_idx = len(trans)
-                    self.trans_table.insertRow(total_row_idx)
+                # Item count (Already pre-loaded in background)
+                qty = row.get('total_items', 0)
+                self.table_item(self.trans_table, i, 2, str(int(qty)))
+                self.table_item(self.trans_table, i, 3, f"{row['total_amount']:,.2f} AFN")
+                method = lang_manager.get("credit") if row['payment_type'] == 'CREDIT' else lang_manager.get("cash")
+                self.table_item(self.trans_table, i, 4, method)
+            
+            # Add totals row
+            if trans:
+                total_row_idx = len(trans)
+                self.trans_table.insertRow(total_row_idx)
+                
+                total_qty = sum([row.get('total_items', 0) for row in trans])
+                total_amount = sum([row['total_amount'] for row in trans])
                     
-                    total_qty = sum([
-                        conn.execute("SELECT SUM(quantity) as q FROM pharmacy_sale_items WHERE sale_id=?", (row['id'],)).fetchone()['q'] or 0
-                        for row in trans
-                    ])
-                    total_amount = sum([row['total_amount'] for row in trans])
-                    
-                    total_lbl = QTableWidgetItem(lang_manager.get("total"))
-                    total_lbl.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    font = QFont()
-                    font.setBold(True)
-                    total_lbl.setFont(font)
-                    self.trans_table.setItem(total_row_idx, 0, total_lbl)
-                    
-                    self.trans_table.setItem(total_row_idx, 1, QTableWidgetItem(""))
-                    
-                    qty_item = QTableWidgetItem(str(int(total_qty)))
-                    qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    qty_item.setFont(font)
-                    self.trans_table.setItem(total_row_idx, 2, qty_item)
-                    
-                    amt_item = QTableWidgetItem(f"{total_amount:,.2f} AFN")
-                    amt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    amt_item.setFont(font)
-                    self.trans_table.setItem(total_row_idx, 3, amt_item)
-                    
-                    self.trans_table.setItem(total_row_idx, 4, QTableWidgetItem(""))
+                total_lbl = QTableWidgetItem(lang_manager.get("total"))
+                total_lbl.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = QFont()
+                font.setBold(True)
+                total_lbl.setFont(font)
+                self.trans_table.setItem(total_row_idx, 0, total_lbl)
+                
+                self.trans_table.setItem(total_row_idx, 1, QTableWidgetItem(""))
+                
+                qty_item = QTableWidgetItem(str(int(total_qty)))
+                qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                qty_item.setFont(font)
+                self.trans_table.setItem(total_row_idx, 2, qty_item)
+                
+                amt_item = QTableWidgetItem(f"{total_amount:,.2f} AFN")
+                amt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                amt_item.setFont(font)
+                self.trans_table.setItem(total_row_idx, 3, amt_item)
+                
+                self.trans_table.setItem(total_row_idx, 4, QTableWidgetItem(""))
+                
+            self.trans_table.resizeColumnsToContents()
             
             # Load Returns Breakdown with Replacement Details
             self.ret_table.setRowCount(0)

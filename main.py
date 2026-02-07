@@ -42,6 +42,7 @@ def main():
         app = QApplication(sys.argv)
         print("QApplication initialized.")
         app.setFont(QFont("Arial"))
+        app.setQuitOnLastWindowClosed(False)
         
         # Set Global App Icon
         if getattr(sys, 'frozen', False):
@@ -57,6 +58,20 @@ def main():
         
         theme_manager.init_theme()
         
+        # Background Bootstrap (Non-blocking)
+        def bootstrap_db():
+            try:
+                from src.core.auth import Auth
+                from src.core.pharmacy_auth import PharmacyAuth
+                Auth.ensure_defaults()
+                PharmacyAuth.ensure_defaults()
+                print("[DEBUG] Background DB Bootstrap complete.")
+            except Exception as e:
+                print(f"[ERROR] Background Bootstrap Failed: {e}")
+
+        from src.core.blocking_task_manager import task_manager
+        task_manager.run_task(bootstrap_db)
+
         # Start GUI Watchdog (Background Monitor)
         from src.core.app_watchdog import start_watchdog
         watchdog = start_watchdog()
@@ -178,55 +193,59 @@ def main():
                         QMessageBox.critical(None, "Activation Required", "Internet required for first-time activation.")
                         sys.exit()
 
-                print("[DEBUG] Internet active. Verifying cloud registration...")
-                try:
-                    print(f"[DEBUG] Calling supabase_manager.get_installation_status({sid})")
-                    cloud_record = supabase_manager.get_installation_status(sid)
-                    print(f"[DEBUG] cloud_record={cloud_record}")
-                except Exception as e:
-                    print(f"[DEBUG] Supabase check failed: {e}")
-                    cloud_record = None
+                def check_cloud():
+                    try:
+                        print(f"[DEBUG] Calling supabase_manager.get_installation_status({sid})")
+                        return supabase_manager.get_installation_status(sid)
+                    except Exception as e:
+                        print(f"[DEBUG] Supabase check failed: {e}")
+                        return None
 
-                if not cloud_record:
-                    print("[DEBUG] No cloud record found")
-                    if is_registered_local:
-                        print("[DEBUG] Calling jump_to_app() for locally registered user")
-                        jump_to_app()
+                def on_cloud_check_finished(cloud_record):
+                    if not cloud_record:
+                        print("[DEBUG] No cloud record found")
+                        if is_registered_local:
+                            print("[DEBUG] Calling jump_to_app() for locally registered user")
+                            jump_to_app()
+                        else:
+                            print("[DEBUG] Calling show_registration_stepper()")
+                            show_registration_stepper()
                     else:
-                        print("[DEBUG] Calling show_registration_stepper()")
-                        show_registration_stepper()
-                else:
-                    print("[DEBUG] Cloud record found, processing...")
-                    status = cloud_record.get('status', 'active')
-                    print(f"[DEBUG] Account status={status}")
-                    if status == 'deactivated':
-                        print("[DEBUG] Account deactivated, showing locked screen")
-                        show_locked_screen(cloud_record)
-                        return
+                        print("[DEBUG] Cloud record found, processing...")
+                        status = cloud_record.get('status', 'active')
+                        print(f"[DEBUG] Account status={status}")
+                        if status == 'deactivated':
+                            print("[DEBUG] Account deactivated, showing locked screen")
+                            show_locked_screen(cloud_record)
+                            return
 
-                    print("[DEBUG] Setting local config...")
-                    local_config.set("account_created", True)
-                    local_config.set("status", status)
-                    
-                    # Store modular activation flags
-                    store_active = cloud_record.get('store_active', True)
-                    pharmacy_active = cloud_record.get('pharmacy_active', True)
-                    local_config.set("store_active", store_active)
-                    local_config.set("pharmacy_active", pharmacy_active)
-                    
-                    # Update guard state
-                    if hasattr(guard, 'store_active'): guard.store_active = store_active
-                    if hasattr(guard, 'pharmacy_active'): guard.pharmacy_active = pharmacy_active
-                    
-                    print("[DEBUG] Verifying local data integrity...")
-                    if not verify_local_data_integrity():
-                         print("[DEBUG] Data integrity failed, showing registration stepper")
-                         local_config.set("account_created", False)
-                         show_registration_stepper()
-                         return
+                        print("[DEBUG] Setting local config...")
+                        local_config.set("account_created", True)
+                        local_config.set("status", status)
+                        
+                        # Store modular activation flags
+                        store_active = cloud_record.get('store_active', True)
+                        pharmacy_active = cloud_record.get('pharmacy_active', True)
+                        local_config.set("store_active", store_active)
+                        local_config.set("pharmacy_active", pharmacy_active)
+                        
+                        # Update guard state
+                        if hasattr(guard, 'store_active'): guard.store_active = store_active
+                        if hasattr(guard, 'pharmacy_active'): guard.pharmacy_active = pharmacy_active
+                        
+                        print("[DEBUG] Verifying local data integrity...")
+                        if not verify_local_data_integrity():
+                             print("[DEBUG] Data integrity failed, showing registration stepper")
+                             local_config.set("account_created", False)
+                             show_registration_stepper()
+                             return
 
-                    print("[DEBUG] All checks passed, calling jump_to_app()")
-                    jump_to_app()
+                        print("[DEBUG] All checks passed, calling jump_to_app()")
+                        jump_to_app()
+                    print("[DEBUG] on_internet_gate_resolved() task completed")
+
+                from src.core.blocking_task_manager import task_manager
+                task_manager.run_task(check_cloud, on_finished=on_cloud_check_finished)
                 print("[DEBUG] on_internet_gate_resolved() completed")
                 print("="*60)
             except Exception as e:
@@ -239,6 +258,7 @@ def main():
             nonlocal installer_login_window
             installer_login_window = LoginWindow()
             installer_login_window.login_success.connect(lambda: jump_to_app())
+            app.setQuitOnLastWindowClosed(True)
             installer_login_window.show()
             gate.close()
             
@@ -265,6 +285,7 @@ def main():
                 
                 print("[DEBUG] Connecting login_success signal...")
                 app_login_window.login_success.connect(start_main_app)
+                app.setQuitOnLastWindowClosed(True)
                 
                 print("[DEBUG] Calling show()...")
                 app_login_window.show()
@@ -305,16 +326,8 @@ def main():
                     show_app_login()
                     return
                 
-                print("[DEBUG] Contract valid, checking login mode...")
-                login_mode = local_config.get("login_mode", "each_time")
-                print(f"[DEBUG] login_mode={login_mode}")
-                
-                if login_mode == "once":
-                    print("[DEBUG] Login mode is 'once', starting main app directly")
-                    start_main_app()
-                else:
-                    print("[DEBUG] Login mode requires login, showing app login")
-                    show_app_login()
+                print("[DEBUG] Showing login screen...")
+                show_app_login()
                 
                 print("[DEBUG] jump_to_app() COMPLETED")
                 print("="*60 + "\n")
@@ -329,6 +342,7 @@ def main():
             try:
                 onboarding_window = CreateAccountWindow()
                 onboarding_window.account_created.connect(jump_to_app)
+                app.setQuitOnLastWindowClosed(True)
                 onboarding_window.show()
                 gate.close()
             except Exception as e:

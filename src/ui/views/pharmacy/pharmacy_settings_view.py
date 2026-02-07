@@ -434,7 +434,7 @@ class PharmacySettingsView(QWidget):
                 import shutil
                 from datetime import datetime
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                source = "afex_pharmacy.db"
+                source = "faqiritech_pharmacy.db"
                 dest = os.path.join(path, f"pharmacy_backup_{timestamp}.db")
                 shutil.copy2(source, dest)
                 QMessageBox.information(self, "Success", f"Pharmacy backup created at:\n{dest}")
@@ -450,7 +450,7 @@ class PharmacySettingsView(QWidget):
             if reply == QMessageBox.StandardButton.Yes:
                 try:
                     import shutil
-                    shutil.copy2(file, "afex_pharmacy.db")
+                    shutil.copy2(file, "faqiritech_pharmacy.db")
                     QMessageBox.information(self, "Success", "Pharmacy database restored. Please restart the app.")
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Restore failed: {str(e)}")

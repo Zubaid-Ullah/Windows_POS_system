@@ -19,7 +19,7 @@ except ImportError:
 # Credentials from the provided files
 SUPABASE_URL = "https://gwmtlvquhlqtkyynuexf.supabase.co"
 SUPABASE_KEY = "sb_publishable_4KVNe1OfSa9BK7b5ALuQyQ_q4Igic6Z"
-LOCAL_SYSTEM_ID_PATH = os.path.expanduser("~/.afex_pos_system_id.json")
+LOCAL_SYSTEM_ID_PATH = os.path.expanduser("~/.faqiritech_pos_system_id.json")
 
 class CredentialsView(QWidget):
     def __init__(self):

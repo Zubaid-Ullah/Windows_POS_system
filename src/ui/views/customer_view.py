@@ -231,9 +231,9 @@ class CustomerView(QWidget):
             "ID", "Full Name", "Contact", "Balance", "Actions"
         ])
         style_table(self.table, variant="premium")
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.setColumnWidth(4, 200)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch) # Name stretches
+        self.table.setColumnWidth(4, 200) # Actions fixed
         layout.addWidget(self.table)
         
         main_layout.addWidget(self.container)
@@ -294,6 +294,12 @@ class CustomerView(QWidget):
                     act_layout.addWidget(pay_btn)
                 
                 self.table.setCellWidget(i, 4, actions)
+            
+            # Auto-fit columns to content once the table is populated
+            self.table.resizeColumnsToContents()
+            # Restore stretch and fixed action column
+            self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            self.table.setColumnWidth(4, 200)
 
         task_manager.run_task(fetch_data, on_finished=on_loaded)
 

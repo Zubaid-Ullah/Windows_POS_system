@@ -103,28 +103,34 @@ class PharmacyAuth:
         except: pass
         return False
 
-def init_pharmacy_defaults():
-    with db_manager.get_pharmacy_connection() as conn:
-        cursor = conn.cursor()
-        
-        # 1. Standard Admin
-        cursor.execute("SELECT COUNT(*) FROM pharmacy_users WHERE username = 'admin'")
-        if cursor.fetchone()[0] == 0:
-            hashed = PharmacyAuth.hash_password("admin123")
-            cursor.execute("""
-                INSERT INTO pharmacy_users (username, password_hash, title, role, permissions)
-                VALUES (?, ?, ?, ?, ?)
-            """, ("admin", hashed, "Pharmacy Admin", "Manager", json.dumps(['*'])))
+    @staticmethod
+    def ensure_defaults():
+        """Ensures default pharmacy users exist."""
+        with db_manager.get_pharmacy_connection() as conn:
+            cursor = conn.cursor()
             
-        # 2. Support for psuper bridge if needed or local psuper
-        cursor.execute("SELECT COUNT(*) FROM pharmacy_users WHERE username = 'psuper'")
-        if cursor.fetchone()[0] == 0:
-             hashed = PharmacyAuth.hash_password("secure_Sys_2026!")
-             cursor.execute("""
-                INSERT INTO pharmacy_users (username, password_hash, title, role, permissions, is_super_admin)
-                VALUES (?, ?, ?, ?, ?, 1)
-            """, ("psuper", hashed, "Pharmacy Super Owner", "Manager", json.dumps(['*'])))
-            
-        conn.commit()
+            # 1. Standard Admin
+            cursor.execute("SELECT COUNT(*) FROM pharmacy_users WHERE username = 'admin'")
+            if cursor.fetchone()[0] == 0:
+                hashed = PharmacyAuth.hash_password("admin123")
+                cursor.execute("""
+                    INSERT INTO pharmacy_users (username, password_hash, title, role, permissions)
+                    VALUES (?, ?, ?, ?, ?)
+                """, ("admin", hashed, "Pharmacy Admin", "Manager", json.dumps(['*'])))
+                
+            # 2. Support for psuper bridge if needed or local psuper
+            cursor.execute("SELECT COUNT(*) FROM pharmacy_users WHERE username = 'psuper'")
+            if cursor.fetchone()[0] == 0:
+                 hashed = PharmacyAuth.hash_password("secure_Sys_2026!")
+                 cursor.execute("""
+                    INSERT INTO pharmacy_users (username, password_hash, title, role, permissions, is_super_admin)
+                    VALUES (?, ?, ?, ?, ?, 1)
+                """, ("psuper", hashed, "Pharmacy Super Owner", "Manager", json.dumps(['*'])))
+                
+            conn.commit()
 
-init_pharmacy_defaults()
+def init_pharmacy_defaults():
+    # Deprecated: use PharmacyAuth.ensure_defaults()
+    PharmacyAuth.ensure_defaults()
+
+# PharmacyAuth.ensure_defaults() is now called on demand

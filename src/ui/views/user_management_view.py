@@ -49,16 +49,11 @@ class UserManagementView(QWidget):
         self.user_table.setHorizontalHeaderLabels(["ID", "Username", "Title", "Role", "Status", "Base Salary", "Password", "Actions"])
         style_table(self.user_table, variant="premium")
         
-        # 1. Make table stretchable and responsive
+        # 1. Make table responsive (benefit from global ResizeToContents)
         header = self.user_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        # IDs and Status can be smaller/fixed to contents if desired, but Stretch ensures full width usage.
-        # Let's optimize slightly:
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents) # ID
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents) # Status
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents) # Password
-        # Actions column needs space but shouldn't be massive compared to others
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        # Explicit stretches for primary info columns
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch) # Username
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch) # Title
 
         layout.addWidget(self.user_table)
         

@@ -140,37 +140,37 @@ class Auth:
         return permissions.get(role_name, [])
 
 # Initialize default users
-def init_defaults():
-    with db_manager.get_connection() as conn:
-        cursor = conn.cursor()
-        
-        # Admin
-        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
-        if cursor.fetchone()[0] == 0:
-            Auth.create_user("admin", "admin123", "Admin")
+    @staticmethod
+    def ensure_defaults():
+        """Ensures default users exist. Call this during bootstrap/login."""
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
             
-        # Salesman
-        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'sales'")
-        if cursor.fetchone()[0] == 0:
-            Auth.create_user("sales", "sales123", "Salesman")
-            
-        # Manager
-        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'manager'")
-        if cursor.fetchone()[0] == 0:
-            Auth.create_user("manager", "price123", "Manager")
+            # Admin
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
+            if cursor.fetchone()[0] == 0:
+                Auth.create_user("admin", "admin123", "Admin")
+                
+            # Salesman
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'sales'")
+            if cursor.fetchone()[0] == 0:
+                Auth.create_user("sales", "sales123", "Salesman")
+                
+            # Manager
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'manager'")
+            if cursor.fetchone()[0] == 0:
+                Auth.create_user("manager", "price123", "Manager")
+    
+            # Price Checker
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'pricecheck'")
+            if cursor.fetchone()[0] == 0:
+                Auth.create_user("pricecheck", "check123", "PriceChecker")
+    
+            # Super Admin (Hidden System Account)
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'superadmin'")
+            if cursor.fetchone()[0] == 0:
+                if Auth.create_user("superadmin", "secure_Sys_2026!", "SuperAdmin"):
+                    cursor.execute("UPDATE users SET is_super_admin = 1 WHERE username = 'superadmin'")
+                    conn.commit()
 
-        # Price Checker
-        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'pricecheck'")
-        if cursor.fetchone()[0] == 0:
-            Auth.create_user("pricecheck", "check123", "PriceChecker")
 
-        # Super Admin (Hidden System Account)
-        cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'superadmin'")
-        if cursor.fetchone()[0] == 0:
-            # Default creds: superadmin / secure_Sys_2026!
-            # We create it then manually set the flag since create_user is generic
-            if Auth.create_user("superadmin", "secure_Sys_2026!", "SuperAdmin"):
-                cursor.execute("UPDATE users SET is_super_admin = 1 WHERE username = 'superadmin'")
-                conn.commit()
-
-init_defaults()

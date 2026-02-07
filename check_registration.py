@@ -46,7 +46,7 @@ def main():
             print("   → Will show login window")
 
     print("\n🔧 If issues persist:")
-    print("   1. Delete ~/.afex_pos_config.json to reset registration")
+    print("   1. Delete ~/.faqiritech_pos_config.json to reset registration")
     print("   2. Check credentials/useraccount.txt for account data")
     print("   3. Run the app again to go through registration")
 

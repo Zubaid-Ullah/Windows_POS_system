@@ -481,107 +481,164 @@ class PharmacyFinanceView(QWidget):
         return card
 
     def load_summary(self):
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                filter_text = self.filter_combo.currentText()
-                days_count = 30 # Default for monthly
-                
-                if lang_manager.get("daily_report") in filter_text:
-                    time_filter = "date({T}.created_at) = date('now')"
-                    exp_filter = "date({T}.expense_date) = date('now')"
-                    period_name = lang_manager.get("today")
-                    days_count = 1
-                elif lang_manager.get("weekly_report") in filter_text:
-                    time_filter = "date({T}.created_at) >= date('now', '-7 days')"
-                    exp_filter = "date({T}.expense_date) >= date('now', '-7 days')"
-                    period_name = lang_manager.get("last_7_days")
-                    days_count = 7
-                elif lang_manager.get("monthly_report") in filter_text:
-                    time_filter = "date({T}.created_at) >= date('now', 'start of month')"
-                    exp_filter = "date({T}.expense_date) >= date('now', 'start of month')"
-                    period_name = lang_manager.get("this_month")
-                    days_count = 30
-                else:
-                    # Custom Range
-                    d_from = self.date_from.date().toString("yyyy-MM-dd")
-                    d_to = self.date_to.date().toString("yyyy-MM-dd")
-                    time_filter = f"date({{T}}.created_at) BETWEEN '{d_from}' AND '{d_to}'"
-                    exp_filter = f"date({{T}}.expense_date) BETWEEN '{d_from}' AND '{d_to}'"
-                    period_name = f"{d_from} {lang_manager.get('to')} {d_to}"
-                    days_count = self.date_from.date().daysTo(self.date_to.date()) + 1
-                    if days_count <= 0: days_count = 1
+        """Asynchronously load financial summary data"""
+        self._start_finance_worker()
 
-                self.month_lbl.setText(f"{lang_manager.get('overview')} ({period_name})")
+    def _start_finance_worker(self):
+        # Prevent double loading
+        if hasattr(self, '_worker') and self._worker and self._worker.isRunning():
+            return
 
-                # 1. Net Sales (Gross - Returns)
-                sale_row = conn.execute(f"SELECT SUM(total_amount) as total FROM pharmacy_sales s WHERE {time_filter.format(T='s')}").fetchone()
-                gross_sales = sale_row['total'] or 0
-                
-                ret_row = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE {time_filter.format(T='r')}").fetchone()
-                returns_total = ret_row['total'] or 0
-                
-                net_sales = gross_sales - returns_total
+        # Prepare filters
+        filter_text = self.filter_combo.currentText()
+        date_from = self.date_from.date().toString("yyyy-MM-dd")
+        date_to = self.date_to.date().toString("yyyy-MM-dd")
 
-                # 2. Net Cost of Goods
-                cost_data = conn.execute(f"""
-                    SELECT SUM(si.quantity * p.cost_price) as cost
-                    FROM pharmacy_sale_items si
-                    JOIN pharmacy_products p ON si.product_id = p.id
-                    JOIN pharmacy_sales s ON si.sale_id = s.id
-                    WHERE {time_filter.format(T='s')}
-                """).fetchone()
-                gross_cost = cost_data['cost'] or 0
+        from PyQt6.QtCore import QThread, pyqtSignal
+        class FinanceWorker(QThread):
+            data_loaded = pyqtSignal(dict)
+            error = pyqtSignal(str)
 
-                ret_cost_data = conn.execute(f"""
-                    SELECT SUM(ri.quantity * p.cost_price) as cost
-                    FROM pharmacy_return_items ri
-                    JOIN pharmacy_products p ON ri.product_id = p.id
-                    JOIN pharmacy_returns r ON ri.return_id = r.id
-                    WHERE {time_filter.format(T='r')}
-                """).fetchone()
-                return_cost = ret_cost_data['cost'] or 0
-                
-                net_cost = gross_cost - return_cost
-                trading_profit = net_sales - net_cost
-                
-                # 3. Total Salaries (Pro-rated for the period)
-                full_monthly_salaries = conn.execute("SELECT SUM(amount) as total FROM pharmacy_employee_salary WHERE is_active=1").fetchone()
-                total_salaries_config = full_monthly_salaries['total'] or 0
-                total_salaries = (total_salaries_config / 30.0) * days_count
-                
-                # 4. Total Expenses
-                expense_data = conn.execute(f"SELECT SUM(amount) as total FROM pharmacy_expenses e WHERE {exp_filter.format(T='e')}").fetchone()
-                total_expenses = expense_data['total'] or 0
-                
-                final_net = trading_profit - total_salaries - total_expenses
-                
-                self.gross_sale_card.value_lbl.setText(f"{gross_sales:,.2f} AFN")
-                self.ret_sale_card.value_lbl.setText(f"{returns_total:,.2f} AFN")
-                self.net_sale_card.value_lbl.setText(f"{net_sales:,.2f} AFN")
-                
-                self.gross_cost_card.value_lbl.setText(f"{gross_cost:,.2f} AFN")
-                self.ret_cost_card.value_lbl.setText(f"{return_cost:,.2f} AFN")
-                self.net_cost_card.value_lbl.setText(f"{net_cost:,.2f} AFN")
-                
-                self.net_profit_card.value_lbl.setText(f"{trading_profit:,.2f} AFN")
-                self.total_exp_card.value_lbl.setText(f"{(total_salaries + total_expenses):,.2f} AFN")
-                self.final_net_card.value_lbl.setText(f"{final_net:,.2f} AFN")
-                
-                # Update final net label based on periodicity
-                if days_count == 1:
-                    self.final_net_card.title_lbl.setText(lang_manager.get("net_profit"))
-                elif days_count <= 7:
-                    self.final_net_card.title_lbl.setText(lang_manager.get("weekly_report"))
-                else:
-                    self.final_net_card.title_lbl.setText(lang_manager.get("net_monthly_profit"))
+            def __init__(self, filter_text, d_from, d_to):
+                super().__init__()
+                self.filter_text = filter_text
+                self.d_from = d_from
+                self.d_to = d_to
 
-                if final_net < 0:
-                    self.final_net_card.value_lbl.setStyleSheet("font-size: 22px; font-weight: bold; color: #f43f5e;")
-                else:
-                    self.final_net_card.value_lbl.setStyleSheet("font-size: 22px; font-weight: bold; color: #8b5cf6;")
+            def run(self):
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        # 1. Determine filters
+                        days_count = 30
+                        if lang_manager.get("daily_report") in self.filter_text:
+                            time_filter = "date({T}.created_at) = date('now')"
+                            exp_filter = "date({T}.expense_date) = date('now')"
+                            period_name = lang_manager.get("today")
+                            days_count = 1
+                        elif lang_manager.get("weekly_report") in self.filter_text:
+                            time_filter = "date({T}.created_at) >= date('now', '-7 days')"
+                            exp_filter = "date({T}.expense_date) >= date('now', '-7 days')"
+                            period_name = lang_manager.get("last_7_days")
+                            days_count = 7
+                        elif lang_manager.get("monthly_report") in self.filter_text:
+                            time_filter = "date({T}.created_at) >= date('now', 'start of month')"
+                            exp_filter = "date({T}.expense_date) >= date('now', 'start of month')"
+                            period_name = lang_manager.get("this_month")
+                            days_count = 30
+                        else:
+                            time_filter = f"date({{T}}.created_at) BETWEEN '{self.d_from}' AND '{self.d_to}'"
+                            exp_filter = f"date({{T}}.expense_date) BETWEEN '{self.d_from}' AND '{self.d_to}'"
+                            period_name = f"{self.d_from} {lang_manager.get('to')} {self.d_to}"
+                            # Calculate days between manually or just store as string
+                            days_count = 30 # Approximation 
 
-        except Exception as e:
-            print(f"Error loading summary: {e}")
+                        # 2. Net Sales (Revenue)
+                        gross_received_sql = f"""
+                            SELECT (
+                                (SELECT COALESCE(SUM(total_amount), 0) FROM pharmacy_sales s WHERE payment_type='CASH' AND {time_filter.format(T='s')}) +
+                                (SELECT COALESCE(SUM(amount), 0) FROM pharmacy_payments p WHERE {time_filter.format(T='p')})
+                            ) as total
+                        """
+                        gross_sales = conn.execute(gross_received_sql).fetchone()[0] or 0
+                        
+                        ret_row = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE refund_type='CASH' AND {time_filter.format(T='r')}").fetchone()
+                        returns_total = ret_row['total'] or 0
+                        net_sales = gross_sales - returns_total
+
+                        # 3. Net Cost of Goods (COGS)
+                        cash_cost_sql = f"""
+                            SELECT SUM(si.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), p.cost_price))
+                            FROM pharmacy_sale_items si
+                            JOIN pharmacy_products p ON si.product_id = p.id
+                            JOIN pharmacy_sales s ON si.sale_id = s.id
+                            WHERE s.payment_type='CASH' AND {time_filter.format(T='s')}
+                        """
+                        gross_cost_cash = conn.execute(cash_cost_sql).fetchone()[0] or 0
+                        
+                        credit_payment_cost_sql = f"""
+                            SELECT SUM( p.amount * (
+                                SELECT SUM(si.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), pp.cost_price))
+                                FROM pharmacy_sale_items si
+                                JOIN pharmacy_products pp ON si.product_id = pp.id
+                                WHERE si.sale_id = p.sale_id
+                            ) / CAST(s.total_amount AS REAL) )
+                            FROM pharmacy_payments p
+                            JOIN pharmacy_sales s ON p.sale_id = s.id
+                            WHERE {time_filter.format(T='p')}
+                        """
+                        gross_cost_payments = conn.execute(credit_payment_cost_sql).fetchone()[0] or 0
+                        gross_cost = gross_cost_cash + gross_cost_payments
+
+                        ret_cost_sql = f"""
+                            SELECT SUM(ri.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), p.cost_price))
+                            FROM pharmacy_return_items ri
+                            JOIN pharmacy_sale_items si ON ri.sale_item_id = si.id
+                            JOIN pharmacy_products p ON ri.product_id = p.id
+                            JOIN pharmacy_returns r ON ri.return_id = r.id
+                            WHERE r.refund_type='CASH' AND {time_filter.format(T='r')}
+                        """
+                        return_cost = conn.execute(ret_cost_sql).fetchone()[0] or 0
+                        net_cost = gross_cost - return_cost
+                        trading_profit = net_sales - net_cost
+                        
+                        # 4. Expenses & Salaries
+                        full_monthly_salaries = conn.execute("SELECT SUM(amount) as total FROM pharmacy_employee_salary WHERE is_active=1").fetchone()
+                        total_salaries_val = (full_monthly_salaries['total'] or 0) / 30.0 * days_count
+                        
+                        expense_data = conn.execute(f"SELECT SUM(amount) as total FROM pharmacy_expenses e WHERE {exp_filter.format(T='e')}").fetchone()
+                        total_expenses = expense_data['total'] or 0
+                        
+                        self.data_loaded.emit({
+                            'gross_sales': gross_sales,
+                            'returns_total': returns_total,
+                            'net_sales': net_sales,
+                            'gross_cost': gross_cost,
+                            'return_cost': return_cost,
+                            'net_cost': net_cost,
+                            'trading_profit': trading_profit,
+                            'total_salaries': total_salaries_val,
+                            'total_expenses': total_expenses,
+                            'period_name': period_name,
+                            'days_count': days_count
+                        })
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        self._worker = FinanceWorker(filter_text, date_from, date_to)
+        self._worker.data_loaded.connect(self._on_summary_loaded)
+        self._worker.error.connect(lambda e: print(f"FinanceWorker Error: {e}"))
+        self._worker.start()
+
+    def _on_summary_loaded(self, data):
+        self.month_lbl.setText(f"{lang_manager.get('overview')} ({data['period_name']})")
+        
+        self.gross_sale_card.value_lbl.setText(f"{data['gross_sales']:,.2f} AFN")
+        self.ret_sale_card.value_lbl.setText(f"{data['returns_total']:,.2f} AFN")
+        self.net_sale_card.value_lbl.setText(f"{data['net_sales']:,.2f} AFN")
+        
+        self.gross_cost_card.value_lbl.setText(f"{data['gross_cost']:,.2f} AFN")
+        self.ret_cost_card.value_lbl.setText(f"{data['return_cost']:,.2f} AFN")
+        self.net_cost_card.value_lbl.setText(f"{data['net_cost']:,.2f} AFN")
+        
+        self.net_profit_card.value_lbl.setText(f"{data['trading_profit']:,.2f} AFN")
+        self.total_exp_card.value_lbl.setText(f"{(data['total_salaries'] + data['total_expenses']):,.2f} AFN")
+        
+        final_net = data['trading_profit'] - data['total_salaries'] - data['total_expenses']
+        self.final_net_card.value_lbl.setText(f"{final_net:,.2f} AFN")
+        
+        # Labels
+        days_count = data['days_count']
+        if days_count == 1:
+            self.final_net_card.title_lbl.setText(lang_manager.get("net_profit"))
+        elif days_count <= 7:
+            self.final_net_card.title_lbl.setText(lang_manager.get("weekly_report"))
+        else:
+            self.final_net_card.title_lbl.setText(lang_manager.get("net_monthly_profit"))
+
+        if final_net < 0:
+            self.final_net_card.value_lbl.setStyleSheet("font-size: 22px; font-weight: bold; color: #f43f5e;")
+        else:
+            self.final_net_card.value_lbl.setStyleSheet("font-size: 22px; font-weight: bold; color: #8b5cf6;")
 
     def showEvent(self, event):
         super().showEvent(event)

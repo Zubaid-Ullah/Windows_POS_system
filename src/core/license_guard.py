@@ -45,6 +45,7 @@ class LicenseGuard(QObject):
 
         # Keep reference to active thread to avoid GC and overwriting
         self._active_thread = None
+        self.shutdown_window = None
 
     def start_async_check(self):
         """Launches a one-off thread for the network poll."""
@@ -105,64 +106,81 @@ class LicenseGuard(QObject):
         shutdown_time_str = status_data.get('shutdown_time')
         if shutdown_time_str:
             try:
-                import os
                 from datetime import timezone
-                
                 # Parse the shutdown time (should be in ISO format with timezone)
                 try:
                     shutdown_time = datetime.fromisoformat(shutdown_time_str.replace("Z", "+00:00"))
                 except:
                     shutdown_time = datetime.strptime(shutdown_time_str[:19], "%Y-%m-%dT%H:%M:%S")
-                    # If no timezone info, assume UTC
                     shutdown_time = shutdown_time.replace(tzinfo=timezone.utc)
 
-                # Get current time in UTC for proper comparison
                 now = datetime.now(timezone.utc)
-                
-                # Make shutdown_time timezone-aware if it isn't already
                 if shutdown_time.tzinfo is None:
                     shutdown_time = shutdown_time.replace(tzinfo=timezone.utc)
                 
-                # Calculate time difference
-                time_diff = (now - shutdown_time).total_seconds()
-                
-                print(f"🔍 Shutdown check: Target={shutdown_time_str}, Now={now.isoformat()}, Diff={time_diff}s")
-                
-                # If target time has passed (but was set recently), trigger shutdown
-                # We use a 10 minute window to prevent old shutdown requests from triggering on reboot
-                if time_diff >= 0 and time_diff < 600: # Range: reached but less than 10 mins old
-                    import platform
-                    from src.database.db_manager import db_manager
-                    
-                    print(f"⚠️ REMOTE SHUTDOWN TRIGGERED! Target was: {shutdown_time_str}")
-                    
-                    # 1. Log event and CLEAR the command from cloud so it doesn't loop
-                    pc_name = platform.node()
-                    supabase_manager.log_activation_attempt("SYSTEM_AUTO_SHUTDOWN", self.sid, pc_name)
-                    
-                    # IMPORTANT: Clear the shutdown_time in Supabase so it doesn't trigger again on reboot
-                    try:
-                        supabase_manager.update_company_details(self.sid, {"shutdown_time": None})
-                    except: pass
-                    
-                    # 2. Safety Grace: Pre-close Database to prevent corruption
-                    try:
-                        db_manager.close_all_connections()
-                    except: pass
+                remaining = (shutdown_time - now).total_seconds()
+                print(f"🔍 Shutdown check: Target={shutdown_time_str}, Now={now.isoformat()}, Remaining={remaining}s")
 
-                    # 3. Cross-platform shutdown with 2-minute warning
-                    if platform.system() == "Windows":
-                        os.system("shutdown /s /t 120 /c \"Remotely triggered by SuperAdmin. System will shutdown in 2 minutes.\"")
-                    elif platform.system() == "Darwin":  # macOS
-                        # Use AppleScript to trigger shutdown without sudo password
-                        os.system('osascript -e \"tell application \\"System Events\\" to shut down\"')
-                    else:  # Linux
-                        os.system("shutdown -h +2 \"SuperAdmin shutdown trigger.\"")
-                    
-                    sys.exit(0)
+                if remaining > 0 and remaining < 600: # Within 10 minutes in the future
+                    self._show_shutdown_countdown(shutdown_time)
+                elif remaining <= 0 and remaining > -600: # Target reached (within last 10 mins)
+                    self._execute_immediate_shutdown(status_data)
             except Exception as e:
                 print(f"Shutdown check error: {e}")
 
+    def _show_shutdown_countdown(self, target_time):
+        """Displays a GUI countdown window for the remote shutdown."""
+        if self.shutdown_window or self.is_currently_locked:
+            return
+            
+        try:
+            from src.ui.views.onboarding.shutdown_window import ShutdownCountdownWindow
+            self.shutdown_window = ShutdownCountdownWindow(target_time)
+            # Use a wrapper to pass data if needed
+            self.shutdown_window.shutdown_now.connect(lambda: self._execute_immediate_shutdown(self.last_status))
+            self.shutdown_window.show()
+            self.shutdown_window.raise_()
+            self.shutdown_window.activateWindow()
+            print("🔔 Shutdown countdown window displayed.")
+        except Exception as e:
+            print(f"Error showing shutdown window: {e}")
+
+    def _execute_immediate_shutdown(self, status_data):
+        """Final execution of the system shutdown."""
+        try:
+            import os
+            import platform
+            from src.database.db_manager import db_manager
+            
+            # 1. Notify Cloud and Log
+            pc_name = platform.node()
+            print(f"⚠️ REMOTE SHUTDOWN EXECUTING! (PC: {pc_name})")
+            
+            try:
+                # Update status to indicate execution started
+                supabase_manager.log_activation_attempt("SHUTDOWN_EXECUTED", self.sid, pc_name)
+                # Clear the command so it doesn't loop
+                supabase_manager.update_company_details(self.sid, {"shutdown_time": None})
+            except: pass
+            
+            # 2. Safety: Close DB
+            try: db_manager.close_all_connections()
+            except: pass
+
+            # 3. Final OS Command
+            if platform.system() == "Windows":
+                # Shutdown in 15 seconds (last chance to save)
+                os.system("shutdown /s /t 15 /c \"Finalizing remote shutdown command from SuperAdmin.\"")
+            elif platform.system() == "Darwin":  # macOS
+                os.system('osascript -e \"tell application \\"System Events\\" to shut down\"')
+            else:  # Linux
+                os.system("shutdown -h now")
+            
+            # Close app immediately
+            sys.exit(0)
+        except Exception as e:
+            print(f"Critical shutdown execution error: {e}")
+            sys.exit(1)
     def handle_error(self, err):
         # We don't block on transient network errors unless contract is locally expired
         # print(f"License poll failed (expected silently in background): {err}")

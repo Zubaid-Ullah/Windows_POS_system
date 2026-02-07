@@ -16,7 +16,7 @@ SUPABASE_KEY = os.environ["sb_publishable_4KVNe1OfSa9BK7b5ALuQyQ_q4Igic6Z"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Local file where we store stable system_id on that PC
-LOCAL_SYSTEM_ID_PATH = os.path.expanduser("~/.afex_pos_system_id.json")
+LOCAL_SYSTEM_ID_PATH = os.path.expanduser("~/.faqiritech_pos_system_id.json")
 
 def load_or_create_system_id() -> str:
     if os.path.exists(LOCAL_SYSTEM_ID_PATH):
@@ -114,13 +114,13 @@ def main():
 
     # ---- YOU FILL THESE (from your installer UI / config) ----
     serial_key = f"{get_serial_number()}"
-    company_name = "Afexnology"
+    company_name = "FaqiriTech Tech"
     company_whatsapp_url = "https://wa.me/937XXXXXXXXX"
     phone = "+93XXXXXXXXX"
     address = "Kabul, Afghanistan, ... full address"
     email = "support@yourdomain.com"
     location = address  # or separate
-    license_name = f"Afex-POS-LICENSE-{random.randint(0, 9999):04}"
+    license_name = f"FaqiriTech-POS-LICENSE-{random.randint(0, 9999):04}"
     installed_by = "developer-or-superadmin-name"
     contract_duration_days = 180
     # ----------------------------------------------------------

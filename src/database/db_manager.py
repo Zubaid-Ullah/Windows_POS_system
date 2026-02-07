@@ -29,8 +29,8 @@ class DatabaseManager:
             except: pass
 
         # We now have two separate database files
-        self.store_db = os.path.join(self.base_dir, "afex_store.db")
-        self.pharmacy_db = os.path.join(self.base_dir, "afex_pharmacy.db")
+        self.store_db = os.path.join(self.base_dir, "faqiritech_store.db")
+        self.pharmacy_db = os.path.join(self.base_dir, "faqiritech_pharmacy.db")
         
         # Override if path provided
         if db_path:
@@ -41,6 +41,7 @@ class DatabaseManager:
 
         self._create_store_tables()
         self._create_pharmacy_tables()
+        self.seed_initial_data()
         self._enable_wal_mode()
         self._auto_backup()
 
@@ -95,9 +96,12 @@ class DatabaseManager:
         import threading
         from PyQt6.QtWidgets import QApplication
         if threading.current_thread() == threading.main_thread():
-            # If QApplication exists and is running, it's a UI block risk
             if QApplication.instance():
-                print(f"[WARNING] Database accessed from MAIN UI THREAD. This may cause GUI freezes. Use task_manager instead.")
+                # Avoid flooding logs by only warning once per minute per session
+                now = datetime.now()
+                if not hasattr(self, '_last_thread_warn') or (now - self._last_thread_warn).seconds > 60:
+                    self._last_thread_warn = now
+                    print(f"[WARNING] Database accessed from MAIN UI THREAD. This may cause GUI freezes. Use task_manager instead.")
 
     def _enable_wal_mode(self):
         for db in [self.store_db, self.pharmacy_db]:
@@ -218,7 +222,7 @@ class DatabaseManager:
             # Set to 2023 for reactivation as requested (Point 4: Reactivation Date)
             back_date = "2023-01-01"
             cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('contract_end', ?)", (back_date,))
-            cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('security_key', 'afex2026')")
+            cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('security_key', 'faqiri2026')")
             cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_number', '')")
 
             cursor.execute('CREATE TABLE IF NOT EXISTS company_info (id INTEGER PRIMARY KEY DEFAULT 1, name TEXT, address TEXT, phone TEXT, email TEXT)')
@@ -260,8 +264,10 @@ class DatabaseManager:
 
     def _create_pharmacy_tables(self):
         """Schema for Isolated Pharmacy Database."""
-        with self.get_pharmacy_connection() as conn:
-            cursor = conn.cursor()
+        print(f"[DEBUG] Initializing Pharmacy Database at: {self.pharmacy_db}")
+        try:
+            with self.get_pharmacy_connection() as conn:
+                cursor = conn.cursor()
             
             # Pharmacy specific tables
             cursor.execute('''
@@ -415,7 +421,7 @@ class DatabaseManager:
                 )
             ''')
             
-            # Duplicated app/system settings for Pharmacy logic independence if needed
+            # Duplicated app/system settings for Pharmacy logic independence
             cursor.execute('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)')
             cursor.execute("CREATE TABLE IF NOT EXISTS system_settings (id INTEGER PRIMARY KEY DEFAULT 1, is_active INTEGER DEFAULT 1, activation_key TEXT, mode TEXT DEFAULT 'OFFLINE', valid_until TIMESTAMP)")
             
@@ -424,11 +430,23 @@ class DatabaseManager:
             cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_number', '')")
 
             cursor.execute('CREATE TABLE IF NOT EXISTS pharmacy_info (id INTEGER PRIMARY KEY DEFAULT 1, name TEXT, address TEXT, phone TEXT, email TEXT)')
-            cursor.execute("INSERT OR IGNORE INTO pharmacy_info (id, name, address, phone, email) VALUES (1, 'FaqiriTech Pharmacy', 'Main Road, Kabul', '0700000000', 'pharmacy@afex.com')")
-
+            cursor.execute("INSERT OR IGNORE INTO pharmacy_info (id, name, address, phone, email) VALUES (1, 'FaqiriTech Pharmacy', 'Main Road, Kabul', '0700000000', 'pharmacy@faqiritech.com')")
             cursor.execute("INSERT OR IGNORE INTO system_settings (id, is_active, mode, valid_until) VALUES (1, 1, 'OFFLINE', ?)", (back_date,))
 
+            # Performance Indexes for Pharmacy
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_prod_bc ON pharmacy_products(barcode)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_inv_pid ON pharmacy_inventory(product_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_sales_date ON pharmacy_sales(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_sale_items_sid ON pharmacy_sale_items(sale_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_payments_sid ON pharmacy_payments(sale_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_payments_date ON pharmacy_payments(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_returns_date ON pharmacy_returns(created_at)")
+
             conn.commit()
+        except Exception as e:
+            print(f"[CRITICAL] Pharmacy DB Init Error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def seed_initial_data(self):
         # 1. Main Store Data

@@ -288,7 +288,8 @@ class CreateAccountWindow(QWidget):
         lay.addRow("Serial Info", self.sys_info_lbl)
         
         self.registration_choice = QComboBox()
-        self.registration_choice.addItems(["Login Each Time", "Login Once (Auto-Login)"])
+        self.registration_choice.addItems(["Login Each Time"])
+        self.registration_choice.setEnabled(False) # Force this for now for security
         lay.addRow("Login Preference", self.registration_choice)
         
         self.shortcut_chk = QCheckBox("Create Desktop Shortcut")
@@ -301,13 +302,30 @@ class CreateAccountWindow(QWidget):
     def verify_auth(self):
         user = self.installer_user.currentText()
         pw = self.installer_pass.text()
-        if supabase_manager.verify_installer(user, pw):
-            self.auth_verified = True
-            self.verify_lbl.setText("✅ Verified successfully")
-            self.verify_lbl.setStyleSheet("color: #10b981;")
-        else:
-            self.verify_lbl.setText("❌ Username or password is incorrect")
-            self.verify_lbl.setStyleSheet("color: #ee5d50;")
+        if not pw:
+            QMessageBox.warning(self, "Required", "Please enter the authorization password.")
+            return
+
+        self.verify_lbl.setText("Verifying with server...")
+        self.verify_lbl.setStyleSheet("color: #4318ff;")
+        self.verify_btn.setEnabled(False)
+        
+        from src.core.blocking_task_manager import task_manager
+        
+        def run_verify():
+            return supabase_manager.verify_installer(user, pw)
+            
+        def on_finished(verified):
+            self.verify_btn.setEnabled(True)
+            if verified:
+                self.auth_verified = True
+                self.verify_lbl.setText("✅ Verified successfully")
+                self.verify_lbl.setStyleSheet("color: #10b981;")
+            else:
+                self.verify_lbl.setText("❌ Username or password is incorrect")
+                self.verify_lbl.setStyleSheet("color: #ee5d50;")
+                
+        task_manager.run_task(run_verify, on_finished=on_finished)
 
     def go_next(self):
         if self.current_step == 0:
@@ -433,6 +451,7 @@ class CreateAccountWindow(QWidget):
         if not self.client_user.text() or not self.client_pass.text():
             QMessageBox.warning(self, "Required", "Please provide a client username and password.")
             return
+
         # Prepare payload
         sid = local_config.get("system_id")
         now = datetime.now()
@@ -440,6 +459,7 @@ class CreateAccountWindow(QWidget):
         expiry_dt = datetime(expiry_qdate.year(), expiry_qdate.month(), expiry_qdate.day())
         duration = (expiry_dt - now).days
         serial = self.get_system_serial()
+        
         payload = {
             "system_id": sid,
             "pc_name": socket.gethostname(),
@@ -462,10 +482,16 @@ class CreateAccountWindow(QWidget):
         # Prevent double clicks
         self.next_btn.setEnabled(False)
         self.back_btn.setEnabled(False)
+        self.next_btn.setText("Registering...")
         
-        print("[INFO] Registering system and client online...")
-        # 1. Register Installation
-        if supabase_manager.upsert_installation(payload):
+        from src.core.blocking_task_manager import task_manager
+        
+        def run_registration():
+            print("[INFO] Registering system and client online...")
+            # 1. Register Installation
+            if not supabase_manager.upsert_installation(payload):
+                return False, "Failed to register system online."
+
             # 1b. Save company details to local database
             try:
                 with db_manager.get_connection() as conn:
@@ -482,7 +508,6 @@ class CreateAccountWindow(QWidget):
                     ]
                     for key, value in settings_data:
                         conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, value))
-                        # Also sync with system_settings if it exists
                         try:
                             conn.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", (key, value))
                         except: pass
@@ -502,34 +527,38 @@ class CreateAccountWindow(QWidget):
                 if not os.path.exists(qr_dir): os.makedirs(qr_dir)
                 qr_path = os.path.join(qr_dir, "company_qr.png")
                 img.save(qr_path)
-                print(f"[SUCCESS] QR Code generated at: {qr_path}")
                 local_config.set("company_qr_path", qr_path)
             except Exception as e:
                 print(f"[WARNING] Failed to generate QR Code: {e}")
 
             # 2. Register Client Credentials
-            if supabase_manager.register_client(self.client_user.text(), self.client_pass.text(), sid):
-                # Save local preferences
-                local_config.set("account_created", True)
-                local_config.set("company_name", payload["company_name"])
-                local_config.set("login_mode", "once" if "Once" in self.registration_choice.currentText() else "each_time")
-                local_config.set("installed_by", payload["installed_by"])
-                # Cache client username locally for quick login if needed
-                local_config.set("client_username", self.client_user.text())
-                local_config.save()
-                
+            if not supabase_manager.register_client(self.client_user.text(), self.client_pass.text(), sid):
+                return False, "Successfully registered system, but failed to create client account online."
+            
+            # Save local preferences
+            local_config.set("account_created", True)
+            local_config.set("company_name", payload["company_name"])
+            local_config.set("login_mode", "once" if "Once" in self.registration_choice.currentText() else "each_time")
+            local_config.set("installed_by", payload["installed_by"])
+            local_config.set("client_username", self.client_user.text())
+            local_config.save()
+            return True, None
+
+        def on_finished(result):
+            success, error_msg = result
+            if success:
                 QMessageBox.information(self, "Success", "Account created successfully 🎉\nYour system is now activated.")
-                
-                # Create Shortcut if requested
                 if self.shortcut_chk.isChecked():
                     self.create_desktop_shortcut()
-                
                 self.account_created.emit()
                 self.close()
             else:
-                QMessageBox.critical(self, "Error", "Successfully registered system, but failed to create client account online. Please check internet.")
-        else:
-            QMessageBox.critical(self, "Error", "Failed to register system online. Please check internet and try again.")
+                self.next_btn.setEnabled(True)
+                self.back_btn.setEnabled(True)
+                self.next_btn.setText("Create my account")
+                QMessageBox.critical(self, "Registration Error", error_msg)
+
+        task_manager.run_task(run_registration, on_finished=on_finished)
 
     def create_desktop_shortcut(self):
         try:

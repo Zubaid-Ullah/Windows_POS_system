@@ -38,9 +38,10 @@ class TableStyler:
         
         # Header configuration
         header = table.horizontalHeader()
+        header.setMinimumSectionSize(100) # Ensure headers are not too squashed
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         header.setStretchLastSection(True)
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         
         # Initial sizing
         table.resizeColumnsToContents()

@@ -85,8 +85,8 @@ class PharmacySalesView(QWidget):
             lang_manager.get("actions")
         ])
         style_table(self.table, variant="premium")
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Name
+        # Name stretches, others fit content (New style_table default)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
         
         # Footer
@@ -214,6 +214,7 @@ class PharmacySalesView(QWidget):
             'expiry': p.get('expiry_date', 'N/A'),
             'price': p['sale_price'],
             'batch': p.get('batch_number'),
+            'cost': p.get('cost_price', 0),
             'qty': 1,
             'stock': p.get('stock', 0)  # Store available stock
         })
@@ -347,10 +348,10 @@ class PharmacySalesView(QWidget):
                     # Record Item
                     cursor.execute("""
                         INSERT INTO pharmacy_sale_items 
-                        (sale_id, product_id, product_name, batch_number, expiry_date, quantity, unit_price, total_price)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (sale_id, product_id, product_name, batch_number, expiry_date, quantity, unit_price, total_price, cost_price_at_sale)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (sale_id, item['id'], item['name'], item.get('batch'), item.get('expiry'), 
-                          item['qty'], item['price'], item['price']*item['qty']))
+                          item['qty'], item['price'], item['price']*item['qty'], item.get('cost', 0)))
                     
                     # Update Inventory (Specific Batch)
                     cursor.execute("""

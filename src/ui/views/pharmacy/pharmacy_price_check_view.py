@@ -87,7 +87,7 @@ class PharmacyPriceCheckView(QWidget):
         size_lbl = QLabel(data['size'] or "")
         size_lbl.setStyleSheet("font-size: 24px; opacity: 0.7;")
         
-        price_lbl = QLabel(f"$ {data['sale_price']:,.2f}")
+        price_lbl = QLabel(f"Afg {data['sale_price']:,.2f}")
         price_lbl.setStyleSheet("font-size: 72px; font-weight: 800; color: #059669;")
         
         qty = data['total_qty'] or 0

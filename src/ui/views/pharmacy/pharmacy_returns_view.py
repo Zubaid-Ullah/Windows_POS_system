@@ -323,8 +323,7 @@ class PharmacyReturnsView(QWidget):
             lang_manager.get("action"), lang_manager.get("refund_mode"), lang_manager.get("confirm")
         ])
         style_table(self.table, variant="premium")
-        # Initialize with Stretch, but load_invoice will adjust
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch) # Product stretches
         layout.addWidget(self.table)
 
     def load_invoice(self):

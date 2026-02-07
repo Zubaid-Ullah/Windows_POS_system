@@ -93,7 +93,7 @@ class ThermalBillPrinter:
                 'name': 'FaqiriTech Business',
                 'address': 'Kabul, Afghanistan',
                 'phone': '0700000000',
-                'email': 'info@afex.com'
+                'email': 'info@faqiritech.com'
             }
     
     def center_text(self, text):

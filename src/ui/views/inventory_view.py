@@ -425,9 +425,9 @@ class InventoryView(QWidget):
             "ID", "Barcode", "Product Name", "Brand", "Cost", "Price", "Qty", "Actions"
         ])
         style_table(self.table, variant="premium")
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        # Product Name stretches, others fit content (via style_table default)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.table.setColumnWidth(7, 180)
+        self.table.setColumnWidth(7, 180) # Actions column fixed size
         layout.addWidget(self.table)
         
         main_layout.addWidget(self.container)
@@ -499,6 +499,11 @@ class InventoryView(QWidget):
                     act_layout.addWidget(del_btn)
                 
                 self.table.setCellWidget(i, 7, actions)
+            
+            # Auto-fit columns to content once the table is populated
+            self.table.resizeColumnsToContents()
+            # Ensure actions column is still usable
+            self.table.setColumnWidth(7, 180)
 
         task_manager.run_task(fetch_data, on_finished=on_loaded)
 

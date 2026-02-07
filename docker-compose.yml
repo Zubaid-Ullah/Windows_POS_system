@@ -1,7 +1,7 @@
 services:
   pos_app:
     build: .
-    container_name: afex_pos
+    container_name: faqiritech_pos
     image: pos_system-pos_app
     ports:
       - "5900:5900"

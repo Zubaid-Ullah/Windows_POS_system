@@ -18,7 +18,7 @@ class DonutChartWidget(QWidget):
 
     def set_data(self, name, percentage):
         self.product_name = name
-        self.percentage = float(percentage)
+        self.percentage = float(percentage) if percentage is not None else 0
         self.visible_chart = True
         self.update()
 
@@ -337,8 +337,8 @@ class PharmacyDashboardView(QWidget):
     def on_product_selected(self, item):
         name = item.text()
         percentage = item.data(Qt.ItemDataRole.UserRole)
-        # Avoid trying to set data on the loading placeholder
-        if name != "Loading statistics...":
+        # Avoid trying to set data on the loading placeholder or null data
+        if name != "Loading statistics..." and percentage is not None:
             self.chart_widget.set_data(name, percentage)
 
     def mousePressEvent(self, event):

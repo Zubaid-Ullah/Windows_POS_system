@@ -268,6 +268,7 @@ class LoginView(QWidget):
 
         if not self.check_contract(): return
         
+        Auth.ensure_defaults()
         if Auth.login(username, password):
             self.store_uname.clear()
             self.store_pword.clear()
@@ -283,6 +284,7 @@ class LoginView(QWidget):
 
         if not self.check_contract(): return
         
+        PharmacyAuth.ensure_defaults()
         if PharmacyAuth.login(username, password):
             self.pharm_uname.clear()
             self.pharm_pword.clear()
@@ -298,33 +300,39 @@ class LoginView(QWidget):
             return
 
         # Show loading feedback
-        # (Optional: specialized dialog, but synchronous for now is okay or use progress)
         QMessageBox.information(self, "Verifying", "Verifying Super Admin credentials online...")
 
-        if supabase_manager.verify_installer(username, password):
-             # Set a temporary virtual session for Super Admin
-             # This ensures MainWindow can load permissions (SuperAdmin role)
-             mock_user = {
-                 'username': username,
-                 'role_name': 'SuperAdmin',
-                 'id': 9999, # Virtual ID
-                 'full_name': 'System Super Admin',
-                 'permissions': '*',
-                 'is_super_admin': True # For pharmacy check
-             }
-             
-             if mode == "PHARMACY":
-                  PharmacyAuth.set_current_user(mock_user)
-                  self.pharm_uname.clear()
-                  self.pharm_pword.clear()
-             else:
-                  Auth.set_current_user(mock_user)
-                  self.store_uname.clear()
-                  self.store_pword.clear()
-                  
-             self.login_success.emit(mode, "superadmin")
-        else:
-             QMessageBox.warning(self, "Login Failed", "Invalid Super Admin credentials or unauthorized.")
+        from src.core.blocking_task_manager import task_manager
+        
+        def run_verify():
+            return supabase_manager.verify_installer(username, password)
+            
+        def on_finished(verified):
+            if verified:
+                 # Set a temporary virtual session for Super Admin
+                 mock_user = {
+                     'username': username,
+                     'role_name': 'SuperAdmin',
+                     'id': 9999, # Virtual ID
+                     'full_name': 'System Super Admin',
+                     'permissions': '*',
+                     'is_super_admin': True # For pharmacy check
+                 }
+                 
+                 if mode == "PHARMACY":
+                      PharmacyAuth.set_current_user(mock_user)
+                      self.pharm_uname.clear()
+                      self.pharm_pword.clear()
+                 else:
+                      Auth.set_current_user(mock_user)
+                      self.store_uname.clear()
+                      self.store_pword.clear()
+                      
+                 self.login_success.emit(mode, "superadmin")
+            else:
+                 QMessageBox.warning(self, "Login Failed", "Invalid Super Admin credentials or unauthorized.")
+                 
+        task_manager.run_task(run_verify, on_finished=on_finished)
 
     def check_contract(self):
         try:
