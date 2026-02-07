@@ -1,7 +1,7 @@
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QThread
 from src.core.supabase_manager import supabase_manager
 from src.core.local_config import local_config
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 import platform
 
@@ -107,24 +107,55 @@ class LicenseGuard(QObject):
         if shutdown_time_str:
             try:
                 from datetime import timezone
-                # Parse the shutdown time (should be in ISO format with timezone)
-                try:
-                    shutdown_time = datetime.fromisoformat(shutdown_time_str.replace("Z", "+00:00"))
-                except:
-                    shutdown_time = datetime.strptime(shutdown_time_str[:19], "%Y-%m-%dT%H:%M:%S")
-                    shutdown_time = shutdown_time.replace(tzinfo=timezone.utc)
+                # Support relative shutdown marker (client time based)
+                if isinstance(shutdown_time_str, str) and shutdown_time_str.startswith("IN_MINUTES:"):
+                    try:
+                        minutes = int(shutdown_time_str.split(":", 1)[1].strip())
+                    except:
+                        minutes = None
 
-                now = datetime.now(timezone.utc)
-                if shutdown_time.tzinfo is None:
-                    shutdown_time = shutdown_time.replace(tzinfo=timezone.utc)
+                    if minutes is not None:
+                        now = datetime.now(timezone.utc)
+                        shutdown_time = now + timedelta(minutes=minutes)
+                        # Persist a fixed UTC timestamp so subsequent polls don't rebase.
+                        try:
+                            from src.core.blocking_task_manager import task_manager
+
+                            def _persist_time():
+                                iso = shutdown_time.isoformat().replace("+00:00", "Z")
+                                supabase_manager.update_company_details(self.sid, {"shutdown_time": iso})
+                                return iso
+
+                            def _on_persisted(iso):
+                                # Replace local var for immediate evaluation
+                                nonlocal shutdown_time_str
+                                shutdown_time_str = iso
+
+                            task_manager.run_task(_persist_time, on_finished=_on_persisted)
+                        except:
+                            pass
+                    else:
+                        shutdown_time = None
+                else:
+                    # Parse the shutdown time (should be in ISO format with timezone)
+                    try:
+                        shutdown_time = datetime.fromisoformat(shutdown_time_str.replace("Z", "+00:00"))
+                    except:
+                        shutdown_time = datetime.strptime(shutdown_time_str[:19], "%Y-%m-%dT%H:%M:%S")
+                        shutdown_time = shutdown_time.replace(tzinfo=timezone.utc)
+
+                if shutdown_time:
+                    now = datetime.now(timezone.utc)
+                    if shutdown_time.tzinfo is None:
+                        shutdown_time = shutdown_time.replace(tzinfo=timezone.utc)
                 
-                remaining = (shutdown_time - now).total_seconds()
-                print(f"🔍 Shutdown check: Target={shutdown_time_str}, Now={now.isoformat()}, Remaining={remaining}s")
+                    remaining = (shutdown_time - now).total_seconds()
+                    print(f"🔍 Shutdown check: Target={shutdown_time_str}, Now={now.isoformat()}, Remaining={remaining}s")
 
-                if remaining > 0 and remaining < 600: # Within 10 minutes in the future
-                    self._show_shutdown_countdown(shutdown_time)
-                elif remaining <= 0 and remaining > -600: # Target reached (within last 10 mins)
-                    self._execute_immediate_shutdown(status_data)
+                    if remaining > 0 and remaining < 600: # Within 10 minutes in the future
+                        self._show_shutdown_countdown(shutdown_time)
+                    elif remaining <= 0 and remaining > -600: # Target reached (within last 10 mins)
+                        self._execute_immediate_shutdown(status_data)
             except Exception as e:
                 print(f"Shutdown check error: {e}")
 

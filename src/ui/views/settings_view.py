@@ -449,34 +449,45 @@ class SettingsView(QWidget):
 
     def save_settings(self, silent=False):
         """Save company settings to database"""
-        try:
-            with db_manager.get_connection() as conn:
-                # Save to company_info
-                conn.execute("""
-                    INSERT OR REPLACE INTO company_info (id, name, address, phone, email)
-                    VALUES (1, ?, ?, ?, ?)
-                """, (
-                    self.company_name.text().strip(),
-                    self.company_address.toPlainText().strip(),
-                    self.company_phone.text().strip(),
-                    self.company_email.text().strip()
-                ))
-                
-                # Save WhatsApp to app_settings
-                conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('whatsapp_number', ?)",
-                            (self.whatsapp_number.text().strip(),))
-                
-                conn.commit()
+        from src.core.blocking_task_manager import task_manager
+
+        name = self.company_name.text().strip()
+        address = self.company_address.toPlainText().strip()
+        phone = self.company_phone.text().strip()
+        email = self.company_email.text().strip()
+        whatsapp = self.whatsapp_number.text().strip()
+
+        def _write_db():
+            try:
+                with db_manager.get_connection() as conn:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO company_info (id, name, address, phone, email)
+                        VALUES (1, ?, ?, ?, ?)
+                    """, (name, address, phone, email))
+                    
+                    conn.execute(
+                        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('whatsapp_number', ?)",
+                        (whatsapp,),
+                    )
+                    conn.commit()
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        def _on_written(result):
+            if not result.get("ok"):
+                QMessageBox.critical(self, "Error", f"Failed to save settings: {result.get('error')}")
+                return
 
             # Cloud Sync (Asynchronous)
             sid = local_config.get("system_id")
             if sid:
                 payload = {
-                    "company_name": self.company_name.text().strip(),
-                    "address": self.company_address.toPlainText().strip(),
-                    "phone": self.company_phone.text().strip(),
-                    "email": self.company_email.text().strip(),
-                    "company_whatsapp_url": f"https://wa.me/{self.whatsapp_number.text().strip().replace('+', '').replace(' ', '')}"
+                    "company_name": name,
+                    "address": address,
+                    "phone": phone,
+                    "email": email,
+                    "company_whatsapp_url": f"https://wa.me/{whatsapp.replace('+', '').replace(' ', '')}",
                 }
                 
                 self.is_syncing = True
@@ -492,8 +503,7 @@ class SettingsView(QWidget):
             if not silent:
                 QMessageBox.information(self, "Success", "Settings saved and syncing in background.")
 
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
+        task_manager.run_task(_write_db, on_finished=_on_written)
 
     def generate_whatsapp_qr(self, auto=False):
         """Generate WhatsApp QR code"""

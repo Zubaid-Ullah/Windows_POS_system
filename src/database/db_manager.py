@@ -102,6 +102,9 @@ class DatabaseManager:
                 if not hasattr(self, '_last_thread_warn') or (now - self._last_thread_warn).seconds > 60:
                     self._last_thread_warn = now
                     print(f"[WARNING] Database accessed from MAIN UI THREAD. This may cause GUI freezes. Use task_manager instead.")
+                    if os.environ.get("DB_MAIN_THREAD_TRACE") == "1":
+                        import traceback
+                        print("".join(traceback.format_stack(limit=12)))
 
     def _enable_wal_mode(self):
         for db in [self.store_db, self.pharmacy_db]:
@@ -268,116 +271,116 @@ class DatabaseManager:
         try:
             with self.get_pharmacy_connection() as conn:
                 cursor = conn.cursor()
-            
-            # Pharmacy specific tables
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
-                    title TEXT, role TEXT DEFAULT 'Pharmacist', permissions TEXT, is_active INTEGER DEFAULT 1,
-                    is_super_admin INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Migration: Add created_by to pharmacy_users if missing
-            try:
-                cursor.execute("ALTER TABLE pharmacy_users ADD COLUMN created_by INTEGER")
-            except: pass
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_products (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, barcode TEXT UNIQUE NOT NULL, name_en TEXT NOT NULL,
-                    generic_name TEXT, brand TEXT, size TEXT, cost_price REAL DEFAULT 0, sale_price REAL DEFAULT 0,
-                    min_stock REAL DEFAULT 10, shelf_location TEXT, supplier_id INTEGER, description TEXT,
-                    uom TEXT DEFAULT 'Box', is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_inventory (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, batch_number TEXT NOT NULL,
-                    expiry_date DATE NOT NULL, quantity REAL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (product_id) REFERENCES pharmacy_products(id), UNIQUE(product_id, batch_number)
-                )
-            ''')
+                # Pharmacy specific tables
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+                        title TEXT, role TEXT DEFAULT 'Pharmacist', permissions TEXT, is_active INTEGER DEFAULT 1,
+                        is_super_admin INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Migration: Add created_by to pharmacy_users if missing
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_users ADD COLUMN created_by INTEGER")
+                except: pass
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_products (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, barcode TEXT UNIQUE NOT NULL, name_en TEXT NOT NULL,
+                        generic_name TEXT, brand TEXT, size TEXT, cost_price REAL DEFAULT 0, sale_price REAL DEFAULT 0,
+                        min_stock REAL DEFAULT 10, shelf_location TEXT, supplier_id INTEGER, description TEXT,
+                        uom TEXT DEFAULT 'Box', is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_sales (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_number TEXT UNIQUE NOT NULL, user_id INTEGER,
-                    customer_id INTEGER, total_amount REAL NOT NULL, gross_amount REAL DEFAULT 0,
-                    discount_amount REAL DEFAULT 0, net_amount REAL DEFAULT 0, payment_type TEXT DEFAULT 'CASH',
-                    is_synced INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_inventory (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, batch_number TEXT NOT NULL,
+                        expiry_date DATE NOT NULL, quantity REAL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (product_id) REFERENCES pharmacy_products(id), UNIQUE(product_id, batch_number)
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_sale_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, product_name TEXT,
-                    batch_number TEXT, expiry_date DATE, quantity REAL NOT NULL, unit_price REAL NOT NULL,
-                    total_price REAL NOT NULL, cost_price_at_sale REAL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (sale_id) REFERENCES pharmacy_sales(id), FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
-                )
-            ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_sales (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_number TEXT UNIQUE NOT NULL, user_id INTEGER,
+                        customer_id INTEGER, total_amount REAL NOT NULL, gross_amount REAL DEFAULT 0,
+                        discount_amount REAL DEFAULT 0, net_amount REAL DEFAULT 0, payment_type TEXT DEFAULT 'CASH',
+                        is_synced INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_customers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT, loan_enabled INTEGER DEFAULT 0,
-                    loan_limit REAL DEFAULT 0, balance REAL DEFAULT 0, is_active INTEGER DEFAULT 1,
-                    address TEXT, kyc_photo TEXT, kyc_id_card TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_sale_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, product_name TEXT,
+                        batch_number TEXT, expiry_date DATE, quantity REAL NOT NULL, unit_price REAL NOT NULL,
+                        total_price REAL NOT NULL, cost_price_at_sale REAL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (sale_id) REFERENCES pharmacy_sales(id), FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_suppliers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT, balance REAL DEFAULT 0,
-                    company_name TEXT, address TEXT, is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            # Migration: Add address to pharmacy_suppliers if missing
-            try:
-                cursor.execute("ALTER TABLE pharmacy_suppliers ADD COLUMN address TEXT")
-            except: pass
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_customers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT, loan_enabled INTEGER DEFAULT 0,
+                        loan_limit REAL DEFAULT 0, balance REAL DEFAULT 0, is_active INTEGER DEFAULT 1,
+                        address TEXT, kyc_photo TEXT, kyc_id_card TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_loans (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, sale_id INTEGER, loan_amount REAL,
-                    total_amount REAL DEFAULT 0, paid_amount REAL DEFAULT 0, balance REAL DEFAULT 0,
-                    due_date DATE, status TEXT DEFAULT 'PENDING', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (customer_id) REFERENCES pharmacy_customers(id), FOREIGN KEY (sale_id) REFERENCES pharmacy_sales(id)
-                )
-            ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_suppliers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT, balance REAL DEFAULT 0,
+                        company_name TEXT, address TEXT, is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                # Migration: Add address to pharmacy_suppliers if missing
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_suppliers ADD COLUMN address TEXT")
+                except: pass
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_expenses (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT CHECK(category IN ('Salary', 'Petty Cash', 'Other')),
-                    amount REAL NOT NULL, description TEXT, expense_date DATE DEFAULT CURRENT_DATE,
-                    created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_loans (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, sale_id INTEGER, loan_amount REAL,
+                        total_amount REAL DEFAULT 0, paid_amount REAL DEFAULT 0, balance REAL DEFAULT 0,
+                        due_date DATE, status TEXT DEFAULT 'PENDING', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (customer_id) REFERENCES pharmacy_customers(id), FOREIGN KEY (sale_id) REFERENCES pharmacy_sales(id)
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_payments (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, customer_id INTEGER, loan_id INTEGER,
-                    payment_method TEXT, amount REAL, transaction_ref TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_expenses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT CHECK(category IN ('Salary', 'Petty Cash', 'Other')),
+                        amount REAL NOT NULL, description TEXT, expense_date DATE DEFAULT CURRENT_DATE,
+                        created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_employee_salary (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount REAL NOT NULL,
-                    salary_type TEXT, is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_payments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, customer_id INTEGER, loan_id INTEGER,
+                        payment_method TEXT, amount REAL, transaction_ref TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_returns (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, original_sale_id INTEGER, refund_amount REAL,
-                    refund_type TEXT DEFAULT 'ACCOUNT',
-                    reason TEXT, user_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (original_sale_id) REFERENCES pharmacy_sales(id)
-                )
-            ''')
-            # Migration: Add refund_type to pharmacy_returns if missing
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_employee_salary (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount REAL NOT NULL,
+                        salary_type TEXT, is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_returns (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, original_sale_id INTEGER, refund_amount REAL,
+                        refund_type TEXT DEFAULT 'ACCOUNT',
+                        reason TEXT, user_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (original_sale_id) REFERENCES pharmacy_sales(id)
+                    )
+                ''')
+                # Migration: Add refund_type to pharmacy_returns if missing
             try:
                 cursor.execute("ALTER TABLE pharmacy_returns ADD COLUMN refund_type TEXT DEFAULT 'ACCOUNT'")
             except: pass

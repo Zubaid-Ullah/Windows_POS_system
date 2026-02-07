@@ -232,19 +232,22 @@ class SuperAdminView(QWidget):
                                      QLineEdit.EchoMode.Password)
         if not ok or not key: return
         
-        if not supabase_manager.verify_secret_key(key):
-            QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
-            return
+        def _on_verified(ok):
+            if not ok:
+                QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
+                return
 
-        new_date = self.valid_date.date().toString("yyyy-MM-dd 23:59:59")
-        # Update both databases for consistency
-        for db_func in [db_manager.get_connection, db_manager.get_pharmacy_connection]:
-            try:
-                with db_func() as conn:
-                    conn.execute("UPDATE system_settings SET valid_until = ? WHERE id = 1", (new_date,))
-                    conn.commit()
-            except: pass
-        QMessageBox.information(self, "Success", f"System license extended until {new_date}")
+            new_date = self.valid_date.date().toString("yyyy-MM-dd 23:59:59")
+            # Update both databases for consistency
+            for db_func in [db_manager.get_connection, db_manager.get_pharmacy_connection]:
+                try:
+                    with db_func() as conn:
+                        conn.execute("UPDATE system_settings SET valid_until = ? WHERE id = 1", (new_date,))
+                        conn.commit()
+                except: pass
+            QMessageBox.information(self, "Success", f"System license extended until {new_date}")
+
+        self._verify_key_async(key, _on_verified)
 
     def toggle_system_status(self):
         from PyQt6.QtWidgets import QInputDialog, QLineEdit
@@ -261,18 +264,29 @@ class SuperAdminView(QWidget):
                                      QLineEdit.EchoMode.Password)
         if not ok or not key: return
         
-        if not supabase_manager.verify_secret_key(key):
-            QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
-            return
+        def _on_verified(ok):
+            if not ok:
+                QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
+                return
 
-        # Apply to both
-        for db_func in [db_manager.get_connection, db_manager.get_pharmacy_connection]:
-            try:
-                with db_func() as conn:
-                    conn.execute("UPDATE system_settings SET is_active = ? WHERE id = 1", (new_status,))
-                    conn.commit()
-            except: pass
-        self.load_system_settings()
+            # Apply to both
+            for db_func in [db_manager.get_connection, db_manager.get_pharmacy_connection]:
+                try:
+                    with db_func() as conn:
+                        conn.execute("UPDATE system_settings SET is_active = ? WHERE id = 1", (new_status,))
+                        conn.commit()
+                except: pass
+            self.load_system_settings()
+
+        self._verify_key_async(key, _on_verified)
+
+    def _verify_key_async(self, key, on_done):
+        from src.core.blocking_task_manager import task_manager
+
+        def _verify():
+            return supabase_manager.verify_secret_key(key)
+
+        task_manager.run_task(_verify, on_finished=on_done)
 
     def save_db_mode(self):
         mode = 'ONLINE' if self.rb_online.isChecked() else 'OFFLINE'

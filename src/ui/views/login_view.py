@@ -245,9 +245,11 @@ class LoginView(QWidget):
         if title_text == "General Store":
             self.store_uname = uname
             self.store_pword = pword
+            self.store_login_btn = login_btn
         else:
             self.pharm_uname = uname
             self.pharm_pword = pword
+            self.pharm_login_btn = login_btn
             
         return card
 
@@ -266,8 +268,36 @@ class LoginView(QWidget):
             self.verify_super_admin(username, password, "STORE")
             return
 
-        if not self.check_contract(): return
-        
+        self._set_login_enabled("STORE", False)
+        self.check_contract_async(
+            on_result=lambda ok: self._finish_store_login(ok, username, password)
+        )
+
+    def handle_pharmacy_login(self, username, password):
+        # Super Admin Check - Bypass Contract Check
+        if username.lower() == "superadmin":
+            self.verify_super_admin(username, password, "PHARMACY")
+            return
+
+        self._set_login_enabled("PHARMACY", False)
+        self.check_contract_async(
+            on_result=lambda ok: self._finish_pharmacy_login(ok, username, password)
+        )
+
+    def _set_login_enabled(self, mode, enabled):
+        if mode == "STORE":
+            self.store_login_btn.setEnabled(enabled)
+            self.store_uname.setEnabled(enabled)
+            self.store_pword.setEnabled(enabled)
+        else:
+            self.pharm_login_btn.setEnabled(enabled)
+            self.pharm_uname.setEnabled(enabled)
+            self.pharm_pword.setEnabled(enabled)
+
+    def _finish_store_login(self, ok, username, password):
+        self._set_login_enabled("STORE", True)
+        if not ok:
+            return
         Auth.ensure_defaults()
         if Auth.login(username, password):
             self.store_uname.clear()
@@ -276,14 +306,10 @@ class LoginView(QWidget):
         else:
             QMessageBox.warning(self, "Error", "Invalid credentials")
 
-    def handle_pharmacy_login(self, username, password):
-        # Super Admin Check - Bypass Contract Check
-        if username.lower() == "superadmin":
-            self.verify_super_admin(username, password, "PHARMACY")
+    def _finish_pharmacy_login(self, ok, username, password):
+        self._set_login_enabled("PHARMACY", True)
+        if not ok:
             return
-
-        if not self.check_contract(): return
-        
         PharmacyAuth.ensure_defaults()
         if PharmacyAuth.login(username, password):
             self.pharm_uname.clear()
@@ -293,125 +319,150 @@ class LoginView(QWidget):
             QMessageBox.warning(self, "Error", "Invalid credentials")
 
     def verify_super_admin(self, username, password, mode):
-        # 3b. Super Admin Login
-        if not supabase_manager.check_connection():
-            QMessageBox.critical(self, "Connection Required", 
-                                 "Internet connection required for Super Admin login.")
-            return
-
-        # Show loading feedback
-        QMessageBox.information(self, "Verifying", "Verifying Super Admin credentials online...")
-
         from src.core.blocking_task_manager import task_manager
-        
-        def run_verify():
-            return supabase_manager.verify_installer(username, password)
-            
-        def on_finished(verified):
-            if verified:
-                 # Set a temporary virtual session for Super Admin
-                 mock_user = {
-                     'username': username,
-                     'role_name': 'SuperAdmin',
-                     'id': 9999, # Virtual ID
-                     'full_name': 'System Super Admin',
-                     'permissions': '*',
-                     'is_super_admin': True # For pharmacy check
-                 }
-                 
-                 if mode == "PHARMACY":
-                      PharmacyAuth.set_current_user(mock_user)
-                      self.pharm_uname.clear()
-                      self.pharm_pword.clear()
-                 else:
-                      Auth.set_current_user(mock_user)
-                      self.store_uname.clear()
-                      self.store_pword.clear()
-                      
-                 self.login_success.emit(mode, "superadmin")
-            else:
-                 QMessageBox.warning(self, "Login Failed", "Invalid Super Admin credentials or unauthorized.")
-                 
-        task_manager.run_task(run_verify, on_finished=on_finished)
 
-    def check_contract(self):
-        try:
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM app_settings WHERE key = 'contract_end'")
-                row = cursor.fetchone()
-                
-                if not row:
-                    QMessageBox.critical(self, "System Error", 
-                                       "Contract data missing. Please contact support or run setup again.")
-                    return False
+        def run_check_connection():
+            return supabase_manager.check_connection()
 
-                contract_end_str = row['value']
-                try:
-                    contract_end = datetime.strptime(contract_end_str, '%Y-%m-%d')
-                except ValueError:
-                    # Fallback for ISO format if needed
-                    contract_end = datetime.fromisoformat(contract_end_str)
+        def on_connection_checked(is_online):
+            if not is_online:
+                QMessageBox.critical(
+                    self,
+                    "Connection Required",
+                    "Internet connection required for Super Admin login.",
+                )
+                return
 
-                # Check if expired
-                if datetime.now() > contract_end:
-                    # 3a. Contract Expiration - Try Online Renewal Check
-                    print("⌛ Contract expired locally. Checking online for renewal...")
+            def run_verify():
+                return supabase_manager.verify_installer(username, password)
+
+            def on_finished(verified):
+                if verified:
+                    # Set a temporary virtual session for Super Admin
+                    mock_user = {
+                        'username': username,
+                        'role_name': 'SuperAdmin',
+                        'id': 9999, # Virtual ID
+                        'full_name': 'System Super Admin',
+                        'permissions': '*',
+                        'is_super_admin': True # For pharmacy check
+                    }
                     
+                    if mode == "PHARMACY":
+                        PharmacyAuth.set_current_user(mock_user)
+                        self.pharm_uname.clear()
+                        self.pharm_pword.clear()
+                    else:
+                        Auth.set_current_user(mock_user)
+                        self.store_uname.clear()
+                        self.store_pword.clear()
+                        
+                    self.login_success.emit(mode, "superadmin")
+                else:
+                    QMessageBox.warning(self, "Login Failed", "Invalid Super Admin credentials or unauthorized.")
+
+            task_manager.run_task(run_verify, on_finished=on_finished)
+
+        task_manager.run_task(run_check_connection, on_finished=on_connection_checked)
+
+    def check_contract_async(self, on_result):
+        from src.core.blocking_task_manager import task_manager
+
+        def _check():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT value FROM app_settings WHERE key = 'contract_end'")
+                    row = cursor.fetchone()
+                    
+                    if not row:
+                        return {"status": "missing"}
+
+                    contract_end_str = row['value']
                     try:
-                        renewed = False
-                        if supabase_manager.check_connection():
-                            sid = local_config.get("system_id")
-                            status = supabase_manager.get_installation_status(sid)
-                            
-                            if status:
-                                online_expiry_str = status.get('contract_expiry')
-                                if online_expiry_str:
-                                    # Parse online date (usually YYYY-MM-DD)
-                                    online_expiry = datetime.strptime(online_expiry_str, '%Y-%m-%d')
-                                    if online_expiry > datetime.now():
-                                        # Contract IS renewed! Update local DB.
-                                        cursor.execute("UPDATE app_settings SET value = ? WHERE key = 'contract_end'", 
-                                                     (online_expiry_str,))
-                                        conn.commit()
-                                        
-                                        # Update local config too
-                                        local_config.set("contract_expiry", online_expiry_str)
-                                        
-                                        QMessageBox.information(self, "Contract Renewed", 
-                                            f"Your contract has been successfully renewed until {online_expiry_str}. \nThank you!")
-                                        return True
-                    except Exception as e:
-                        print(f"⚠️ Online renewal check failed: {e}")
+                        contract_end = datetime.strptime(contract_end_str, '%Y-%m-%d')
+                    except ValueError:
+                        contract_end = datetime.fromisoformat(contract_end_str)
 
-                    # If still expired after check
-                    msg_box = QMessageBox(self)
-                    msg_box.setWindowTitle("Contract Expired")
-                    # msg_box.setIcon(QMessageBox.Icon.Critical)
-                    msg_box.setText(
-                        "<h2 style='color:#ee5d50; margin-bottom:6px;'>🚫 Contract Completed</h2>"
-                        "<p style='margin-top:4px;'>Thank you for using our service 🙏</p>"
-                        "<p>Your contract has <b>expired</b>. To continue using the system, "
-                        "please <b>renew your contract</b>.</p>"
-                        "<p>If you have any questions regarding renewal, feel free to contact us.</p>"
-                        "<hr>"
-                        "<p><b>OR DEVELOPER</b></p>"
-                        "<p>📱 WhatsApp: <b>+93 796 776 436</b></p>"
-                        "<p>📞 Mobile: <b>+93 796 776 436</b></p>"
-                        "<p>📧 Email: <b>zubaidullah.khan1437@gmail.com</b></p>"
-                        "<p style='font-size:11px; color:#777;'>We’re happy to assist you anytime 🚀</p>"
-                    )
-                    msg_box.setTextFormat(Qt.TextFormat.RichText)
-                    t = theme_manager.DARK if theme_manager.is_dark else theme_manager.QUICKMART
-                    msg_box.setStyleSheet(f"QMessageBox {{ background-color: {t['bg_card']}; }} QLabel {{ color: {t['text_main']}; }}")
-                    msg_box.exec()
-                    return False
-                    
-            return True
-        except Exception as e:
-            print(f"❌ Contract Check Error: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to verify contract: {e}")
-            return False
+                    if datetime.now() <= contract_end:
+                        return {"status": "ok"}
+
+                # Expired locally: try online renewal in background
+                try:
+                    if supabase_manager.check_connection():
+                        sid = local_config.get("system_id")
+                        status = supabase_manager.get_installation_status(sid)
+                        if status:
+                            online_expiry_str = status.get('contract_expiry')
+                            if online_expiry_str:
+                                online_expiry = datetime.strptime(online_expiry_str, '%Y-%m-%d')
+                                if online_expiry > datetime.now():
+                                    with db_manager.get_connection() as conn2:
+                                        cursor2 = conn2.cursor()
+                                        cursor2.execute(
+                                            "UPDATE app_settings SET value = ? WHERE key = 'contract_end'",
+                                            (online_expiry_str,),
+                                        )
+                                        conn2.commit()
+                                    local_config.set("contract_expiry", online_expiry_str)
+                                    return {"status": "renewed", "expiry": online_expiry_str}
+                except Exception as e:
+                    return {"status": "error", "error": str(e)}
+
+                return {"status": "expired"}
+            except Exception as e:
+                return {"status": "error", "error": str(e)}
+
+        def _on_finished(result):
+            status = result.get("status")
+            if status == "ok":
+                on_result(True)
+                return
+            if status == "renewed":
+                QMessageBox.information(
+                    self,
+                    "Contract Renewed",
+                    f"Your contract has been successfully renewed until {result.get('expiry')}. \nThank you!",
+                )
+                on_result(True)
+                return
+            if status == "missing":
+                QMessageBox.critical(
+                    self,
+                    "System Error",
+                    "Contract data missing. Please contact support or run setup again.",
+                )
+                on_result(False)
+                return
+            if status == "error":
+                QMessageBox.critical(self, "Error", f"Failed to verify contract: {result.get('error')}")
+                on_result(False)
+                return
+
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Contract Expired")
+            msg_box.setText(
+                "<h2 style='color:#ee5d50; margin-bottom:6px;'>🚫 Contract Completed</h2>"
+                "<p style='margin-top:4px;'>Thank you for using our service 🙏</p>"
+                "<p>Your contract has <b>expired</b>. To continue using the system, "
+                "please <b>renew your contract</b>.</p>"
+                "<p>If you have any questions regarding renewal, feel free to contact us.</p>"
+                "<hr>"
+                "<p><b>OR DEVELOPER</b></p>"
+                "<p>📱 WhatsApp: <b>+93 796 776 436</b></p>"
+                "<p>📞 Mobile: <b>+93 796 776 436</b></p>"
+                "<p>📧 Email: <b>zubaidullah.khan1437@gmail.com</b></p>"
+                "<p style='font-size:11px; color:#777;'>We’re happy to assist you anytime 🚀</p>"
+            )
+            msg_box.setTextFormat(Qt.TextFormat.RichText)
+            t = theme_manager.DARK if theme_manager.is_dark else theme_manager.QUICKMART
+            msg_box.setStyleSheet(
+                f"QMessageBox {{ background-color: {t['bg_card']}; }} QLabel {{ color: {t['text_main']}; }}"
+            )
+            msg_box.exec()
+            on_result(False)
+
+        task_manager.run_task(_check, on_finished=_on_finished)
 
     def change_language(self, lang):
         lang_manager.set_language(lang)
@@ -431,49 +482,58 @@ class LoginView(QWidget):
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft if lang_manager.is_rtl() else Qt.LayoutDirection.LeftToRight)
 
     def show_contract_update(self):
-        # Hybrid Security Check
-        # Check connection silently first
-        is_online = False
-        try:
-             is_online = supabase_manager.check_connection()
-        except:
-             pass
-        
-        if is_online:
-            # -----------------------------------------------------
-            # ONLINE MODE: Verify against Cloud (Super Admin)
-            # -----------------------------------------------------
-            from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
-            
-            key, ok = QInputDialog.getText(self, "Cloud Verification (Online)", 
-                                           "System is Online.\nEnter Cloud Secret Key (Super Admin):", 
-                                           QLineEdit.EchoMode.Password)
-            if not ok or not key: return
-            
-            # Verify against Supabase
-            if not supabase_manager.verify_installer("superadmin", key):
-                 QMessageBox.critical(self, "Access Denied", "Invalid Cloud Secret Key.")
-                 return
-                 
-        else:
-            # -----------------------------------------------------
-            # OFFLINE MODE: Verify against Local DB
-            # -----------------------------------------------------
-            from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
-            
-            key, ok = QInputDialog.getText(self, "Security Verification (Offline)", 
-                                           "System is Offline.\nEnter Local Security Key:", 
-                                           QLineEdit.EchoMode.Password)
-            if not ok or not key: return
-            
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM app_settings WHERE key = 'security_key'")
-                row = cursor.fetchone()
-                if not row or key != row['value']:
-                    QMessageBox.warning(self, "Access Denied", "Invalid Security Key")
+        from src.core.blocking_task_manager import task_manager
+        from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+
+        def _check_online():
+            try:
+                return supabase_manager.check_connection()
+            except:
+                return False
+
+        def _on_online_checked(is_online):
+            if is_online:
+                key, ok = QInputDialog.getText(
+                    self,
+                    "Cloud Verification (Online)",
+                    "System is Online.\nEnter Cloud Secret Key (Super Admin):",
+                    QLineEdit.EchoMode.Password,
+                )
+                if not ok or not key:
                     return
 
+                def _verify():
+                    return supabase_manager.verify_installer("superadmin", key)
+
+                def _on_verified(verified):
+                    if not verified:
+                        QMessageBox.critical(self, "Access Denied", "Invalid Cloud Secret Key.")
+                        return
+                    self._open_contract_update_dialog()
+
+                task_manager.run_task(_verify, on_finished=_on_verified)
+            else:
+                key, ok = QInputDialog.getText(
+                    self,
+                    "Security Verification (Offline)",
+                    "System is Offline.\nEnter Local Security Key:",
+                    QLineEdit.EchoMode.Password,
+                )
+                if not ok or not key:
+                    return
+
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT value FROM app_settings WHERE key = 'security_key'")
+                    row = cursor.fetchone()
+                    if not row or key != row['value']:
+                        QMessageBox.warning(self, "Access Denied", "Invalid Security Key")
+                        return
+                self._open_contract_update_dialog()
+
+        task_manager.run_task(_check_online, on_finished=_on_online_checked)
+
+    def _open_contract_update_dialog(self):
         # ---------------------------------------------------------
         # PROCEED TO UPDATE
         # ---------------------------------------------------------

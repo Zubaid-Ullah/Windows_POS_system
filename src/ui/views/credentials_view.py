@@ -148,6 +148,15 @@ class CredentialsView(QWidget):
         self.fetch_worker.finished.connect(self.fetch_worker.deleteLater)
         self.fetch_worker.start()
 
+    def _verify_key_async(self, key, on_done):
+        from src.core.blocking_task_manager import task_manager
+        from src.core.supabase_manager import supabase_manager
+
+        def _verify():
+            return supabase_manager.verify_secret_key(key)
+
+        task_manager.run_task(_verify, on_finished=on_done)
+
     def _populate_table(self, rows):
         from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton
         self.table.setRowCount(0)
@@ -210,39 +219,41 @@ class CredentialsView(QWidget):
         self.table.resizeRowsToContents()
 
     def abort_shutdown(self, system_id):
-        from src.core.supabase_manager import supabase_manager
         from PyQt6.QtWidgets import QInputDialog, QLineEdit
         
         key, ok = QInputDialog.getText(self, "Verification Required", 
                                      "Enter SuperAdmin SECRET KEY to ABORT shutdown:",
                                      QLineEdit.EchoMode.Password)
         if not ok or not key: return
-        if not supabase_manager.verify_secret_key(key):
+        self._verify_key_async(key, lambda ok: self._on_abort_verified(ok, system_id))
+
+    def _on_abort_verified(self, ok, system_id):
+        if not ok:
             QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
             return
 
-        # Move to background thread
         from PyQt6.QtCore import QThread, pyqtSignal
+        from src.core.supabase_manager import supabase_manager
+
         class AbortWorker(QThread):
             success = pyqtSignal(str)
             error = pyqtSignal(str)
             
-            def __init__(self, supabase_client, system_id):
+            def __init__(self, system_id):
                 super().__init__()
-                self.supabase = supabase_client
                 self.system_id = system_id
             
             def run(self):
                 try:
-                    res = self.supabase.table("installations").update({"shutdown_time": None}).eq("system_id", self.system_id).execute()
-                    if res.data:
+                    ok = supabase_manager.update_company_details(self.system_id, {"shutdown_time": None})
+                    if ok:
                         self.success.emit(f"Remote shutdown for {self.system_id} has been cancelled.")
                     else:
-                        self.error.emit("No data returned")
+                        self.error.emit("Cloud update failed (check service role key / RLS).")
                 except Exception as e:
                     self.error.emit(str(e))
         
-        self.abort_thread = AbortWorker(self.supabase, system_id)
+        self.abort_thread = AbortWorker(system_id)
         self.abort_thread.success.connect(lambda msg: self._on_abort_success(msg))
         self.abort_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Failed to abort: {err}"))
         self.abort_thread.finished.connect(self.abort_thread.deleteLater)
@@ -253,20 +264,23 @@ class CredentialsView(QWidget):
         self.load_data()
 
     def remote_shutdown(self, system_id):
-        from src.core.supabase_manager import supabase_manager
         from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         
         # 1. Verification
         key, ok = QInputDialog.getText(self, "Verification Required", 
                                      "Enter SuperAdmin SECRET KEY to schedule SHUTDOWN:",
                                      QLineEdit.EchoMode.Password)
         if not ok or not key: return
-        if not supabase_manager.verify_secret_key(key):
+        self._verify_key_async(key, lambda ok: self._on_remote_shutdown_verified(ok, system_id))
+
+    def _on_remote_shutdown_verified(self, ok, system_id):
+        if not ok:
             QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
             return
 
         # 2. Pick Minutes Range
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
         minutes, ok = QInputDialog.getInt(self, "Schedule Shutdown", 
                                          f"Shut down system {system_id} in how many minutes?", 
                                          value=5, min=1, max=1440)
@@ -279,31 +293,32 @@ class CredentialsView(QWidget):
         
         
         if confirm == QMessageBox.StandardButton.Yes:
-            target_time = (datetime.now() + timedelta(minutes=minutes)).isoformat()
+            # Store a relative shutdown marker so the client uses its own system time.
+            target_time = f"IN_MINUTES:{minutes}"
             
             # Move Supabase update to background thread
             from PyQt6.QtCore import QThread, pyqtSignal
+            from src.core.supabase_manager import supabase_manager
             class ShutdownScheduler(QThread):
                 success = pyqtSignal(str)
                 error = pyqtSignal(str)
                 
-                def __init__(self, supabase_client, system_id, target_time):
+                def __init__(self, system_id, target_time):
                     super().__init__()
-                    self.supabase = supabase_client
                     self.system_id = system_id
                     self.target_time = target_time
                 
                 def run(self):
                     try:
-                        res = self.supabase.table("installations").update({"shutdown_time": self.target_time}).eq("system_id", self.system_id).execute()
-                        if res.data:
+                        ok = supabase_manager.update_company_details(self.system_id, {"shutdown_time": self.target_time})
+                        if ok:
                             self.success.emit(f"Shutdown scheduled for {self.system_id} in {minutes} minutes.")
                         else:
-                            self.error.emit("No data returned from update")
+                            self.error.emit("Cloud update failed (check service role key / RLS).")
                     except Exception as e:
                         self.error.emit(str(e))
             
-            self.shutdown_thread = ShutdownScheduler(self.supabase, system_id, target_time)
+            self.shutdown_thread = ShutdownScheduler(system_id, target_time)
             self.shutdown_thread.success.connect(lambda msg: self._on_shutdown_scheduled(msg))
             self.shutdown_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
             self.shutdown_thread.finished.connect(self.shutdown_thread.deleteLater)
@@ -314,7 +329,6 @@ class CredentialsView(QWidget):
         self.load_data()
 
     def extend_contract(self, system_id):
-        from src.core.supabase_manager import supabase_manager
         from PyQt6.QtWidgets import QInputDialog, QLineEdit, QCalendarWidget, QDialog, QVBoxLayout
         
         # 1. Verification
@@ -322,11 +336,14 @@ class CredentialsView(QWidget):
                                      "Enter SuperAdmin SECRET KEY to extend contract:",
                                      QLineEdit.EchoMode.Password)
         if not ok or not key: return
-        if not supabase_manager.verify_secret_key(key):
+        self._verify_key_async(key, lambda ok: self._on_extend_verified(ok, system_id))
+
+    def _on_extend_verified(self, ok, system_id):
+        if not ok:
             QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
             return
-
         # 2. Pick Date
+        from PyQt6.QtWidgets import QCalendarWidget, QDialog, QVBoxLayout
         dialog = QDialog(self)
         dialog.setWindowTitle("Select New Expiry Date")
         vbox = QVBoxLayout(dialog)
@@ -342,27 +359,27 @@ class CredentialsView(QWidget):
             
             # Move to background thread
             from PyQt6.QtCore import QThread, pyqtSignal
+            from src.core.supabase_manager import supabase_manager
             class ExtendWorker(QThread):
                 success = pyqtSignal(str, str)
                 error = pyqtSignal(str)
                 
-                def __init__(self, supabase_client, system_id, new_date):
+                def __init__(self, system_id, new_date):
                     super().__init__()
-                    self.supabase = supabase_client
                     self.system_id = system_id
                     self.new_date = new_date
                 
                 def run(self):
                     try:
-                        res = self.supabase.table("installations").update({"contract_expiry": self.new_date}).eq("system_id", self.system_id).execute()
-                        if res.data:
+                        ok = supabase_manager.update_company_details(self.system_id, {"contract_expiry": self.new_date})
+                        if ok:
                             self.success.emit(self.system_id, self.new_date)
                         else:
-                            self.error.emit("No data returned")
+                            self.error.emit("Cloud update failed (check service role key / RLS).")
                     except Exception as e:
                         self.error.emit(str(e))
             
-            self.extend_thread = ExtendWorker(self.supabase, system_id, new_date)
+            self.extend_thread = ExtendWorker(system_id, new_date)
             self.extend_thread.success.connect(lambda sid, date: self._on_extend_success(sid, date))
             self.extend_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
             self.extend_thread.finished.connect(self.extend_thread.deleteLater)
@@ -373,7 +390,6 @@ class CredentialsView(QWidget):
         self.load_data()
 
     def toggle_status(self, system_id, current_status):
-        from src.core.supabase_manager import supabase_manager
         from PyQt6.QtWidgets import QInputDialog, QLineEdit
         
         new_status = "deactivated" if current_status == "active" else "active"
@@ -384,38 +400,45 @@ class CredentialsView(QWidget):
         
         if not ok or not key:
             return
+        
+        self._verify_key_async(key, lambda ok: self._on_toggle_verified(ok, system_id, new_status))
 
-        if not supabase_manager.verify_secret_key(key):
+    def _on_toggle_verified(self, ok, system_id, new_status):
+        if not ok:
             QMessageBox.critical(self, "Access Denied", "Invalid Secret Key. Action aborted.")
             return
 
-        confirm = QMessageBox.question(self, "Confirm", f"Are you sure you want to {new_status} system {system_id}?",
-                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        confirm = QMessageBox.question(
+            self,
+            "Confirm",
+            f"Are you sure you want to {new_status} system {system_id}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
         
         if confirm == QMessageBox.StandardButton.Yes:
             # Move to background thread
             from PyQt6.QtCore import QThread, pyqtSignal
+            from src.core.supabase_manager import supabase_manager
             class StatusToggleWorker(QThread):
                 success = pyqtSignal(str, str)
                 error = pyqtSignal(str)
                 
-                def __init__(self, supabase_client, system_id, new_status):
+                def __init__(self, system_id, new_status):
                     super().__init__()
-                    self.supabase = supabase_client
                     self.system_id = system_id
                     self.new_status = new_status
                 
                 def run(self):
                     try:
-                        res = self.supabase.table("installations").update({"status": self.new_status}).eq("system_id", self.system_id).execute()
-                        if res.data:
+                        ok = supabase_manager.update_company_details(self.system_id, {"status": self.new_status})
+                        if ok:
                             self.success.emit(self.system_id, self.new_status)
                         else:
-                            self.error.emit("Failed to update status")
+                            self.error.emit("Cloud update failed (check service role key / RLS).")
                     except Exception as e:
                         self.error.emit(str(e))
             
-            self.toggle_thread = StatusToggleWorker(self.supabase, system_id, new_status)
+            self.toggle_thread = StatusToggleWorker(system_id, new_status)
             self.toggle_thread.success.connect(lambda sid, status: self._on_toggle_success(sid, status))
             self.toggle_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
             self.toggle_thread.finished.connect(self.toggle_thread.deleteLater)

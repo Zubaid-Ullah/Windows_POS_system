@@ -83,6 +83,7 @@ def main():
         installer_login_window = None
         app_login_window = None
         locked_screen = None # Track the active lock screen
+        launching_main_app = False
         gate = ConnectivityGateWindow()
         
         # Security Guard Integration
@@ -116,6 +117,10 @@ def main():
         guard.modules_updated.connect(handle_modular_access)
 
         def start_main_app(mode="STORE", role="user"):
+            nonlocal launching_main_app
+            if launching_main_app:
+                return
+            launching_main_app = True
             if app_login_window: app_login_window.close()
             
             # Smart Module Selection: If default mode is deactivated, pick the other one
@@ -139,6 +144,7 @@ def main():
             main_window.set_modules_visibility(store_on, pharmacy_on)
             main_window.show_main_app(mode)
             main_window.show()
+            launching_main_app = False
 
         def check_contract_validity():
             try:

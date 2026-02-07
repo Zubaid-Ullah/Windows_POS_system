@@ -316,8 +316,20 @@ class PharmacyDashboardView(QWidget):
         if not products:
             self.product_list.addItem("No statistics available")
             return
+        # Chunked UI updates to avoid freezing on large datasets
+        self._pending_products = list(products)
+        self._apply_stats_chunk()
 
-        for p in products:
+    def _apply_stats_chunk(self, batch_size=200):
+        if not hasattr(self, "_pending_products") or not self._pending_products:
+            return
+
+        from PyQt6.QtCore import QTimer
+
+        batch = self._pending_products[:batch_size]
+        self._pending_products = self._pending_products[batch_size:]
+
+        for p in batch:
             sold_qty = p['sold_qty']
             current_qty = p['current_qty']
             total = sold_qty + current_qty
@@ -333,6 +345,9 @@ class PharmacyDashboardView(QWidget):
                 item.setSelected(True)
                 if self.chart_widget.visible_chart:
                     self.chart_widget.set_data(p['name_en'], percentage)
+
+        if self._pending_products:
+            QTimer.singleShot(0, self._apply_stats_chunk)
 
     def on_product_selected(self, item):
         name = item.text()
