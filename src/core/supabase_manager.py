@@ -379,7 +379,16 @@ class SupabaseManager:
             url = f"{self._url(self.INSTALL_TABLE)}?system_id=eq.{system_id}"
 
             r = requests.patch(url, json=payload, headers=headers, timeout=10)
-            return r.status_code in (200, 204)
+            if r.status_code in (200, 204):
+                return True
+
+            # Log explicit server response for troubleshooting
+            self._log(
+                self._sanitize(
+                    f"❌ update_company_details failed: status={r.status_code}, body={r.text}"
+                )
+            )
+            return False
 
         except Exception as e:
             print(self._sanitize(f"❌ update_company_details error: {e}"))

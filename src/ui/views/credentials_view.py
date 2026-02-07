@@ -276,6 +276,7 @@ class CredentialsView(QWidget):
 
     def _on_remote_shutdown_verified(self, ok, system_id):
         if not ok:
+            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
             return
 
