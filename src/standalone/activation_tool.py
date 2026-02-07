@@ -8,7 +8,7 @@ import os
 class ActivationTool(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Afex System Activation")
+        self.setWindowTitle("FaqiriTech System Activation")
         self.setFixedSize(400, 500)
         self.db_path = os.path.join("..", "..", "pos_system.db") if os.path.exists(os.path.join("..", "..", "pos_system.db")) else "pos_system.db"
         self.init_ui()

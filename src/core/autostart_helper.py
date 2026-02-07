@@ -4,7 +4,7 @@ import subprocess
 import platform
 
 class AutoStartHelper:
-    TASK_NAME = "AfexPOS"
+    TASK_NAME = "FaqiriTechPOS"
 
     @staticmethod
     def is_windows():
@@ -25,7 +25,7 @@ class AutoStartHelper:
             else:
                 exe_path = f'"{exe_path}"'
 
-            # schtasks /Create /SC ONLOGON /TN "AfexPOS" /TR "<path>" /F
+            # schtasks /Create /SC ONLOGON /TN "FaqiriTechPOS" /TR "<path>" /F
             command = f'schtasks /Create /SC ONLOGON /TN "{cls.TASK_NAME}" /TR {exe_path} /F'
             subprocess.run(command, shell=True, check=True, capture_output=True)
             return True

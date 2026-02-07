@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, 
                              QPushButton, QComboBox, QFrame, QMessageBox)
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
 import qtawesome as qta
 from src.core.supabase_manager import supabase_manager
 from src.core.local_config import local_config
@@ -11,7 +11,7 @@ class LoginWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Afex POS Login")
+        self.setWindowTitle("FaqiriTech POS Login")
         self.setFixedSize(450, 600)
         self.init_ui()
         self.refresh_installers()

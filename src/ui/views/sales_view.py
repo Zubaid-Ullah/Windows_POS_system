@@ -320,31 +320,41 @@ class SalesView(QWidget):
         self.search_input.setStyleSheet("font-size: 16px; border: none; padding: 0 10px;")
 
     def load_barcode_cache(self):
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT p.*, i.quantity as stock_qty FROM products p LEFT JOIN inventory i ON p.id = i.product_id WHERE p.is_active = 1")
-            for row in cursor.fetchall():
-                self.barcode_cache[row['barcode']] = dict(row)
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_products():
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT p.*, i.quantity as stock_qty FROM products p LEFT JOIN inventory i ON p.id = i.product_id WHERE p.is_active = 1")
+                return {row['barcode']: dict(row) for row in cursor.fetchall()}
+
+        def on_loaded(data):
+            self.barcode_cache = data
+            
+        task_manager.run_task(fetch_products, on_finished=on_loaded)
 
     def load_customers(self):
-        self.cust_combo.blockSignals(True)
-        self.cust_combo.clear()
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name_en FROM customers WHERE is_active = 1")
-            customers = cursor.fetchall()
-            for c in customers:
-                self.cust_combo.addItem(c['name_en'], c['id'])
+        from src.core.blocking_task_manager import task_manager
         
-        # Default to Walking Customer (ID 1)
-        index = self.cust_combo.findData(1)
-        if index >= 0:
-            self.cust_combo.setCurrentIndex(index)
-            self.selected_customer_id = 1
-        self.cust_combo.blockSignals(False)
+        def fetch_customers():
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, name_en FROM customers WHERE is_active = 1")
+                return [(c['name_en'], c['id']) for c in cursor.fetchall()]
 
-    def on_customer_changed(self, index):
-        self.selected_customer_id = self.cust_combo.itemData(index)
+        def on_loaded(customers):
+            self.cust_combo.blockSignals(True)
+            self.cust_combo.clear()
+            for name, cid in customers:
+                self.cust_combo.addItem(name, cid)
+            
+            index = self.cust_combo.findData(1)
+            if index >= 0:
+                self.cust_combo.setCurrentIndex(index)
+                self.selected_customer_id = 1
+            self.cust_combo.blockSignals(False)
+
+        task_manager.run_task(fetch_customers, on_finished=on_loaded)
 
     def handle_barcode_scan(self):
         barcode = self.search_input.text().strip()
@@ -354,29 +364,15 @@ class SalesView(QWidget):
             product = self.barcode_cache[barcode]
             
             if self.is_price_check_mode:
-                with db_manager.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT name_en, name_fa, sale_price FROM products WHERE barcode = ?", (barcode,))
-                    product_info = cursor.fetchone()
-                    
-                    if product_info:
-                        name = product_info['name_en'] or product_info['name_fa']
-                        price = product_info['sale_price']
-                        
-                        # Fetch stock
-                        cursor.execute("SELECT quantity FROM inventory WHERE product_id = ?", (product['id'],))
-                        s_row = cursor.fetchone()
-                        stock = s_row['quantity'] if s_row else 0
-                        
-                        self.product_name_lbl.setText(name)
-                        self.price_lbl.setText(f"{price:.2f} AFN")
-                        self.quantity_lbl.setText(f"In Stock: {int(stock)}")
-                        self.display_card.setStyleSheet("background-color: #e6f7ff; border: 2px solid #91d5ff; border-radius: 8px; padding: 15px;")
-                    else:
-                        self.product_name_lbl.setText("Product not found")
-                        self.price_lbl.setText("")
-                        self.quantity_lbl.setText("")
-                        self.display_card.setStyleSheet("background-color: #fff1f0; border: 2px solid #ffccc7; border-radius: 8px; padding: 15px;")
+                # We can use the cache here too, or do a targeted fetch
+                name = product['name_en'] or product.get('name_fa', '')
+                price = product['sale_price']
+                stock = product.get('stock_qty', 0)
+                
+                self.product_name_lbl.setText(name)
+                self.price_lbl.setText(f"{price:.2f} AFN")
+                self.quantity_lbl.setText(f"In Stock: {int(stock)}")
+                self.display_card.setStyleSheet("background-color: #e6f7ff; border: 2px solid #91d5ff; border-radius: 8px; padding: 15px;")
                 self.search_input.clear()
                 return
 
@@ -432,15 +428,12 @@ class SalesView(QWidget):
                 item = self.cart[row]
                 new_qty = float(self.cart_table.item(row, col).text())
                 
-                # Point: "quantity goes into minus, it should not go to minus number"
-                # Point: "and it should not go beyond current stock"
                 if new_qty < 0:
                     QMessageBox.warning(self, "Invalid Qty", "Quantity cannot be negative.")
                     self.refresh_table()
                     return
                 
                 if new_qty > item['max_qty']:
-                    # Point: "a popup window should be shown to tell that dash product available"
                     QMessageBox.warning(self, "Insufficient Stock", f"Only {item['max_qty']} {item['name']} available.")
                     self.refresh_table()
                     return
@@ -453,13 +446,18 @@ class SalesView(QWidget):
     def refresh_table(self):
         self.cart_table.blockSignals(True)
         self.cart_table.setRowCount(0)
-        for i, item in enumerate(self.cart):
-            # Fetch current stock in real-time
+        
+        # Batch Fetch Stock instead of one by one in loop
+        if self.cart:
+            p_ids = [str(item['id']) for item in self.cart]
+            stock_map = {}
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT quantity FROM inventory WHERE product_id = ?", (item['id'],))
-                stock_row = cursor.fetchone()
-                current_stock = stock_row['quantity'] if stock_row else 0
+                cursor.execute(f"SELECT product_id, quantity FROM inventory WHERE product_id IN ({','.join(p_ids)})")
+                stock_map = {row['product_id']: row['quantity'] for row in cursor.fetchall()}
+        
+        for i, item in enumerate(self.cart):
+            current_stock = stock_map.get(item['id'], 0)
             
             self.cart_table.insertRow(i)
             self.cart_table.setItem(i, 0, QTableWidgetItem(str(item['id'])))
@@ -489,7 +487,6 @@ class SalesView(QWidget):
             style_button(remove_btn, variant="danger", size="icon")
             remove_btn.clicked.connect(lambda checked, r=i: self.remove_cart_item(r))
             
-            # Point: "in table in action buttons macke background white, not for buttons"
             container = QFrame()
             container.setStyleSheet("background: none; border: none;")
             c_layout = QHBoxLayout(container)

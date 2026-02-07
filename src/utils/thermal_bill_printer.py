@@ -28,10 +28,10 @@ class ThermalBillPrinter:
             with db_func() as conn:
                 # Default values
                 info = {
-                    'name': 'Kabul City Center' if not is_pharmacy else 'Afex Pharmacy',
+                    'name': 'Kabul City Center' if not is_pharmacy else 'FaqiriTech Pharmacy',
                     'address': 'Main Road, Kabul, Afghanistan',
                     'phone': '0700000000',
-                    'email': 'info@mall.af' if not is_pharmacy else 'pharmacy@Afex.com'
+                    'email': 'info@mall.af' if not is_pharmacy else 'pharmacy@FaqiriTech.com'
                 }
                 
                 # Try pharmacy_info/company_info first
@@ -90,7 +90,7 @@ class ThermalBillPrinter:
         except Exception as e:
             print(f"Error loading company info for bill: {e}")
             return {
-                'name': 'Afex Business',
+                'name': 'FaqiriTech Business',
                 'address': 'Kabul, Afghanistan',
                 'phone': '0700000000',
                 'email': 'info@afex.com'

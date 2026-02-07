@@ -34,6 +34,7 @@ class BusinessCard(QFrame):
         self.icon_lbl = QLabel()
         self.icon_lbl.setPixmap(qta.icon(icon_name, color=color).pixmap(80, 80))
         self.icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_lbl.setStyleSheet("background:none;")
         layout.addWidget(self.icon_lbl)
         
         self.text_lbl = QLabel(title)
@@ -60,7 +61,7 @@ class BusinessCard(QFrame):
     def update_theme(self):
         self.apply_styles()
         color = "#1b2559" if not theme_manager.is_dark else "#ffffff"
-        self.text_lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {color};")
+        self.text_lbl.setStyleSheet(f"background:none; font-size: 18px; font-weight: bold; color: {color};")
 
     def mousePressEvent(self, event):
         self.clicked.emit()
@@ -165,7 +166,7 @@ class LoginView(QWidget):
         lang_layout = QHBoxLayout()
         for lang, name in [("en", "EN"), ("ps", "PS"), ("dr", "DR")]:
             btn = QPushButton(name)
-            btn.setStyleSheet("border: none; color: #4318ff; font-weight: bold;")
+            btn.setStyleSheet("border: none; color: #4318ff; font-weight: bold; font-size: 15px;")
             btn.clicked.connect(lambda checked, l=lang: self.change_language(l))
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             lang_layout.addWidget(btn)

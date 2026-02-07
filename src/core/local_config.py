@@ -1,5 +1,7 @@
 import os
-import json
+import subprocess
+import platform
+from collections import namedtuple
 import uuid
 import socket
 from datetime import datetime, timedelta
@@ -15,24 +17,52 @@ class LocalConfig:
             cls._instance.load()
         return cls._instance
 
+    def get_serial_key(self):
+        # Define a structure to allow the .serial_key access
+        Result = namedtuple('SystemInfo', ['serial_key'])
+        os_type = platform.system()
+        serial = "Not Found"
+
+        try:
+            if os_type == "Windows":
+                # Command to get Hardware Serial Number
+                cmd = "wmic bios get serialnumber"
+                output = subprocess.check_output(cmd, shell=True, text=True)
+                serial = output.split("\n")[1].strip()
+
+            elif os_type == "Darwin":  # macOS
+                cmd = "ioreg -l | grep IOPlatformSerialNumber"
+                output = subprocess.check_output(cmd, shell=True, text=True)
+                serial = output.split('"')[-2]
+
+            elif os_type == "Linux":
+                # Common path for system serial
+                with open("/sys/class/dmi/id/product_serial", "r") as f:
+                    serial = f.read().strip()
+
+        except Exception:
+            serial = "Permission Denied / Error"
+
+        # Return as an object so you can call .serial_key
+        return Result(serial_key=serial)
     @staticmethod
     def get_data_dir():
         import platform
         import sys
         
         # Define the app name for the data folder
-        app_name = "AfexPOS"
+        app_name = "FaqiriTechPOS"
         
         if platform.system() == "Darwin":
-            # macOS: ~/Library/Application Support/AfexPOS
+            # macOS: ~/Library/Application Support/FaqiriTechPOS
             base = os.path.expanduser("~/Library/Application Support")
             data_dir = os.path.join(base, app_name)
         elif platform.system() == "Windows":
-            # Windows: %APPDATA%/AfexPOS
+            # Windows: %APPDATA%/FaqiriTechPOS
             base = os.environ.get("APPDATA") or os.path.expanduser("~/AppData/Roaming")
             data_dir = os.path.join(base, app_name)
         else:
-            # Linux: ~/.local/share/AfexPOS
+            # Linux: ~/.local/share/FaqiriTechPOS
             base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
             data_dir = os.path.join(base, app_name)
             
@@ -70,7 +100,7 @@ class LocalConfig:
         self._data = {
             "system_id": self._generate_system_id(),
             "pc_name": socket.gethostname(),
-            "serial_key": "AFEX-2026-PRO",
+            "serial_key": f"{self.get_serial_key().serial_key}",
             "installation_time": datetime.now().isoformat(),
             "contract_duration_days": 365,
             "contract_expiry": "2023-01-01T00:00:00",

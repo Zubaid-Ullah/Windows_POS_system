@@ -40,7 +40,7 @@ class PharmacySalesView(QWidget):
         bill_row.setSpacing(10)
         
         self.bill_number_display = QLabel("INV-0001")
-        self.bill_number_display.setStyleSheet("font-family: monospace; font-size: 16px; font-weight: bold; padding: 8px 15px;")
+        self.bill_number_display.setStyleSheet("font-family: 'Courier New'; font-size: 16px; font-weight: bold; padding: 8px 15px;")
         bill_row.addWidget(QLabel("📄 " + lang_manager.get("last_bill") + ":"))
         bill_row.addWidget(self.bill_number_display)
         

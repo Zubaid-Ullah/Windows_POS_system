@@ -53,7 +53,7 @@ class CreateAccountWindow(QWidget):
         self.setFixedSize(700, 800)
         self.current_step = 0
         
-        # Set Window Icon explicitly to Afex Logo
+        # Set Window Icon explicitly to FaqiriTech Logo
         import sys, os
         from PyQt6.QtGui import QIcon
         if getattr(sys, 'frozen', False):
@@ -124,7 +124,7 @@ class CreateAccountWindow(QWidget):
         style = "border: 1px solid #e0e5f2; border-radius: 8px; padding: 5px;"
         self.comp_name = QLineEdit()
         self.comp_name.setFont(QFont("Inter", 18))
-        self.comp_name.setPlaceholderText("e.g. Affex Tech Solutions")
+        self.comp_name.setPlaceholderText("e.g. FaqiriTech Tech Solutions")
         self.comp_name.setMinimumWidth(400)
         self.comp_name.setFixedHeight(35)
         self.comp_name.setStyleSheet(style)
@@ -284,7 +284,7 @@ class CreateAccountWindow(QWidget):
         
         self.sys_info_lbl = QLabel(f"({pc})-{sid}-({now.strftime('%Y-%m-%d')})")
         self.sys_info_lbl.setWordWrap(True)
-        self.sys_info_lbl.setStyleSheet("font-size: 10px; color: #a3aed0; font-family: monospace;")
+        self.sys_info_lbl.setStyleSheet("font-size: 10px; color: #a3aed0; font-family: 'Courier New';")
         lay.addRow("Serial Info", self.sys_info_lbl)
         
         self.registration_choice = QComboBox()
@@ -544,7 +544,7 @@ class CreateAccountWindow(QWidget):
                 from win32com.client import Dispatch
                 
                 desktop = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop')
-                path = os.path.join(desktop, "Afex POS System.lnk")
+                path = os.path.join(desktop, "FaqiriTech POS System.lnk")
                 
                 shell = Dispatch('WScript.Shell')
                 shortcut = shell.CreateShortcut(path)
@@ -571,7 +571,7 @@ class CreateAccountWindow(QWidget):
             work_dir = os.path.dirname(exe_path)
             vbs_content = f"""
             Set oWS = WScript.CreateObject("WScript.Shell")
-            sLinkFile = oWS.ExpandEnvironmentStrings("%USERPROFILE%\\Desktop\\Afex POS System.lnk")
+            sLinkFile = oWS.ExpandEnvironmentStrings("%USERPROFILE%\\Desktop\\FaqiriTech POS System.lnk")
             Set oLink = oWS.CreateShortcut(sLinkFile)
             oLink.TargetPath = "{exe_path}"
             oLink.WorkingDirectory = "{work_dir}"

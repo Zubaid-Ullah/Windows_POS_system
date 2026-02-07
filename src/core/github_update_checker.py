@@ -24,17 +24,20 @@ class UpdateWorker(QObject):
             if self.task == "check":
                 data = self._fetch_latest()
                 self.finished.emit(True, data)
+                return  # Exit early on success
             elif self.task == "download":
                 path = self._download()
                 if path:
                     self.download_finished.emit(path)
                 else:
                     self.error.emit("Download failed (Unknown error)")
+                return  # Exit early
         except Exception as e:
             self.error.emit(str(e))
         finally:
-            if self.task != "download": # Download has its own signals
-                self.finished.emit(False, {})
+            # Only emit False if we haven't succeeded (only for check task)
+            # Actually, the logic above with returns is cleaner.
+            pass
 
     def _fetch_latest(self):
         owner = self.context.get('owner')
@@ -95,13 +98,17 @@ class GitHubUpdateChecker(QObject):
         self.check_timer.timeout.connect(self.check_for_updates)
 
     def start(self):
+        if not local_config.get("check_updates", True):
+            print("[Update] Update checker disabled in config")
+            return
+            
         if not self.check_timer.isActive():
             self.check_timer.start()
             # Delay first check after start to let UI settle
             QTimer.singleShot(10000, self.check_for_updates)
 
     def _load_token(self):
-        token = os.environ.get("AFEX_GITHUB_TOKEN")
+        token = os.environ.get("FaqiriTech_GITHUB_TOKEN")
         if token: return token
         try:
             paths = ["github-token.txt", os.path.join(os.getcwd(), "github-token.txt")]
@@ -113,11 +120,13 @@ class GitHubUpdateChecker(QObject):
 
     def _headers(self):
         headers = {"Accept": "application/vnd.github.v3+json",
-                   "User-Agent": "AfexPOS-Update-Checker"}
+                   "User-Agent": "FaqiriTechPOS-Update-Checker"}
         if self.token: headers["Authorization"] = f"token {self.token}"
         return headers
 
     def check_for_updates(self):
+        if not local_config.get("check_updates", True): return
+        
         try:
             if self._active_thread and self._active_thread.isRunning(): return
         except RuntimeError: self._active_thread = None
@@ -129,7 +138,7 @@ class GitHubUpdateChecker(QObject):
         
         self._active_thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._on_check_finished)
-        self.worker.error.connect(lambda e: print(f"[Update] Error: {e}"))
+        self.worker.error.connect(self._on_check_error)
         
         # Cleanup
         self.worker.finished.connect(self._active_thread.quit)
@@ -137,6 +146,12 @@ class GitHubUpdateChecker(QObject):
         self._active_thread.finished.connect(self.worker.deleteLater)
         self._active_thread.finished.connect(self._active_thread.deleteLater)
         self._active_thread.start()
+
+    def _on_check_error(self, error):
+        print(f"[Update] Error: {error}")
+        if "401" in error or "unauthorized" in error.lower():
+            print("[Update] Authentication failed (401). Disabling future update checks.")
+            local_config.set("check_updates", False)
 
     def _on_check_finished(self, success, data):
         if not success or not data: return

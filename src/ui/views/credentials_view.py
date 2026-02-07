@@ -59,7 +59,7 @@ class CredentialsView(QWidget):
         sys_info_lay.addWidget(header_title)
         
         self.system_id_lbl = QLabel("System ID: Loading...")
-        self.system_id_lbl.setStyleSheet("font-size: 14px; color: #64748b; font-family: monospace;")
+        self.system_id_lbl.setStyleSheet("font-size: 14px; color: #64748b; font-family: 'Courier New';")
         sys_info_lay.addWidget(self.system_id_lbl)
         
         self.pc_name_lbl = QLabel(f"PC Name: {socket.gethostname()}")
@@ -221,13 +221,36 @@ class CredentialsView(QWidget):
             QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
             return
 
-        try:
-            res = self.supabase.table("installations").update({"shutdown_time": None}).eq("system_id", system_id).execute()
-            if res.data:
-                QMessageBox.information(self, "Cancelled", f"Remote shutdown for {system_id} has been cancelled.")
-                self.load_data()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to abort: {e}")
+        # Move to background thread
+        from PyQt6.QtCore import QThread, pyqtSignal
+        class AbortWorker(QThread):
+            success = pyqtSignal(str)
+            error = pyqtSignal(str)
+            
+            def __init__(self, supabase_client, system_id):
+                super().__init__()
+                self.supabase = supabase_client
+                self.system_id = system_id
+            
+            def run(self):
+                try:
+                    res = self.supabase.table("installations").update({"shutdown_time": None}).eq("system_id", self.system_id).execute()
+                    if res.data:
+                        self.success.emit(f"Remote shutdown for {self.system_id} has been cancelled.")
+                    else:
+                        self.error.emit("No data returned")
+                except Exception as e:
+                    self.error.emit(str(e))
+        
+        self.abort_thread = AbortWorker(self.supabase, system_id)
+        self.abort_thread.success.connect(lambda msg: self._on_abort_success(msg))
+        self.abort_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Failed to abort: {err}"))
+        self.abort_thread.finished.connect(self.abort_thread.deleteLater)
+        self.abort_thread.start()
+    
+    def _on_abort_success(self, message):
+        QMessageBox.information(self, "Cancelled", message)
+        self.load_data()
 
     def remote_shutdown(self, system_id):
         from src.core.supabase_manager import supabase_manager
@@ -254,15 +277,41 @@ class CredentialsView(QWidget):
                                      "This will force a system shutdown on the client PC.",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         
+        
         if confirm == QMessageBox.StandardButton.Yes:
             target_time = (datetime.now() + timedelta(minutes=minutes)).isoformat()
-            try:
-                res = self.supabase.table("installations").update({"shutdown_time": target_time}).eq("system_id", system_id).execute()
-                if res.data:
-                    QMessageBox.information(self, "Success", f"Shutdown scheduled for {system_id} in {minutes} minutes.")
-                    self.load_data()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Update failed: {e}")
+            
+            # Move Supabase update to background thread
+            from PyQt6.QtCore import QThread, pyqtSignal
+            class ShutdownScheduler(QThread):
+                success = pyqtSignal(str)
+                error = pyqtSignal(str)
+                
+                def __init__(self, supabase_client, system_id, target_time):
+                    super().__init__()
+                    self.supabase = supabase_client
+                    self.system_id = system_id
+                    self.target_time = target_time
+                
+                def run(self):
+                    try:
+                        res = self.supabase.table("installations").update({"shutdown_time": self.target_time}).eq("system_id", self.system_id).execute()
+                        if res.data:
+                            self.success.emit(f"Shutdown scheduled for {self.system_id} in {minutes} minutes.")
+                        else:
+                            self.error.emit("No data returned from update")
+                    except Exception as e:
+                        self.error.emit(str(e))
+            
+            self.shutdown_thread = ShutdownScheduler(self.supabase, system_id, target_time)
+            self.shutdown_thread.success.connect(lambda msg: self._on_shutdown_scheduled(msg))
+            self.shutdown_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
+            self.shutdown_thread.finished.connect(self.shutdown_thread.deleteLater)
+            self.shutdown_thread.start()
+    
+    def _on_shutdown_scheduled(self, message):
+        QMessageBox.information(self, "Success", message)
+        self.load_data()
 
     def extend_contract(self, system_id):
         from src.core.supabase_manager import supabase_manager
@@ -290,13 +339,38 @@ class CredentialsView(QWidget):
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_date = cal.selectedDate().toString("yyyy-MM-dd")
-            try:
-                res = self.supabase.table("installations").update({"contract_expiry": new_date}).eq("system_id", system_id).execute()
-                if res.data:
-                    QMessageBox.information(self, "Success", f"Contract for {system_id} extended to {new_date}")
-                    self.load_data()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Update failed: {e}")
+            
+            # Move to background thread
+            from PyQt6.QtCore import QThread, pyqtSignal
+            class ExtendWorker(QThread):
+                success = pyqtSignal(str, str)
+                error = pyqtSignal(str)
+                
+                def __init__(self, supabase_client, system_id, new_date):
+                    super().__init__()
+                    self.supabase = supabase_client
+                    self.system_id = system_id
+                    self.new_date = new_date
+                
+                def run(self):
+                    try:
+                        res = self.supabase.table("installations").update({"contract_expiry": self.new_date}).eq("system_id", self.system_id).execute()
+                        if res.data:
+                            self.success.emit(self.system_id, self.new_date)
+                        else:
+                            self.error.emit("No data returned")
+                    except Exception as e:
+                        self.error.emit(str(e))
+            
+            self.extend_thread = ExtendWorker(self.supabase, system_id, new_date)
+            self.extend_thread.success.connect(lambda sid, date: self._on_extend_success(sid, date))
+            self.extend_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
+            self.extend_thread.finished.connect(self.extend_thread.deleteLater)
+            self.extend_thread.start()
+    
+    def _on_extend_success(self, system_id, new_date):
+        QMessageBox.information(self, "Success", f"Contract for {system_id} extended to {new_date}")
+        self.load_data()
 
     def toggle_status(self, system_id, current_status):
         from src.core.supabase_manager import supabase_manager
@@ -319,12 +393,34 @@ class CredentialsView(QWidget):
                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         
         if confirm == QMessageBox.StandardButton.Yes:
-            try:
-                res = self.supabase.table("installations").update({"status": new_status}).eq("system_id", system_id).execute()
-                if res.data:
-                    QMessageBox.information(self, "Success", f"System {system_id} is now {new_status}")
-                    self.load_data()
-                else:
-                    QMessageBox.warning(self, "Error", "Failed to update status.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Update failed: {e}")
+            # Move to background thread
+            from PyQt6.QtCore import QThread, pyqtSignal
+            class StatusToggleWorker(QThread):
+                success = pyqtSignal(str, str)
+                error = pyqtSignal(str)
+                
+                def __init__(self, supabase_client, system_id, new_status):
+                    super().__init__()
+                    self.supabase = supabase_client
+                    self.system_id = system_id
+                    self.new_status = new_status
+                
+                def run(self):
+                    try:
+                        res = self.supabase.table("installations").update({"status": self.new_status}).eq("system_id", self.system_id).execute()
+                        if res.data:
+                            self.success.emit(self.system_id, self.new_status)
+                        else:
+                            self.error.emit("Failed to update status")
+                    except Exception as e:
+                        self.error.emit(str(e))
+            
+            self.toggle_thread = StatusToggleWorker(self.supabase, system_id, new_status)
+            self.toggle_thread.success.connect(lambda sid, status: self._on_toggle_success(sid, status))
+            self.toggle_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
+            self.toggle_thread.finished.connect(self.toggle_thread.deleteLater)
+            self.toggle_thread.start()
+    
+    def _on_toggle_success(self, system_id, new_status):
+        QMessageBox.information(self, "Success", f"System {system_id} is now {new_status}")
+        self.load_data()

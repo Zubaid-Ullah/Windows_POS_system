@@ -433,21 +433,26 @@ class InventoryView(QWidget):
         main_layout.addWidget(self.container)
 
     def load_products(self):
-        lang_col = f'name_{lang_manager.current_lang}'
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(f"""
-                SELECT p.*, i.quantity 
-                FROM products p 
-                LEFT JOIN inventory i ON p.id = i.product_id
-                WHERE p.is_active = 1
-                ORDER BY p.id DESC
-            """)
-            products = cursor.fetchall()
-            
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_data():
+            lang_col = f'name_{lang_manager.current_lang}'
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"""
+                    SELECT p.*, i.quantity 
+                    FROM products p 
+                    LEFT JOIN inventory i ON p.id = i.product_id
+                    WHERE p.is_active = 1
+                    ORDER BY p.id DESC
+                """)
+                return [dict(row) for row in cursor.fetchall()], lang_col
+
+        def on_loaded(result):
+            products, lang_col = result
             self.table.setRowCount(0)
             for i, p in enumerate(products):
-                name = p[lang_col] or p['name_en']
+                name = p.get(lang_col) or p.get('name_en')
                 self.table.insertRow(i)
                 self.table.setItem(i, 0, QTableWidgetItem(lang_manager.localize_digits(str(p['id']))))
                 self.table.setItem(i, 1, QTableWidgetItem(p['barcode']))
@@ -482,7 +487,7 @@ class InventoryView(QWidget):
                     style_button(edit_btn, variant="info", size="icon")
                     edit_btn.setIcon(qta.icon("fa5s.edit", color="white"))
                     edit_btn.setToolTip("Edit Full Details")
-                    edit_btn.clicked.connect(lambda checked, prod=dict(p): self.edit_product(prod))
+                    edit_btn.clicked.connect(lambda checked, prod=p: self.edit_product(prod))
                     
                     del_btn = QPushButton()
                     style_button(del_btn, variant="danger", size="icon")
@@ -494,6 +499,8 @@ class InventoryView(QWidget):
                     act_layout.addWidget(del_btn)
                 
                 self.table.setCellWidget(i, 7, actions)
+
+        task_manager.run_task(fetch_data, on_finished=on_loaded)
 
     def generate_barcode_img(self, code):
         if not code: return

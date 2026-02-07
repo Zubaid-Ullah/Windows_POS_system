@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
                              QPushButton, QLabel, QFrame, QComboBox, QMessageBox, QFileDialog, QGridLayout,
                              QTabWidget, QGroupBox, QFormLayout, QTextEdit, QScrollArea, QCheckBox)
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
 import qtawesome as qta
 import qrcode
@@ -16,15 +16,55 @@ from src.core.autostart_helper import AutoStartHelper
 import os
 import platform
 
+class SettingsSyncWorker(QThread):
+    finished = pyqtSignal(bool, dict) # success, data
+    saved = pyqtSignal(bool)
+
+    def __init__(self, task="load", sid=None, payload=None):
+        super().__init__()
+        self.task = task
+        self.sid = sid
+        self.payload = payload
+
+    def run(self):
+        try:
+            if self.task == "load":
+                if supabase_manager.check_connection():
+                    data = supabase_manager.get_installation_status(self.sid)
+                    self.finished.emit(True, data if data else {})
+                else:
+                    self.finished.emit(False, {})
+            elif self.task == "sync":
+                if supabase_manager.check_connection():
+                    success = supabase_manager.update_company_details(self.sid, self.payload)
+                    self.saved.emit(success)
+                else:
+                    self.saved.emit(False)
+        except Exception as e:
+            print(f"SettingsSyncWorker Error: {e}")
+            self.finished.emit(False, {})
+
 class SettingsView(QWidget):
     def __init__(self):
         super().__init__()
+        self.sync_thread = None
+        self.is_syncing = False
         self.init_ui()
         
         # Background Sync Timer for offline changes
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self.check_and_sync_online)
         self.sync_timer.start(30000) # Every 30 seconds
+
+    def cleanup_thread(self):
+        if self.sync_thread:
+            try:
+                if self.sync_thread.isRunning():
+                    self.sync_thread.quit()
+                    self.sync_thread.wait(500)
+            except RuntimeError:
+                pass
+        self.sync_thread = None
 
     def create_card(self, title, icon_name):
         card = QFrame()
@@ -278,6 +318,12 @@ class SettingsView(QWidget):
         self.offline_mode_cb.toggled.connect(self.toggle_offline_mode)
         conn_layout.addWidget(self.offline_mode_cb)
         
+        self.update_check_cb = QCheckBox("Check for Updates Automatically")
+        self.update_check_cb.setStyleSheet("font-size: 14px; font-weight: bold; color: #374151;")
+        self.update_check_cb.setChecked(local_config.get("check_updates", True))
+        self.update_check_cb.toggled.connect(self.toggle_update_checks)
+        conn_layout.addWidget(self.update_check_cb)
+        
         note_lbl = QLabel("Note: Enabling Offline Mode will disable daily cloud sync.\nMandatory contract validation will still occur upon expiry.")
         note_lbl.setStyleSheet("color: #6b7280; font-style: italic; font-size: 12px;")
         conn_layout.addWidget(note_lbl)
@@ -380,27 +426,30 @@ class SettingsView(QWidget):
             else:
                 self.sys_qr_label.setText("QR Not Found")
 
-            # Cloud update logic
+            # Cloud update logic (Asynchronous)
             sid = local_config.get("system_id")
             if sid:
-                def fetch_online():
-                    try:
-                        online_data = supabase_manager.get_installation_status(sid)
-                        if online_data:
-                            self.company_name.setText(online_data.get('company_name', self.company_name.text()))
-                            self.company_phone.setText(online_data.get('phone', self.company_phone.text()))
-                            self.company_email.setText(online_data.get('email', self.company_email.text()))
-                            self.company_address.setPlainText(online_data.get('address', self.company_address.toPlainText()))
-                            self.generate_whatsapp_qr(auto=True)
-                    except: pass
-                QTimer.singleShot(100, fetch_online)
+                self.cleanup_thread()
+                self.sync_thread = SettingsSyncWorker(task="load", sid=sid)
+                self.sync_thread.finished.connect(self._on_online_settings_loaded)
+                self.sync_thread.finished.connect(self.sync_thread.deleteLater)
+                self.sync_thread.start()
 
         except Exception as e:
             print(f"Error loading company settings: {e}")
 
+    def _on_online_settings_loaded(self, success, data):
+        if success and data:
+            self.company_name.setText(data.get('company_name', self.company_name.text()))
+            self.company_phone.setText(data.get('phone', self.company_phone.text()))
+            self.company_email.setText(data.get('email', self.company_email.text()))
+            self.company_address.setPlainText(data.get('address', self.company_address.toPlainText()))
+            self.generate_whatsapp_qr(auto=True)
+
     def check_and_sync_online(self):
-        if supabase_manager.check_connection():
-            self.save_settings(silent=True)
+        """Timer callback - triggered every 30s. Must be non-blocking."""
+        if self.is_syncing: return
+        self.save_settings(silent=True)
 
     def save_settings(self, silent=False):
         """Save company settings to database"""
@@ -423,7 +472,7 @@ class SettingsView(QWidget):
                 
                 conn.commit()
 
-            # Cloud Sync
+            # Cloud Sync (Asynchronous)
             sid = local_config.get("system_id")
             if sid:
                 payload = {
@@ -433,13 +482,19 @@ class SettingsView(QWidget):
                     "email": self.company_email.text().strip(),
                     "company_whatsapp_url": f"https://wa.me/{self.whatsapp_number.text().strip().replace('+', '').replace(' ', '')}"
                 }
-                supabase_manager.update_company_details(sid, payload)
+                
+                self.is_syncing = True
+                self.cleanup_thread()
+                self.sync_thread = SettingsSyncWorker(task="sync", sid=sid, payload=payload)
+                self.sync_thread.saved.connect(lambda s: setattr(self, 'is_syncing', False))
+                self.sync_thread.finished.connect(self.sync_thread.deleteLater)
+                self.sync_thread.start()
 
             # Auto-update QR
             self.generate_whatsapp_qr(auto=True)
 
             if not silent:
-                QMessageBox.information(self, "Success", "Settings saved and synced.")
+                QMessageBox.information(self, "Success", "Settings saved and syncing in background.")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
@@ -581,6 +636,17 @@ class SettingsView(QWidget):
         mode = "OFFLINE" if checked else "ONLINE"
         print(f"📡 System switched to {mode} mode.")
         QMessageBox.information(self, "Connectivity", f"{status}\nRestart may be required for full effect.")
+
+    def toggle_update_checks(self, checked):
+        local_config.set("check_updates", checked)
+        from src.core.github_update_checker import update_checker
+        if checked:
+            update_checker.start()
+        else:
+            if hasattr(update_checker, 'check_timer'):
+                update_checker.check_timer.stop()
+        msg = "Update checks enabled." if checked else "Update checks disabled."
+        QMessageBox.information(self, "Updates", f"{msg}")
 
     def toggle_autostart(self, checked):
         if checked:

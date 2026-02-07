@@ -239,18 +239,22 @@ class CustomerView(QWidget):
         main_layout.addWidget(self.container)
 
     def load_customers(self):
+        from src.core.blocking_task_manager import task_manager
         search = self.search_input.text().strip()
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            query = "SELECT * FROM customers WHERE is_active = 1"
-            params = []
-            if search:
-                query += " AND (name_en LIKE ? OR phone LIKE ?)"
-                params = [f"%{search}%", f"%{search}%"]
-            
-            cursor.execute(query, params)
-            customers = cursor.fetchall()
-            
+        
+        def fetch_data():
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                query = "SELECT * FROM customers WHERE is_active = 1"
+                params = []
+                if search:
+                    query += " AND (name_en LIKE ? OR phone LIKE ?)"
+                    params = [f"%{search}%", f"%{search}%"]
+                
+                cursor.execute(query, params)
+                return [dict(row) for row in cursor.fetchall()]
+
+        def on_loaded(customers):
             self.table.setRowCount(0)
             for i, c in enumerate(customers):
                 self.table.insertRow(i)
@@ -276,7 +280,7 @@ class CustomerView(QWidget):
                     edit_btn = QPushButton()
                     style_button(edit_btn, variant="info", size="icon")
                     edit_btn.setIcon(qta.icon("fa5s.edit", color="white"))
-                    edit_btn.clicked.connect(lambda checked, cust=dict(c): self.edit_customer(cust))
+                    edit_btn.clicked.connect(lambda checked, cust=c: self.edit_customer(cust))
                     
                     del_btn = QPushButton()
                     style_button(del_btn, variant="danger", size="icon")
@@ -290,6 +294,8 @@ class CustomerView(QWidget):
                     act_layout.addWidget(pay_btn)
                 
                 self.table.setCellWidget(i, 4, actions)
+
+        task_manager.run_task(fetch_data, on_finished=on_loaded)
 
     def add_customer(self):
         dialog = CustomerDialog()

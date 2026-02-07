@@ -10,15 +10,15 @@ class DatabaseManager:
         if getattr(sys, 'frozen', False):
             # Production Mode: Use OS-specific writable data directories
             import platform
-            app_name = "AfexPOS"
+            app_name = "FaqiriTech"
             if platform.system() == "Darwin":
-                # macOS: ~/Library/Application Support/AfexPOS
+                # macOS: ~/Library/Application Support/FaqiriTech
                 self.base_dir = os.path.expanduser(f"~/Library/Application Support/{app_name}")
             elif platform.system() == "Windows":
-                # Windows: %APPDATA%/AfexPOS
+                # Windows: %APPDATA%/FaqiriTech
                 self.base_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), app_name)
             else:
-                # Linux: ~/.local/share/AfexPOS
+                # Linux: ~/.local/share/FaqiriTech
                 self.base_dir = os.path.expanduser(f"~/.local/share/{app_name}")
         else:
             # Dev Mode: Root of project
@@ -78,15 +78,26 @@ class DatabaseManager:
 
     def get_connection(self):
         """Returns connection to General Store database (Main)."""
-        conn = sqlite3.connect(self.store_db)
+        self._check_thread_safety()
+        conn = sqlite3.connect(self.store_db, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
     def get_pharmacy_connection(self):
         """Returns connection to Pharmacy database (Isolated)."""
-        conn = sqlite3.connect(self.pharmacy_db)
+        self._check_thread_safety()
+        conn = sqlite3.connect(self.pharmacy_db, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _check_thread_safety(self):
+        """Logs a warning if DB is accessed from Main Thread after initialization."""
+        import threading
+        from PyQt6.QtWidgets import QApplication
+        if threading.current_thread() == threading.main_thread():
+            # If QApplication exists and is running, it's a UI block risk
+            if QApplication.instance():
+                print(f"[WARNING] Database accessed from MAIN UI THREAD. This may cause GUI freezes. Use task_manager instead.")
 
     def _enable_wal_mode(self):
         for db in [self.store_db, self.pharmacy_db]:
@@ -380,6 +391,22 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE pharmacy_return_items ADD COLUMN sale_item_id INTEGER")
             except: pass
 
+            # Table to track replacement items when action is REPLACEMENT
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pharmacy_replacement_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    return_item_id INTEGER NOT NULL,
+                    product_id INTEGER NOT NULL,
+                    product_name TEXT,
+                    quantity REAL NOT NULL,
+                    unit_price REAL NOT NULL,
+                    total_price REAL NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (return_item_id) REFERENCES pharmacy_return_items(id),
+                    FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
+                )
+            ''')
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS pharmacy_month_close (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, month_str TEXT UNIQUE, total_sold_items REAL,
@@ -397,7 +424,7 @@ class DatabaseManager:
             cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_number', '')")
 
             cursor.execute('CREATE TABLE IF NOT EXISTS pharmacy_info (id INTEGER PRIMARY KEY DEFAULT 1, name TEXT, address TEXT, phone TEXT, email TEXT)')
-            cursor.execute("INSERT OR IGNORE INTO pharmacy_info (id, name, address, phone, email) VALUES (1, 'Afex Pharmacy', 'Main Road, Kabul', '0700000000', 'pharmacy@afex.com')")
+            cursor.execute("INSERT OR IGNORE INTO pharmacy_info (id, name, address, phone, email) VALUES (1, 'FaqiriTech Pharmacy', 'Main Road, Kabul', '0700000000', 'pharmacy@afex.com')")
 
             cursor.execute("INSERT OR IGNORE INTO system_settings (id, is_active, mode, valid_until) VALUES (1, 1, 'OFFLINE', ?)", (back_date,))
 

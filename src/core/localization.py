@@ -11,6 +11,8 @@ class Localization(QObject):
         self.current_lang = "en"
         self.translations = {
             "en": {
+                "welcome_title":"Welcome",
+                "select_business":"Select a business to continue",
                 "login": "Login",
                 "username": "Username",
                 "password": "Password",
@@ -317,9 +319,24 @@ class Localization(QObject):
                 "optimize_database": "Optimize Database",
                 "clear_logs": "Clear Activity Logs",
                 "full_backup": "Create Full Backup",
-                "restore_backup": "Restore from Backup"
+                "restore_backup": "Restore from Backup",
+                # Replacement Items & Returns
+                "replacement_items": "Replacement Items",
+                "select_replacement_items": "Select Replacement Items",
+                "selected_items": "Selected Items",
+                "return_value": "Return Value",
+                "replacement_value": "Replacement Value",
+                "replacement_value_mismatch": "Replacement value does not match return value",
+                "continue": "Continue",
+                "action": "Action",
+                "invoice_not_found": "Invoice not found",
+                "for": "for",
+                "product": "Product",
+                "return_quantity": "Return Quantity"
             },
             "ps": {
+                "welcome_title":"ښه راغلاست",
+                "select_business":"خپل کاروبار وټاکئ",
                 "login": "ننووتل",
                 "username": "کارن نوم",
                 "password": "پټنوم",
@@ -629,6 +646,8 @@ class Localization(QObject):
                 "restore_backup": "له بیک اپ څخه بیا رغونه"
             },
             "dr": {
+                "welcome_title":"خوش آمدید",
+                "select_business":"تجارت خود را انتخاب کنید",
                 "login": "ورود",
                 "username": "نام کاربری",
                 "password": "رمز عبور",

@@ -4,9 +4,15 @@ Backup/
 data/Backups/auto/*.db
 data/kyc/*.jpg
 data/bills/*.txt
+data/receipts/*.txt
+src/core/*.txt
+data/pharmacy_pos.db
 test_out_src/
 test_out/
 keys/
+afex_pharmacy.db
+afex_store.db
+logs/*.log
 platform/windows/windows_exe_dist/
 platform/windows/windows_build_temp/
 platform/windows/windows_secured_dist/

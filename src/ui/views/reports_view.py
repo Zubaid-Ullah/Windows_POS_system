@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QTableWidget, QTableWidgetItem, QHeaderView, QFrame, 
                              QComboBox, QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QMessageBox)
-from PyQt6.QtCore import Qt, QRectF, QPointF, QStringListModel, QTimer, QVariantAnimation
+from PyQt6.QtCore import Qt, QRectF, QPointF, QStringListModel, QTimer, QVariantAnimation, QThread, pyqtSignal
 
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QRadialGradient, QConicalGradient, QTextDocument, \
     QTextCursor, QTextTable, QTextTableFormat, QPageSize, QPageLayout, QTextCharFormat, QTextLength
@@ -14,6 +14,103 @@ import qtawesome as qta
 from src.ui.table_styles import style_table
 from src.ui.theme_manager import theme_manager
 from src.ui.button_styles import style_button
+
+class ReportsWorker(QThread):
+    data_loaded = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, period="daily"):
+        super().__init__()
+        self.period = period
+
+    def run(self):
+        try:
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Calculate date range based on period
+                if self.period == "daily":
+                    start_date = datetime.now().strftime('%Y-%m-%d')
+                    date_filter = f"DATE(created_at, 'localtime') = '{start_date}'"
+                    period_label = "Today's"
+                elif self.period == "weekly":
+                    start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+                    date_filter = f"DATE(created_at, 'localtime') >= '{start_date}'"
+                    period_label = "This Week's"
+                else:  # monthly
+                    start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+                    date_filter = f"DATE(created_at, 'localtime') >= '{start_date}'"
+                    period_label = "This Month's"
+                
+                # Stats
+                cursor.execute(f"SELECT SUM(total_amount) FROM sales WHERE {date_filter}")
+                sales_val = cursor.fetchone()[0] or 0
+                
+                cursor.execute(f"SELECT COUNT(*) FROM sales WHERE {date_filter}")
+                orders_count = cursor.fetchone()[0] or 0
+                
+                cursor.execute(f"SELECT SUM(si.quantity) FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE {date_filter.replace('created_at', 's.created_at')}")
+                items_count = cursor.fetchone()[0] or 0
+                
+                cursor.execute("SELECT COUNT(*) FROM inventory i JOIN products p ON i.product_id = p.id WHERE i.quantity <= p.min_stock")
+                low_stock_count = cursor.fetchone()[0] or 0
+                
+                cursor.execute(f"SELECT p.name_en, SUM(si.quantity) as total_qty FROM sale_items si JOIN products p ON si.product_id = p.id JOIN sales s ON si.sale_id = s.id WHERE {date_filter.replace('created_at', 's.created_at')} GROUP BY p.name_en ORDER BY total_qty DESC LIMIT 1")
+                top_product = cursor.fetchone()
+                
+                # Mode
+                cursor.execute("SELECT mode FROM system_settings WHERE id = 1")
+                mode_row = cursor.fetchone()
+                is_online = (dict(mode_row)['mode'] == 'ONLINE') if mode_row else False
+
+                # Tables Data (Small samples for dashboard)
+                cursor.execute("SELECT p.name_en, i.quantity, p.min_stock FROM inventory i JOIN products p ON i.product_id = p.id WHERE i.quantity <= p.min_stock LIMIT 5")
+                stock_data = [list(r) for r in cursor.fetchall()]
+
+                cursor.execute(f"SELECT s.invoice_number, s.created_at, IFNULL(c.name_en, 'Walk-in'), (SELECT COUNT(*) FROM sale_items WHERE sale_id = s.id), s.total_amount, s.payment_type FROM sales s LEFT JOIN customers c ON s.customer_id = c.id WHERE {date_filter.replace('created_at', 's.created_at')} ORDER BY s.created_at DESC LIMIT 5")
+                trans_data = [list(r) for r in cursor.fetchall()]
+
+                cursor.execute(f"SELECT si.product_name, SUM(si.quantity), 0, SUM(si.total_price) FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE {date_filter.replace('created_at', 's.created_at')} GROUP BY si.product_id ORDER BY SUM(si.quantity) DESC LIMIT 5")
+                sold_summary_data = [list(r) for r in cursor.fetchall()]
+
+                # P/L
+                cursor.execute(f"SELECT SUM(si.total_price), SUM(si.quantity * p.cost_price) FROM sale_items si JOIN products p ON si.product_id = p.id JOIN sales s ON si.sale_id = s.id WHERE {date_filter.replace('created_at', 's.created_at')}")
+                res = cursor.fetchone()
+                raw_revenue = res[0] or 0
+                raw_cost = res[1] or 0
+
+                returns_filter = date_filter.replace("created_at", "sr.created_at")
+                cursor.execute(f"SELECT SUM(sr.refund_amount) FROM sales_returns sr JOIN sales s ON sr.sale_id = s.id WHERE {returns_filter}")
+                returned_revenue = cursor.fetchone()[0] or 0
+
+                cursor.execute(f"SELECT SUM(ri.quantity * p.cost_price) FROM return_items ri JOIN products p ON ri.product_id = p.id JOIN sales_returns sr ON ri.return_id = sr.id JOIN sales s ON sr.sale_id = s.id WHERE {returns_filter}")
+                returned_cost = cursor.fetchone()[0] or 0
+
+                # Returns Table
+                cursor.execute(f"SELECT sr.created_at, s.invoice_number, p.name_en, ri.quantity, ri.refund_price FROM sales_returns sr JOIN sales s ON sr.sale_id = s.id JOIN return_items ri ON ri.return_id = sr.id JOIN products p ON ri.product_id = p.id WHERE {returns_filter} ORDER BY sr.created_at DESC LIMIT 5")
+                returns_table_data = [list(r) for r in cursor.fetchall()]
+
+                result = {
+                    "sales_val": sales_val,
+                    "orders_count": orders_count,
+                    "items_count": items_count,
+                    "low_stock_count": low_stock_count,
+                    "top_product": top_product,
+                    "is_online": is_online,
+                    "stock_data": stock_data,
+                    "trans_data": trans_data,
+                    "sold_summary_data": sold_summary_data,
+                    "raw_revenue": raw_revenue,
+                    "raw_cost": raw_cost,
+                    "returned_revenue": returned_revenue,
+                    "returned_cost": returned_cost,
+                    "returns_table_data": returns_table_data,
+                    "period_label": period_label,
+                    "date_filter": date_filter
+                }
+                self.data_loaded.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
 
 class StatCard(QFrame):
     def __init__(self, title, value, subtext, icon_name, icon_color):
@@ -187,6 +284,8 @@ class ReportsView(QWidget):
         super().__init__()
         self.current_period = "daily"  # daily, weekly, monthly
         self.last_clear_date = datetime.now().date()
+        self.worker = None
+        self.is_loading = False
         self.init_ui()
         self.load_dashboard_data()
         
@@ -194,10 +293,21 @@ class ReportsView(QWidget):
         self.midnight_timer = QTimer()
         self.midnight_timer.timeout.connect(self.check_midnight)
         self.midnight_timer.start(60000)  # Check every minute
-        # Auto-refresh dashboard periodically so cards update after new sales
+        
+        # Auto-refresh dashboard periodically
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.load_dashboard_data)
-        self.refresh_timer.start(10000)  # refresh every 10 seconds
+        self.refresh_timer.start(15000)  # refresh every 15 seconds
+    
+    def cleanup_thread(self):
+        if self.worker:
+            try:
+                if self.worker.isRunning():
+                    self.worker.quit()
+                    self.worker.wait(500)
+            except RuntimeError:
+                pass
+        self.worker = None
     
     def check_midnight(self):
         """Clear table data at midnight without affecting database"""
@@ -487,206 +597,77 @@ class ReportsView(QWidget):
             self.completer.setModel(QStringListModel(res))
 
     def load_dashboard_data(self):
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Calculate date range based on period
-            if self.current_period == "daily":
-                start_date = datetime.now().strftime('%Y-%m-%d')
-                # Use strict date equality for daily, adjusting for local time
-                date_filter = f"DATE(created_at, 'localtime') = '{start_date}'"
-                period_label = "Today's"
-            elif self.current_period == "weekly":
-                start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-                date_filter = f"DATE(created_at, 'localtime') >= '{start_date}'"
-                period_label = "This Week's"
-            else:  # monthly
-                start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-                date_filter = f"DATE(created_at, 'localtime') >= '{start_date}'"
-                period_label = "This Month's"
-            
-            # Update sales card
-            cursor.execute(f"SELECT SUM(total_amount) FROM sales WHERE {date_filter}")
-            val = cursor.fetchone()[0] or 0
-            self.card_sales.update_data(lang_manager.localize_digits(f"{val:,.0f} AFN"), f"{period_label} Revenue")
-            
-            # Update orders card
-            cursor.execute(f"SELECT COUNT(*) FROM sales WHERE {date_filter.replace('created_at', 'sales.created_at')}")
-            orders_count = cursor.fetchone()[0] or 0
-            
-            # Calculate total items sold
-            join_date_filter = date_filter.replace("created_at", "s.created_at")
-            cursor.execute(f"""
-                SELECT SUM(si.quantity) 
-                FROM sale_items si 
-                JOIN sales s ON si.sale_id = s.id 
-                WHERE {join_date_filter}
-            """)
-            items_count = cursor.fetchone()[0] or 0
-            
-            self.card_orders.update_data(lang_manager.localize_digits(f"{orders_count} orders"), 
-                                       lang_manager.localize_digits(f"{items_count} items sold"))
-            
-            # Update low stock card (Inventory is state-based, not time-based)
-            cursor.execute("SELECT COUNT(*) FROM inventory i JOIN products p ON i.product_id = p.id WHERE i.quantity <= p.min_stock")
-            self.card_stock.update_data(lang_manager.localize_digits(f"{cursor.fetchone()[0]} items"), "Low stock items")
-            
-            # Update top product card
-            cursor.execute(f"""
-                SELECT p.name_en, SUM(si.quantity) as total_qty 
-                FROM sale_items si 
-                JOIN products p ON si.product_id = p.id 
-                JOIN sales s ON si.sale_id = s.id 
-                WHERE {join_date_filter}
-                GROUP BY p.name_en 
-                ORDER BY total_qty DESC LIMIT 1
-            """)
-            top_product = cursor.fetchone()
-            if top_product:
-                self.card_top_product.update_data(top_product[0], f"{int(top_product[1])} sold")
-            else:
-                self.card_top_product.update_data("None", "0 sold")
-            
-            # Check online status logic
-            cursor.execute("SELECT mode FROM system_settings WHERE id = 1")
-            row = cursor.fetchone()
-            if row:
-                self.pie_chart.is_online = (dict(row)['mode'] == 'ONLINE')
-                self.pie_chart.update_data()
-            
-            self.populate_stock_table(cursor)
-            self.populate_trans_table(cursor, date_filter)
-            # Pass date_filter so summaries and P/L are scoped to the selected period
-            # store last filter so other methods can access it if needed
-            self._last_date_filter = date_filter
-            self.populate_sold_summary(cursor, date_filter)
-            self.populate_profit_loss(cursor, date_filter)
-            self.populate_returns_table(cursor, date_filter)
+        if self.is_loading: return
+        self.is_loading = True
+        self.cleanup_thread()
+        
+        self.worker = ReportsWorker(self.current_period)
+        self.worker.data_loaded.connect(self._on_dashboard_data_loaded)
+        self.worker.error.connect(lambda e: print(f"Reports Error: {e}"))
+        self.worker.finished.connect(lambda: setattr(self, 'is_loading', False))
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.start()
 
-    def populate_stock_table(self, cursor):
-        cursor.execute("SELECT p.name_en, i.quantity, p.min_stock FROM inventory i JOIN products p ON i.product_id = p.id WHERE i.quantity <= p.min_stock LIMIT 5")
-        stocks = cursor.fetchall()
+    def _on_dashboard_data_loaded(self, d):
+        # Update Cards
+        self.card_sales.update_data(lang_manager.localize_digits(f"{d['sales_val']:,.0f} AFN"), f"{d['period_label']} Revenue")
+        self.card_orders.update_data(lang_manager.localize_digits(f"{d['orders_count']} orders"), 
+                                   lang_manager.localize_digits(f"{d['items_count']} items sold"))
+        self.card_stock.update_data(lang_manager.localize_digits(f"{d['low_stock_count']} items"), "Low stock items")
+        
+        if d['top_product']:
+            self.card_top_product.update_data(d['top_product'][0], f"{int(d['top_product'][1])} sold")
+        else:
+            self.card_top_product.update_data("None", "0 sold")
+
+        # Update Charts
+        self.pie_chart.is_online = d['is_online']
+        self.pie_chart.update_data()
+        
+        # Update Tables
+        self._last_date_filter = d['date_filter']
+        
+        # Stock Table
         self.stock_table.setRowCount(0)
-        for i, row in enumerate(stocks):
+        for i, row in enumerate(d['stock_data']):
             self.stock_table.insertRow(i)
             self.stock_table.setItem(i, 0, QTableWidgetItem(row[0]))
             self.stock_table.setItem(i, 1, QTableWidgetItem(lang_manager.localize_digits(str(row[1]))))
             self.stock_table.setItem(i, 2, QTableWidgetItem(lang_manager.localize_digits(str(row[2]))))
             self.stock_table.setItem(i, 3, QTableWidgetItem("Low"))
 
-    def populate_trans_table(self, cursor, date_filter=None):
-        where_clause = ""
-        if date_filter:
-            where_clause = f"WHERE {date_filter.replace('created_at', 's.created_at')}"
-            
-        cursor.execute(f"""
-            SELECT s.invoice_number, s.created_at, IFNULL(c.name_en, 'Walk-in'), 
-            (SELECT COUNT(*) FROM sale_items WHERE sale_id = s.id), s.total_amount, 
-            0 as discount_placeholder, s.payment_type 
-            FROM sales s LEFT JOIN customers c ON s.customer_id = c.id 
-            {where_clause}
-            ORDER BY s.created_at DESC LIMIT 5
-        """)
-        trans = cursor.fetchall()
+        # Trans Table
         self.trans_table.setRowCount(0)
-        for i, row in enumerate(trans):
+        for i, row in enumerate(d['trans_data']):
             self.trans_table.insertRow(i)
             self.trans_table.setItem(i, 0, QTableWidgetItem(row[0]))
             self.trans_table.setItem(i, 1, QTableWidgetItem(lang_manager.localize_digits(row[1].split()[-1] if ' ' in row[1] else row[1])))
             self.table_item(self.trans_table, i, 2, row[2])
             self.table_item(self.trans_table, i, 3, lang_manager.localize_digits(str(row[3])))
             self.table_item(self.trans_table, i, 4, lang_manager.localize_digits(f"{row[4]:.2f}"))
-            self.table_item(self.trans_table, i, 5, lang_manager.localize_digits("0.00")) # Placeholder for discount logic
-            self.table_item(self.trans_table, i, 6, row[6])
+            self.table_item(self.trans_table, i, 5, lang_manager.localize_digits("0.00")) 
+            self.table_item(self.trans_table, i, 6, row[5])
 
-    def populate_sold_summary(self, cursor, date_filter=None):
-        # Limit sold summary to the current period when date_filter is provided
-        # date_filter is generated in load_dashboard_data and references a generic created_at
-        sales_filter = None
-        if date_filter:
-            # qualify created_at with sales table alias
-            sales_filter = date_filter.replace("created_at", "s.created_at")
-            where_clause = f"WHERE {sales_filter}"
-        else:
-            where_clause = ""
-
-        cursor.execute(f"""
-            SELECT si.product_name, SUM(si.quantity) as qty, 0 as discount, SUM(si.total_price) as total
-            FROM sale_items si
-            JOIN sales s ON si.sale_id = s.id
-            {where_clause}
-            GROUP BY si.product_id
-            ORDER BY SUM(si.quantity) DESC LIMIT 5
-        """)
-        
-        rows = cursor.fetchall()
+        # Sold Summary
         self.sold_summary_table.setRowCount(0)
-        for i, row in enumerate(rows):
+        for i, row in enumerate(d['sold_summary_data']):
             self.sold_summary_table.insertRow(i)
             self.sold_summary_table.setItem(i, 0, QTableWidgetItem(row[0]))
             self.sold_summary_table.setItem(i, 1, QTableWidgetItem(lang_manager.localize_digits(str(row[1]))))
             self.sold_summary_table.setItem(i, 2, QTableWidgetItem(lang_manager.localize_digits(f"{row[2]:.2f}")))
             self.sold_summary_table.setItem(i, 3, QTableWidgetItem(lang_manager.localize_digits(f"{row[3]:.2f}")))
 
-    def populate_profit_loss(self, cursor, date_filter=None):
-        # Scope revenue and cost to selected period
-        sales_filter = None
-        if date_filter:
-            sales_filter = date_filter.replace("created_at", "s.created_at")
-            where_clause = f"WHERE {sales_filter}"
-        else:
-            where_clause = ""
-
-        cursor.execute(f"""
-            SELECT 
-                SUM(si.total_price) as total_revenue,
-                SUM(si.quantity * p.cost_price) as total_cost
-            FROM sale_items si
-            JOIN products p ON si.product_id = p.id
-            JOIN sales s ON si.sale_id = s.id
-            {where_clause}
-        """)
-        res = cursor.fetchone()
-        raw_revenue = res[0] or 0
-        raw_cost = res[1] or 0
-
-        # Deduct returns (scope by sales_returns.created_at when a filter is present)
-        if date_filter:
-            returns_filter = date_filter.replace("created_at", "sr.created_at")
-            cursor.execute(f"SELECT SUM(sr.refund_amount) FROM sales_returns sr JOIN sales s ON sr.sale_id = s.id WHERE {returns_filter}")
-        else:
-            cursor.execute("SELECT SUM(refund_amount) FROM sales_returns")
-        returned_revenue = cursor.fetchone()[0] or 0
-
-        if date_filter:
-            cursor.execute(f"""
-                SELECT SUM(ri.quantity * p.cost_price) 
-                FROM return_items ri 
-                JOIN products p ON ri.product_id = p.id
-                JOIN sales_returns sr ON ri.return_id = sr.id
-                JOIN sales s ON sr.sale_id = s.id
-                WHERE {returns_filter}
-            """)
-        else:
-            cursor.execute("""
-                SELECT SUM(ri.quantity * p.cost_price) 
-                FROM return_items ri 
-                JOIN products p ON ri.product_id = p.id
-            """)
-        returned_cost = cursor.fetchone()[0] or 0
-        
-        revenue = raw_revenue - returned_revenue
-        cost = raw_cost - returned_cost
+        # P/L
+        revenue = d['raw_revenue'] - d['returned_revenue']
+        cost = d['raw_cost'] - d['returned_cost']
         profit = revenue - cost
-        
         metrics = [
             ("Total Sales (Net)", revenue),
             ("Total Cost (Net)", cost),
-            ("Total Returns", returned_revenue),
+            ("Total Returns", d['returned_revenue']),
             ("Gross Profit", profit),
             ("Net Margin (%)", (profit/revenue*100) if revenue > 0 else 0)
         ]
-        
         self.pl_table.setRowCount(0)
         for i, (label, val) in enumerate(metrics):
             self.pl_table.insertRow(i)
@@ -694,31 +675,9 @@ class ReportsView(QWidget):
             suffix = "%" if "Margin" in label else ""
             self.pl_table.setItem(i, 1, QTableWidgetItem(lang_manager.localize_digits(f"{val:.2f}{suffix}")))
 
-    def populate_returns_table(self, cursor, date_filter=None):
-        # Scope recent returns to the selected period when provided
-        if date_filter:
-            returns_filter = date_filter.replace("created_at", "sr.created_at")
-            cursor.execute(f"""
-                SELECT sr.created_at, s.invoice_number, p.name_en, ri.quantity, ri.refund_price
-                FROM sales_returns sr
-                JOIN sales s ON sr.sale_id = s.id
-                JOIN return_items ri ON ri.return_id = sr.id
-                JOIN products p ON ri.product_id = p.id
-                WHERE {returns_filter}
-                ORDER BY sr.created_at DESC LIMIT 5
-            """)
-        else:
-            cursor.execute("""
-                SELECT sr.created_at, s.invoice_number, p.name_en, ri.quantity, ri.refund_price
-                FROM sales_returns sr
-                JOIN sales s ON sr.sale_id = s.id
-                JOIN return_items ri ON ri.return_id = sr.id
-                JOIN products p ON ri.product_id = p.id
-                ORDER BY sr.created_at DESC LIMIT 5
-            """)
-        rows = cursor.fetchall()
+        # Returns Table
         self.returns_table.setRowCount(0)
-        for i, row in enumerate(rows):
+        for i, row in enumerate(d['returns_table_data']):
             self.returns_table.insertRow(i)
             self.returns_table.setItem(i, 0, QTableWidgetItem(lang_manager.localize_digits(row[0].split()[-1] if ' ' in row[0] else row[0])))
             self.returns_table.setItem(i, 1, QTableWidgetItem(row[1]))

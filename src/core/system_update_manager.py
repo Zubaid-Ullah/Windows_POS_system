@@ -16,118 +16,58 @@ class SystemUpdateManager(QObject):
     def __init__(self):
         super().__init__()
         self.update_timer = QTimer(self)
-        self.update_timer.setInterval(30000)  # Check for updates every 30 seconds
+        self.update_timer.setInterval(60000)  # Check every 60 seconds (less frequent)
         self.update_timer.timeout.connect(self.check_for_updates)
         self.update_timer.start()
 
-        self.last_update_check = 0
-        self.module_cache = {}
+        self.last_theme_hash = None
+        self.last_lang_hash = None
+        self.is_checking = False
 
     def check_for_updates(self):
-        """Check for system updates and apply them"""
-        try:
-            # Check database for new configurations
-            self.refresh_database_cache()
+        """Check for system updates and apply them asynchronously"""
+        if self.is_checking: return
+        self.is_checking = True
+        
+        from src.core.blocking_task_manager import task_manager
+        
+        def background_check():
+            try:
+                # 1. Check DB connection
+                with db_manager.get_connection() as conn:
+                    conn.execute("SELECT 1").fetchone()
+                
+                # 2. Check for theme/config changes (stub for actual hash check if needed)
+                # For now, let's just assume we only refresh if something truly changed
+                # or provide a way to trigger it.
+                return True
+            except Exception as e:
+                return str(e)
 
-            # Check for UI theme updates
-            self.refresh_theme_settings()
+        def on_finished(result):
+            self.is_checking = False
+            if result is True:
+                # Only perform UI refreshes if absolutely necessary 
+                # (Removing the heavy 30s re-applications that hung the GUI)
+                pass 
+            else:
+                self.update_failed.emit(f"Update background check failed: {result}")
 
-            # Check for localization updates
-            self.refresh_localization()
+        task_manager.run_task(background_check, on_finished=on_finished)
 
-            # Check for user permissions updates
-            self.refresh_user_permissions()
-
-        except Exception as e:
-            self.update_failed.emit(f"Update check failed: {str(e)}")
-
-    def refresh_database_cache(self):
-        """Refresh database connections and cached data"""
-        try:
-            # Test database connection
-            with db_manager.get_connection() as conn:
-                conn.execute("SELECT 1").fetchone()
-
-            # Refresh any cached data if needed
-            self.update_completed.emit("Database cache refreshed")
-
-        except Exception as e:
-            self.update_failed.emit(f"Database refresh failed: {str(e)}")
-
-    def refresh_theme_settings(self):
-        """Refresh theme settings without restart"""
+    def force_full_refresh(self):
+        """Force a complete system refresh - only call when user explicitly requests or on critical change"""
         try:
             from src.ui.theme_manager import theme_manager
-            # Reload theme settings from database or config
-            theme_manager.apply_theme()
-            self.update_completed.emit("Theme settings refreshed")
-
-        except Exception as e:
-            self.update_failed.emit(f"Theme refresh failed: {str(e)}")
-
-    def refresh_localization(self):
-        """Refresh localization settings"""
-        try:
             from src.core.localization import lang_manager
-            # Reapply current language settings
-            lang_manager.apply_language()
-            self.update_completed.emit("Localization refreshed")
-
-        except Exception as e:
-            self.update_failed.emit(f"Localization refresh failed: {str(e)}")
-
-    def refresh_user_permissions(self):
-        """Refresh user permissions cache"""
-        try:
             from src.core.auth import Auth
             from src.core.pharmacy_auth import PharmacyAuth
 
-            # Clear any cached permissions
-            if hasattr(Auth, '_permission_cache'):
-                Auth._permission_cache.clear()
+            theme_manager.apply_theme()
+            lang_manager.apply_language()
 
-            if hasattr(PharmacyAuth, '_permission_cache'):
-                PharmacyAuth._permission_cache.clear()
-
-            self.update_completed.emit("User permissions refreshed")
-
-        except Exception as e:
-            self.update_failed.emit(f"Permissions refresh failed: {str(e)}")
-
-    def reload_module(self, module_name):
-        """Reload a specific Python module"""
-        try:
-            if module_name in sys.modules:
-                importlib.reload(sys.modules[module_name])
-                self.update_completed.emit(f"Module {module_name} reloaded")
-                return True
-            else:
-                self.update_failed.emit(f"Module {module_name} not found")
-                return False
-
-        except Exception as e:
-            self.update_failed.emit(f"Module reload failed: {str(e)}")
-            return False
-
-    def force_full_refresh(self):
-        """Force a complete system refresh"""
-        try:
-            # Refresh all components
-            self.refresh_database_cache()
-            self.refresh_theme_settings()
-            self.refresh_localization()
-            self.refresh_user_permissions()
-
-            # Reload critical UI modules
-            critical_modules = [
-                'src.ui.theme_manager',
-                'src.core.localization',
-                'src.core.auth',
-                'src.core.pharmacy_auth'
-            ]
-
-            for module in critical_modules:
-                self.reload_module(module)
+            if hasattr(Auth, '_permission_cache'): Auth._permission_cache.clear()
+            if hasattr(PharmacyAuth, '_permission_cache'): PharmacyAuth._permission_cache.clear()
 
             self.update_completed.emit("Full system refresh completed")
 
@@ -135,11 +75,9 @@ class SystemUpdateManager(QObject):
             self.update_failed.emit(f"Full refresh failed: {str(e)}")
 
     def stop_auto_updates(self):
-        """Stop automatic update checks"""
         self.update_timer.stop()
 
     def start_auto_updates(self):
-        """Start automatic update checks"""
         self.update_timer.start()
 
 # Global instance

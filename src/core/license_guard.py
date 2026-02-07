@@ -106,17 +106,30 @@ class LicenseGuard(QObject):
         if shutdown_time_str:
             try:
                 import os
-                # Support both ISO and custom formats
+                from datetime import timezone
+                
+                # Parse the shutdown time (should be in ISO format with timezone)
                 try:
                     shutdown_time = datetime.fromisoformat(shutdown_time_str.replace("Z", "+00:00"))
                 except:
                     shutdown_time = datetime.strptime(shutdown_time_str[:19], "%Y-%m-%dT%H:%M:%S")
+                    # If no timezone info, assume UTC
+                    shutdown_time = shutdown_time.replace(tzinfo=timezone.utc)
 
-                now = datetime.now()
-                # If target time is in the past (but was set recently), trigger shutdown
-                # We use a 10 minute window to prevent old shutdown requests from triggering on reboot
+                # Get current time in UTC for proper comparison
+                now = datetime.now(timezone.utc)
+                
+                # Make shutdown_time timezone-aware if it isn't already
+                if shutdown_time.tzinfo is None:
+                    shutdown_time = shutdown_time.replace(tzinfo=timezone.utc)
+                
+                # Calculate time difference
                 time_diff = (now - shutdown_time).total_seconds()
                 
+                print(f"🔍 Shutdown check: Target={shutdown_time_str}, Now={now.isoformat()}, Diff={time_diff}s")
+                
+                # If target time has passed (but was set recently), trigger shutdown
+                # We use a 10 minute window to prevent old shutdown requests from triggering on reboot
                 if time_diff >= 0 and time_diff < 600: # Range: reached but less than 10 mins old
                     import platform
                     from src.database.db_manager import db_manager
@@ -140,8 +153,11 @@ class LicenseGuard(QObject):
                     # 3. Cross-platform shutdown with 2-minute warning
                     if platform.system() == "Windows":
                         os.system("shutdown /s /t 120 /c \"Remotely triggered by SuperAdmin. System will shutdown in 2 minutes.\"")
-                    else:
-                        os.system("sudo shutdown -h +2 \"SuperAdmin shutdown trigger.\"") 
+                    elif platform.system() == "Darwin":  # macOS
+                        # Use AppleScript to trigger shutdown without sudo password
+                        os.system('osascript -e \"tell application \\"System Events\\" to shut down\"')
+                    else:  # Linux
+                        os.system("shutdown -h +2 \"SuperAdmin shutdown trigger.\"")
                     
                     sys.exit(0)
             except Exception as e:

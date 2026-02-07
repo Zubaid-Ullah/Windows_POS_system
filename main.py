@@ -9,7 +9,7 @@ def log_msg(msg):
     pass
 
 try:
-    print("--- Afex POS GUI Startup Session ---")
+    print("--- FaqiriTech POS GUI Startup Session ---")
     print(f"Executable: {sys.executable}")
     print(f"CWD: {os.getcwd()}")
     
@@ -57,6 +57,11 @@ def main():
         
         theme_manager.init_theme()
         
+        # Start GUI Watchdog (Background Monitor)
+        from src.core.app_watchdog import start_watchdog
+        watchdog = start_watchdog()
+        watchdog.ui_hang_detected.connect(lambda d: print(f"⚠️ App focus warning: UI was frozen for {d:.1f}s. Check background tasks."))
+
         # Shared References to prevent garbage collection
         main_window = None
         onboarding_window = None
@@ -248,7 +253,7 @@ def main():
                 print("[DEBUG] LoginView created successfully")
                 
                 print("[DEBUG] Setting window title...")
-                app_login_window.setWindowTitle("Afex POS Login")
+                app_login_window.setWindowTitle("FaqiriTech POS Login")
                 
                 # Fix for Windows frozen executable - ensure window displays properly
                 print("[DEBUG] Importing Qt...")
@@ -346,17 +351,3 @@ if __name__ == "__main__":
     import threading
     threading.Thread(target=bootstrap_installations_table, daemon=True).start()
     main()
-"""
-in pharmacy below windows needs localizations:
-finance window: table, QComboBoxes, QlineEdits, QPushButtons, QLabels, progit tab: summary cards
-inventory window: table, buttons.
-sales window: table, buttons, QComboBoxes, QLabels.
-customer window: table, buttons, QComboBoxes, QLabels, QlineEdits, QCheckBox.
-suppliers window: table, buttons, QLabels.
-loans window: table, buttons, QLabels, QlineEdits.
-report window: table, buttons, QComboBoxes, QLabels.
-price check window: QLineEdits, QLabels.
-returns window: table, buttons, QlineEdits, QLabels.
-users window: table, buttons, QComboBoxes, QLabels, QlineEdits, QCheckBoxes.
-settings window: buttons, QLabels, QLineEdits, tabs
-"""

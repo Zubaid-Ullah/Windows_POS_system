@@ -11,7 +11,7 @@ PLATFORM_DIR = Path(__file__).parent.parent.absolute()
 SECURED_DIR = PLATFORM_DIR / "windows_secured_dist"
 BUILD_TEMP_DIR = PLATFORM_DIR / "windows_build_temp"
 FINAL_DIST_DIR = PLATFORM_DIR / "windows_exe_dist"
-APP_NAME = "AfexPOS"
+APP_NAME = "FaqiriTechPOS"
 
 def print_step(msg):
     print(f"\n🪟 {msg}")
