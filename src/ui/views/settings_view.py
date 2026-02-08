@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
                              QPushButton, QLabel, QFrame, QComboBox, QMessageBox, QFileDialog, QGridLayout,
                              QTabWidget, QGroupBox, QFormLayout, QTextEdit, QScrollArea, QCheckBox)
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap, QImage
 import qtawesome as qta
 import qrcode
@@ -16,38 +16,9 @@ from src.core.autostart_helper import AutoStartHelper
 import os
 import platform
 
-class SettingsSyncWorker(QThread):
-    finished = pyqtSignal(bool, dict) # success, data
-    saved = pyqtSignal(bool)
-
-    def __init__(self, task="load", sid=None, payload=None):
-        super().__init__()
-        self.task = task
-        self.sid = sid
-        self.payload = payload
-
-    def run(self):
-        try:
-            if self.task == "load":
-                if supabase_manager.check_connection():
-                    data = supabase_manager.get_installation_status(self.sid)
-                    self.finished.emit(True, data if data else {})
-                else:
-                    self.finished.emit(False, {})
-            elif self.task == "sync":
-                if supabase_manager.check_connection():
-                    success = supabase_manager.update_company_details(self.sid, self.payload)
-                    self.saved.emit(success)
-                else:
-                    self.saved.emit(False)
-        except Exception as e:
-            print(f"SettingsSyncWorker Error: {e}")
-            self.finished.emit(False, {})
-
 class SettingsView(QWidget):
     def __init__(self):
         super().__init__()
-        self.sync_thread = None
         self.is_syncing = False
         self.init_ui()
         
@@ -56,15 +27,6 @@ class SettingsView(QWidget):
         self.sync_timer.timeout.connect(self.check_and_sync_online)
         self.sync_timer.start(30000) # Every 30 seconds
 
-    def cleanup_thread(self):
-        if self.sync_thread:
-            try:
-                if self.sync_thread.isRunning():
-                    self.sync_thread.quit()
-                    self.sync_thread.wait(500)
-            except RuntimeError:
-                pass
-        self.sync_thread = None
 
     def create_card(self, title, icon_name):
         card = QFrame()
@@ -425,11 +387,23 @@ class SettingsView(QWidget):
             # Cloud update logic (Asynchronous)
             sid = local_config.get("system_id")
             if sid:
-                self.cleanup_thread()
-                self.sync_thread = SettingsSyncWorker(task="load", sid=sid)
-                self.sync_thread.finished.connect(self._on_online_settings_loaded)
-                self.sync_thread.finished.connect(self.sync_thread.deleteLater)
-                self.sync_thread.start()
+                from src.core.blocking_task_manager import task_manager
+                
+                def load_from_cloud():
+                    try:
+                        if supabase_manager.check_connection():
+                            data = supabase_manager.get_installation_status(sid)
+                            return {"success": True, "data": data if data else {}}
+                        return {"success": False, "data": {}}
+                    except Exception as e:
+                        print(f"Cloud load error: {e}")
+                        return {"success": False, "data": {}}
+                
+                def on_load_finished(result):
+                    self._on_online_settings_loaded(result["success"], result["data"])
+                
+                task_manager.run_task(load_from_cloud, on_finished=on_load_finished)
+
 
         except Exception as e:
             print(f"Error loading company settings: {e}")
@@ -491,11 +465,24 @@ class SettingsView(QWidget):
                 }
                 
                 self.is_syncing = True
-                self.cleanup_thread()
-                self.sync_thread = SettingsSyncWorker(task="sync", sid=sid, payload=payload)
-                self.sync_thread.saved.connect(lambda s: setattr(self, 'is_syncing', False))
-                self.sync_thread.finished.connect(self.sync_thread.deleteLater)
-                self.sync_thread.start()
+                
+                def sync_to_cloud():
+                    try:
+                        if supabase_manager.check_connection():
+                            return supabase_manager.update_company_details(sid, payload)
+                        return False
+                    except Exception as e:
+                        print(f"Cloud sync error: {e}")
+                        return False
+                
+                def on_sync_finished(success):
+                    self.is_syncing = False
+                    if not silent and success:
+                        # Only show message if explicitly saving (not auto-sync)
+                        pass
+                
+                task_manager.run_task(sync_to_cloud, on_finished=on_sync_finished)
+
 
             # Auto-update QR
             self.generate_whatsapp_qr(auto=True)

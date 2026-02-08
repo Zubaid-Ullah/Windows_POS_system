@@ -125,28 +125,24 @@ class CredentialsView(QWidget):
         self.table.setItem(0, 0, loading_item)
         self.table.setSpan(0, 0, 1, 7)
 
-        from PyQt6.QtCore import QThread, pyqtSignal
-        class FetchWorker(QThread):
-            data_received = pyqtSignal(list)
-            error_occurred = pyqtSignal(str)
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_installations():
+            try:
+                res = self.supabase.table("installations").select("*").order("installation_time", desc=True).execute()
+                return {"success": True, "data": res.data or []}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        def on_finished(result):
+            if result["success"]:
+                self._populate_table(result["data"])
+            else:
+                print(f"Fetch Error: {result['error']}")
+                self.table.setRowCount(0)
+        
+        task_manager.run_task(fetch_installations, on_finished=on_finished)
 
-            def __init__(self, supabase_client, parent=None):
-                super().__init__(parent)
-                self._supabase = supabase_client
-
-            def run(self):
-                try:
-                    # According to register_installation.py order by installation_time DESC
-                    res = self._supabase.table("installations").select("*").order("installation_time", desc=True).execute()
-                    self.data_received.emit(res.data or [])
-                except Exception as e:
-                    self.error_occurred.emit(str(e))
-
-        self.fetch_worker = FetchWorker(self.supabase)
-        self.fetch_worker.data_received.connect(self._populate_table)
-        self.fetch_worker.error_occurred.connect(lambda e: print(f"Fetch Error: {e}"))
-        self.fetch_worker.finished.connect(self.fetch_worker.deleteLater)
-        self.fetch_worker.start()
 
     def _verify_key_async(self, key, on_done):
         from src.core.blocking_task_manager import task_manager
@@ -232,32 +228,27 @@ class CredentialsView(QWidget):
             QMessageBox.critical(self, "Access Denied", "Invalid Secret Key.")
             return
 
-        from PyQt6.QtCore import QThread, pyqtSignal
+        from src.core.blocking_task_manager import task_manager
         from src.core.supabase_manager import supabase_manager
-
-        class AbortWorker(QThread):
-            success = pyqtSignal(str)
-            error = pyqtSignal(str)
-            
-            def __init__(self, system_id):
-                super().__init__()
-                self.system_id = system_id
-            
-            def run(self):
-                try:
-                    ok = supabase_manager.update_company_details(self.system_id, {"shutdown_time": None})
-                    if ok:
-                        self.success.emit(f"Remote shutdown for {self.system_id} has been cancelled.")
-                    else:
-                        self.error.emit("Cloud update failed (check service role key / RLS).")
-                except Exception as e:
-                    self.error.emit(str(e))
         
-        self.abort_thread = AbortWorker(system_id)
-        self.abort_thread.success.connect(lambda msg: self._on_abort_success(msg))
-        self.abort_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Failed to abort: {err}"))
-        self.abort_thread.finished.connect(self.abort_thread.deleteLater)
-        self.abort_thread.start()
+        def abort_shutdown():
+            try:
+                ok = supabase_manager.update_company_details(system_id, {"shutdown_time": None})
+                if ok:
+                    return {"success": True, "message": f"Remote shutdown for {system_id} has been cancelled."}
+                else:
+                    return {"success": False, "error": "Cloud update failed (check service role key / RLS / Missing Columns)."}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        def on_finished(result):
+            if result["success"]:
+                self._on_abort_success(result["message"])
+            else:
+                QMessageBox.critical(self, "Error", f"Failed to abort: {result['error']}")
+        
+        task_manager.run_task(abort_shutdown, on_finished=on_finished)
+
     
     def _on_abort_success(self, message):
         QMessageBox.information(self, "Cancelled", message)
@@ -298,32 +289,27 @@ class CredentialsView(QWidget):
             target_time = f"IN_MINUTES:{minutes}"
             
             # Move Supabase update to background thread
-            from PyQt6.QtCore import QThread, pyqtSignal
+            from src.core.blocking_task_manager import task_manager
             from src.core.supabase_manager import supabase_manager
-            class ShutdownScheduler(QThread):
-                success = pyqtSignal(str)
-                error = pyqtSignal(str)
-                
-                def __init__(self, system_id, target_time):
-                    super().__init__()
-                    self.system_id = system_id
-                    self.target_time = target_time
-                
-                def run(self):
-                    try:
-                        ok = supabase_manager.update_company_details(self.system_id, {"shutdown_time": self.target_time})
-                        if ok:
-                            self.success.emit(f"Shutdown scheduled for {self.system_id} in {minutes} minutes.")
-                        else:
-                            self.error.emit("Cloud update failed (check service role key / RLS).")
-                    except Exception as e:
-                        self.error.emit(str(e))
             
-            self.shutdown_thread = ShutdownScheduler(system_id, target_time)
-            self.shutdown_thread.success.connect(lambda msg: self._on_shutdown_scheduled(msg))
-            self.shutdown_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
-            self.shutdown_thread.finished.connect(self.shutdown_thread.deleteLater)
-            self.shutdown_thread.start()
+            def schedule_shutdown():
+                try:
+                    ok = supabase_manager.update_company_details(system_id, {"shutdown_time": target_time})
+                    if ok:
+                        return {"success": True, "message": f"Shutdown scheduled for {system_id} in {minutes} minutes."}
+                    else:
+                        return {"success": False, "error": "Cloud update failed (check service role key / RLS / Missing Columns)."}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+            
+            def on_finished(result):
+                if result["success"]:
+                    self._on_shutdown_scheduled(result["message"])
+                else:
+                    QMessageBox.critical(self, "Error", f"Update failed: {result['error']}")
+            
+            task_manager.run_task(schedule_shutdown, on_finished=on_finished)
+
     
     def _on_shutdown_scheduled(self, message):
         QMessageBox.information(self, "Success", message)
@@ -359,32 +345,27 @@ class CredentialsView(QWidget):
             new_date = cal.selectedDate().toString("yyyy-MM-dd")
             
             # Move to background thread
-            from PyQt6.QtCore import QThread, pyqtSignal
+            from src.core.blocking_task_manager import task_manager
             from src.core.supabase_manager import supabase_manager
-            class ExtendWorker(QThread):
-                success = pyqtSignal(str, str)
-                error = pyqtSignal(str)
-                
-                def __init__(self, system_id, new_date):
-                    super().__init__()
-                    self.system_id = system_id
-                    self.new_date = new_date
-                
-                def run(self):
-                    try:
-                        ok = supabase_manager.update_company_details(self.system_id, {"contract_expiry": self.new_date})
-                        if ok:
-                            self.success.emit(self.system_id, self.new_date)
-                        else:
-                            self.error.emit("Cloud update failed (check service role key / RLS).")
-                    except Exception as e:
-                        self.error.emit(str(e))
             
-            self.extend_thread = ExtendWorker(system_id, new_date)
-            self.extend_thread.success.connect(lambda sid, date: self._on_extend_success(sid, date))
-            self.extend_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
-            self.extend_thread.finished.connect(self.extend_thread.deleteLater)
-            self.extend_thread.start()
+            def extend_contract():
+                try:
+                    ok = supabase_manager.update_company_details(system_id, {"contract_expiry": new_date})
+                    if ok:
+                        return {"success": True, "system_id": system_id, "new_date": new_date}
+                    else:
+                        return {"success": False, "error": "Cloud update failed (check service role key / RLS / Missing Columns)."}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+            
+            def on_finished(result):
+                if result["success"]:
+                    self._on_extend_success(result["system_id"], result["new_date"])
+                else:
+                    QMessageBox.critical(self, "Error", f"Update failed: {result['error']}")
+            
+            task_manager.run_task(extend_contract, on_finished=on_finished)
+
     
     def _on_extend_success(self, system_id, new_date):
         QMessageBox.information(self, "Success", f"Contract for {system_id} extended to {new_date}")
@@ -418,32 +399,27 @@ class CredentialsView(QWidget):
         
         if confirm == QMessageBox.StandardButton.Yes:
             # Move to background thread
-            from PyQt6.QtCore import QThread, pyqtSignal
+            from src.core.blocking_task_manager import task_manager
             from src.core.supabase_manager import supabase_manager
-            class StatusToggleWorker(QThread):
-                success = pyqtSignal(str, str)
-                error = pyqtSignal(str)
-                
-                def __init__(self, system_id, new_status):
-                    super().__init__()
-                    self.system_id = system_id
-                    self.new_status = new_status
-                
-                def run(self):
-                    try:
-                        ok = supabase_manager.update_company_details(self.system_id, {"status": self.new_status})
-                        if ok:
-                            self.success.emit(self.system_id, self.new_status)
-                        else:
-                            self.error.emit("Cloud update failed (check service role key / RLS).")
-                    except Exception as e:
-                        self.error.emit(str(e))
             
-            self.toggle_thread = StatusToggleWorker(system_id, new_status)
-            self.toggle_thread.success.connect(lambda sid, status: self._on_toggle_success(sid, status))
-            self.toggle_thread.error.connect(lambda err: QMessageBox.critical(self, "Error", f"Update failed: {err}"))
-            self.toggle_thread.finished.connect(self.toggle_thread.deleteLater)
-            self.toggle_thread.start()
+            def toggle_status():
+                try:
+                    ok = supabase_manager.update_company_details(system_id, {"status": new_status})
+                    if ok:
+                        return {"success": True, "system_id": system_id, "new_status": new_status}
+                    else:
+                        return {"success": False, "error": "Cloud update failed (check service role key / RLS / Missing Columns)."}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+            
+            def on_finished(result):
+                if result["success"]:
+                    self._on_toggle_success(result["system_id"], result["new_status"])
+                else:
+                    QMessageBox.critical(self, "Error", f"Update failed: {result['error']}")
+            
+            task_manager.run_task(toggle_status, on_finished=on_finished)
+
     
     def _on_toggle_success(self, system_id, new_status):
         QMessageBox.information(self, "Success", f"System {system_id} is now {new_status}")

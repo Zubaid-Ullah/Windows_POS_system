@@ -121,7 +121,6 @@ def main():
             if launching_main_app:
                 return
             launching_main_app = True
-            if app_login_window: app_login_window.close()
             
             # Smart Module Selection: If default mode is deactivated, pick the other one
             store_on = local_config.get("store_active", True)
@@ -132,126 +131,160 @@ def main():
             elif mode == "PHARMACY" and not pharmacy_on:
                 if store_on: mode = "STORE"
 
+            def proceed_to_launch():
+                nonlocal main_window, launching_main_app
+                try:
+                    print(f"[INFO] Launching Main POS Interface (Mode: {mode})...")
+                    main_window = MainWindow()
+                    main_window.set_modules_visibility(store_on, pharmacy_on)
+                    main_window.show_main_app(mode)
+                    main_window.show()
+                    
+                    # Close login window ONLY after main window is visible
+                    if app_login_window: 
+                        app_login_window.close()
+                except Exception as e:
+                    print(f"[ERROR] Failed to launch main app: {e}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    launching_main_app = False
+
             if role != "superadmin":
-                if not check_contract_validity():
-                    print("[WARNING] Contract expired. Auto-login disabled.")
-                    show_app_login()
-                    return
-                
-            nonlocal main_window
-            print(f"[INFO] Launching Main POS Interface (Mode: {mode})...")
-            main_window = MainWindow()
-            main_window.set_modules_visibility(store_on, pharmacy_on)
-            main_window.show_main_app(mode)
-            main_window.show()
-            launching_main_app = False
-
-        def check_contract_validity():
-            try:
-                with db_manager.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT value FROM app_settings WHERE key = 'contract_end'")
-                    row = cursor.fetchone()
-                    if row:
-                        contract_end_str = row['value']
-                        try:
-                            contract_end = datetime.strptime(contract_end_str, '%Y-%m-%d')
-                            if datetime.now() > contract_end:
-                                return False
-                        except:
-                            return False
+                def on_contract_checked(is_valid):
+                    if not is_valid:
+                        print("[WARNING] Contract expired. Auto-login disabled.")
+                        show_app_login()
+                        nonlocal launching_main_app
+                        launching_main_app = False
                     else:
-                        return False
-                return True
-            except Exception as e:
-                print(f"Contract check warning: {e}")
-                return False
+                        proceed_to_launch()
+                
+                check_contract_validity_async(on_contract_checked)
+            else:
+                proceed_to_launch()
 
-        def verify_local_data_integrity():
-            try:
-                with db_manager.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT value FROM app_settings WHERE key = 'company_name'")
-                    if not cursor.fetchone():
+
+
+        def check_contract_validity_async(on_finished):
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_check():
+                try:
+                    with db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT value FROM app_settings WHERE key = 'contract_end'")
+                        row = cursor.fetchone()
+                        if row:
+                            contract_end_str = row['value']
+                            try:
+                                contract_end = datetime.strptime(contract_end_str, '%Y-%m-%d')
+                                return datetime.now() <= contract_end
+                            except:
+                                return False
                         return False
-                return True
-            except Exception as e:
-                print(f"[WARNING] DB Integrity Check Failed: {e}")
-                return False
+                except Exception as e:
+                    print(f"Contract check warning: {e}")
+                    return False
+            
+            task_manager.run_task(do_check, on_finished=on_finished)
+
+        def verify_local_data_integrity_async(on_finished):
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_check():
+                try:
+                    with db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT value FROM app_settings WHERE key = 'company_name'")
+                        return cursor.fetchone() is not None
+                except Exception as e:
+                    print(f"[WARNING] DB Integrity Check Failed: {e}")
+                    return False
+            
+            task_manager.run_task(do_check, on_finished=on_finished)
+
         def on_internet_gate_resolved(online):
             try:
                 print("="*60)
                 print(f"[DEBUG] Gate resolve sequence START: online={online}")
-                print(f"[DEBUG] Checking local registration...")
-                is_registered_local = local_config.is_registered() and verify_local_data_integrity()
-                print(f"[DEBUG] is_registered_local={is_registered_local}")
-                sid = local_config.get("system_id")
-                print(f"[DEBUG] system_id={sid}")
+                
+                def proceed_with_integrity(is_integrity_ok):
+                    is_registered_local = local_config.is_registered() and is_integrity_ok
+                    print(f"[DEBUG] is_registered_local={is_registered_local}")
+                    sid = local_config.get("system_id")
+                    print(f"[DEBUG] system_id={sid}")
 
-                if not online:
-                    print("[DEBUG] Offline mode detected")
-                    if is_registered_local:
-                        print("[DEBUG] Calling jump_to_app() for offline registered user")
-                        jump_to_app()
-                        return
-                    else:
-                        print("[DEBUG] No local registration, showing activation required message")
-                        QMessageBox.critical(None, "Activation Required", "Internet required for first-time activation.")
-                        sys.exit()
-
-                def check_cloud():
-                    try:
-                        print(f"[DEBUG] Calling supabase_manager.get_installation_status({sid})")
-                        return supabase_manager.get_installation_status(sid)
-                    except Exception as e:
-                        print(f"[DEBUG] Supabase check failed: {e}")
-                        return None
-
-                def on_cloud_check_finished(cloud_record):
-                    if not cloud_record:
-                        print("[DEBUG] No cloud record found")
+                    if not online:
+                        print("[DEBUG] Offline mode detected")
                         if is_registered_local:
-                            print("[DEBUG] Calling jump_to_app() for locally registered user")
+                            print("[DEBUG] Calling jump_to_app() for offline registered user")
                             jump_to_app()
-                        else:
-                            print("[DEBUG] Calling show_registration_stepper()")
-                            show_registration_stepper()
-                    else:
-                        print("[DEBUG] Cloud record found, processing...")
-                        status = cloud_record.get('status', 'active')
-                        print(f"[DEBUG] Account status={status}")
-                        if status == 'deactivated':
-                            print("[DEBUG] Account deactivated, showing locked screen")
-                            show_locked_screen(cloud_record)
                             return
+                        else:
+                            print("[DEBUG] No local registration, showing activation required message")
+                            QMessageBox.critical(None, "Activation Required", "Internet required for first-time activation.")
+                            sys.exit()
 
-                        print("[DEBUG] Setting local config...")
-                        local_config.set("account_created", True)
-                        local_config.set("status", status)
-                        
-                        # Store modular activation flags
-                        store_active = cloud_record.get('store_active', True)
-                        pharmacy_active = cloud_record.get('pharmacy_active', True)
-                        local_config.set("store_active", store_active)
-                        local_config.set("pharmacy_active", pharmacy_active)
-                        
-                        # Update guard state
-                        if hasattr(guard, 'store_active'): guard.store_active = store_active
-                        if hasattr(guard, 'pharmacy_active'): guard.pharmacy_active = pharmacy_active
-                        
-                        print("[DEBUG] Verifying local data integrity...")
-                        if not verify_local_data_integrity():
+                    # Online Path
+                    from src.core.blocking_task_manager import task_manager
+                    
+                    def check_cloud():
+                        try:
+                            print(f"[DEBUG] Calling supabase_manager.get_installation_status({sid})")
+                            return supabase_manager.get_installation_status(sid)
+                        except Exception as e:
+                            print(f"[DEBUG] Supabase check failed: {e}")
+                            return None
+
+                    def on_cloud_check_finished(cloud_record):
+                        if not cloud_record:
+                            print("[DEBUG] No cloud record found")
+                            if is_registered_local:
+                                print("[DEBUG] Calling jump_to_app() for locally registered user")
+                                jump_to_app()
+                            else:
+                                print("[DEBUG] Calling show_registration_stepper()")
+                                show_registration_stepper()
+                        else:
+                            print("[DEBUG] Cloud record found, processing...")
+                            status = cloud_record.get('status', 'active')
+                            print(f"[DEBUG] Account status={status}")
+                            if status == 'deactivated':
+                                print("[DEBUG] Account deactivated, showing locked screen")
+                                show_locked_screen(cloud_record)
+                                return
+
+                            print("[DEBUG] Setting local config...")
+                            local_config.set("account_created", True)
+                            local_config.set("status", status)
+                            
+                            # Store modular activation flags
+                            store_active = cloud_record.get('store_active', True)
+                            pharmacy_active = cloud_record.get('pharmacy_active', True)
+                            local_config.set("store_active", store_active)
+                            local_config.set("pharmacy_active", pharmacy_active)
+                            
+                            # Update guard state
+                            if hasattr(guard, 'store_active'): guard.store_active = store_active
+                            if hasattr(guard, 'pharmacy_active'): guard.pharmacy_active = pharmacy_active
+                            
+                            print("[DEBUG] Verifying local data integrity...")
+                            verify_local_data_integrity_async(lambda ok: on_integrity_checked_final(ok, cloud_record))
+
+                    def on_integrity_checked_final(ok, cloud_record):
+                        if not ok:
                              print("[DEBUG] Data integrity failed, showing registration stepper")
                              local_config.set("account_created", False)
                              show_registration_stepper()
-                             return
+                        else:
+                             print("[DEBUG] All checks passed, calling jump_to_app()")
+                             jump_to_app()
 
-                        print("[DEBUG] All checks passed, calling jump_to_app()")
-                        jump_to_app()
+                    task_manager.run_task(check_cloud, on_finished=on_cloud_check_finished)
                     print("[DEBUG] on_internet_gate_resolved() task completed")
 
-                from src.core.blocking_task_manager import task_manager
-                task_manager.run_task(check_cloud, on_finished=on_cloud_check_finished)
+                verify_local_data_integrity_async(proceed_with_integrity)
                 print("[DEBUG] on_internet_gate_resolved() completed")
                 print("="*60)
             except Exception as e:
@@ -327,13 +360,17 @@ def main():
                      return
 
                 print("[DEBUG] Checking contract validity...")
-                if not check_contract_validity():
-                    print("[DEBUG] Contract invalid, showing app login")
-                    show_app_login()
-                    return
+                def on_contract_checked(is_valid):
+                    if not is_valid:
+                        print("[DEBUG] Contract invalid, showing app login")
+                        show_app_login()
+                    else:
+                        print("[DEBUG] Showing login screen...")
+                        show_app_login()
                 
-                print("[DEBUG] Showing login screen...")
-                show_app_login()
+                check_contract_validity_async(on_contract_checked)
+                return
+
                 
                 print("[DEBUG] jump_to_app() COMPLETED")
                 print("="*60 + "\n")

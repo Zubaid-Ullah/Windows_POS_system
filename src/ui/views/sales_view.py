@@ -65,10 +65,10 @@ class CreditKYCDialog(QDialog):
         success, msg = capture_image(path)
         if success:
             self.photo_path = path
-            self.photo_btn.setText(" Photo Captured ✓")
+            self.photo_btn.setText(f" {lang_manager.get('customer_photo')} ✓")
             self.photo_btn.setStyleSheet("background-color: #05cd99; color: white;")
         else:
-            if msg: QMessageBox.warning(self, "Camera Error", msg)
+            if msg: QMessageBox.warning(self, lang_manager.get("camera_error"), msg)
 
     def take_id_photo(self):
         from src.utils.camera import capture_image
@@ -76,10 +76,10 @@ class CreditKYCDialog(QDialog):
         success, msg = capture_image(path)
         if success:
             self.id_photo_path = path
-            self.id_btn.setText(" ID Captured ✓")
+            self.id_btn.setText(f" {lang_manager.get('id_card_photo')} ✓")
             self.id_btn.setStyleSheet("background-color: #05cd99; color: white;")
         else:
-            if msg: QMessageBox.warning(self, "Camera Error", msg)
+            if msg: QMessageBox.warning(self, lang_manager.get("camera_error"), msg)
     def get_data(self):
         return {
             "address": self.address_input.text(),
@@ -307,7 +307,7 @@ class SalesView(QWidget):
         self.display_card.setVisible(False)
         self.refresh_table()
         self.reset_search_style()
-        QMessageBox.information(self, "Resumed", "Sale transaction resumed.")
+        QMessageBox.information(self, lang_manager.get("resumed"), lang_manager.get("sale_transaction_resumed"))
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self.is_price_check_mode:
@@ -402,14 +402,14 @@ class SalesView(QWidget):
         for item in self.cart:
             if item['id'] == product['id']:
                 if item['qty'] + 1 > stock_qty:
-                    QMessageBox.warning(self, "Out of Stock", f"Only {stock_qty} available.")
+                    QMessageBox.warning(self, lang_manager.get("out_of_stock"), f"{lang_manager.get('remaining')}: {lang_manager.localize_digits(stock_qty)}")
                     return
                 item['qty'] += 1
                 self.refresh_table()
                 return
         
         if stock_qty <= 0:
-            QMessageBox.warning(self, "Out of Stock", "Product out of stock.")
+            QMessageBox.warning(self, lang_manager.get("out_of_stock"), lang_manager.get("out_of_stock"))
             return
 
         self.cart.append({
@@ -429,12 +429,12 @@ class SalesView(QWidget):
                 new_qty = float(self.cart_table.item(row, col).text())
                 
                 if new_qty < 0:
-                    QMessageBox.warning(self, "Invalid Qty", "Quantity cannot be negative.")
+                    QMessageBox.warning(self, lang_manager.get("invalid_qty"), lang_manager.get("qty_cannot_be_negative"))
                     self.refresh_table()
                     return
                 
                 if new_qty > item['max_qty']:
-                    QMessageBox.warning(self, "Insufficient Stock", f"Only {item['max_qty']} {item['name']} available.")
+                    QMessageBox.warning(self, lang_manager.get("insufficient_stock"), f"{lang_manager.get('remaining')}: {lang_manager.localize_digits(item['max_qty'])}")
                     self.refresh_table()
                     return
                 
@@ -523,87 +523,100 @@ class SalesView(QWidget):
         except: pass
         total = max(0, subtotal - discount)
         
-        if method == "CREDIT":
-            # Point: "if default customer is selected as walking customer... with each refresh"
-            # Point: "if id is selected in sale window it should be calculated into loan window without asking for security progress"
-            # Point: "Credit sale... open a security window where it takes customer photo, ID card photo, and contact number, along with address"
-            
-            if self.selected_customer_id == 1:
-                QMessageBox.warning(self, "Invalid", "Walking Customer cannot have credit sales.")
-                return
-            
-            # Check Credit Limit and KYC
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT name_en, home_address, photo, id_card_photo, loan_limit, balance, loan_enabled FROM customers WHERE id = ?", (self.selected_customer_id,))
-                cust = cursor.fetchone()
-                
-                # Check Loan Limit
-                new_balance = (cust['balance'] or 0) + total
-                loan_limit = cust['loan_limit'] or 0
-                if cust['loan_enabled'] and new_balance > loan_limit:
-                    QMessageBox.warning(self, "Limit Exceeded", 
-                        f"Customer {cust['name_en']} is not allowed to exceed the loan limit of {loan_limit:,.2f}.\n"
-                        f"Current Balance: {cust['balance']:,.2f}\n"
-                        f"Attempted Sale: {total:,.2f}\n"
-                        f"New Balance would be: {new_balance:,.2f}")
-                    return
+        from src.core.blocking_task_manager import task_manager
+        
+        def run_checkout():
+            try:
+                if method == "CREDIT":
+                    if self.selected_customer_id == 1:
+                        return {"success": False, "error": "Walking Customer cannot have credit sales.", "type": "warning"}
+                    
+                    with db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT name_en, home_address, photo, id_card_photo, loan_limit, balance, loan_enabled FROM customers WHERE id = ?", (self.selected_customer_id,))
+                        cust = cursor.fetchone()
+                        if not cust:
+                            return {"success": False, "error": "Customer not found."}
+                        
+                        # Check Loan Limit
+                        new_balance = (cust['balance'] or 0) + total
+                        loan_limit = cust['loan_limit'] or 0
+                        if cust['loan_enabled'] and new_balance > loan_limit:
+                            return {"success": False, "error": f"{lang_manager.get('limit_exceeded')}: {cust['name_en']}. {lang_manager.get('total_due')}: {lang_manager.localize_digits(loan_limit)}", "type": "warning"}
 
-                if not cust['home_address'] or not cust['photo'] or not cust['id_card_photo']:
-                    # Security registration required
-                    kyc = CreditKYCDialog(self, cust['name_en'])
+                        if not cust['home_address'] or not cust['photo'] or not cust['id_card_photo']:
+                            return {"success": False, "error": "KYC_REQUIRED", "customer_name": cust['name_en']}
+
+                invoice_num = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO sales (invoice_number, user_id, customer_id, total_amount, payment_type, uuid)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (invoice_num, self.current_user['id'], self.selected_customer_id, total, method, str(uuid.uuid4())))
+                    sale_id = cursor.lastrowid
+                    
+                    for item in self.cart:
+                        cursor.execute("""
+                            INSERT INTO sale_items (sale_id, product_id, barcode, product_name, quantity, unit_price, total_price, uuid)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (sale_id, item['id'], item['barcode'], item['name'], item['qty'], item['price'], item['price']*item['qty'], str(uuid.uuid4())))
+                        cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE product_id = ?", (item['qty'], item['id']))
+                    
+                    if method == "CREDIT":
+                        cursor.execute("UPDATE customers SET balance = balance + ? WHERE id = ?", (total, self.selected_customer_id))
+                        cursor.execute("INSERT INTO loans (customer_id, sale_id, loan_amount, status) VALUES (?, ?, ?, 'PENDING')",
+                                     (self.selected_customer_id, sale_id, total))
+                    
+                    conn.commit()
+                return {"success": True, "sale_id": sale_id, "invoice_num": invoice_num, "total": total, "method": method}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                if result.get("error") == "KYC_REQUIRED":
+                    kyc = CreditKYCDialog(self, result["customer_name"])
                     if kyc.exec():
                         data = kyc.get_data()
-                        # Update customer with KYC info
-                        cursor.execute("""
-                            UPDATE customers 
-                            SET home_address = ?, photo = ?, id_card_photo = ?, phone = ? 
-                            WHERE id = ?
-                        """, (data['address'], data['photo'], data['id_photo'], data['phone'], self.selected_customer_id))
-                        conn.commit()
-                    else:
-                        return # Cancelled sale
+                        with db_manager.get_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("""
+                                UPDATE customers 
+                                SET home_address = ?, photo = ?, id_card_photo = ?, phone = ? 
+                                WHERE id = ?
+                            """, (data['address'], data['photo'], data['id_photo'], data['phone'], self.selected_customer_id))
+                            conn.commit()
+                        self.process_payment(method) # Retry after KYC
+                    return
+                
+                if result.get("type") == "warning":
+                    QMessageBox.warning(self, lang_manager.get("checkout"), result["error"])
+                else:
+                    QMessageBox.critical(self, lang_manager.get("error"), result["error"])
+                return
 
-        invoice_num = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        try:
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO sales (invoice_number, user_id, customer_id, total_amount, payment_type, uuid)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (invoice_num, self.current_user['id'], self.selected_customer_id, total, method, str(uuid.uuid4())))
-                sale_id = cursor.lastrowid
-                
-                for item in self.cart:
-                    cursor.execute("""
-                        INSERT INTO sale_items (sale_id, product_id, barcode, product_name, quantity, unit_price, total_price, uuid)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (sale_id, item['id'], item['barcode'], item['name'], item['qty'], item['price'], item['price']*item['qty'], str(uuid.uuid4())))
-                    cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE product_id = ?", (item['qty'], item['id']))
-                
-                if method == "CREDIT":
-                    cursor.execute("UPDATE customers SET balance = balance + ? WHERE id = ?", (total, self.selected_customer_id))
-                    cursor.execute("INSERT INTO loans (customer_id, sale_id, loan_amount, status) VALUES (?, ?, ?, 'PENDING')",
-                                 (self.selected_customer_id, sale_id, total))
-                
-                conn.commit()
-
-            # Ask for bill printing after successful sale
-            self.print_sale_bill(sale_id, invoice_num, total, method)
-            
-            # Auto update bill number display for next sale
+            # Success
+            self.print_sale_bill(result["sale_id"], result["invoice_num"], result["total"], result["method"])
             self.load_next_bill_number()
-
-            QMessageBox.information(self, "Success", f"Sale completed: {invoice_num}")
+            QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('sale_completed')}: {result['invoice_num']}")
             self.clear_cart()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+
+        task_manager.run_task(run_checkout, on_finished=on_finished)
+
+
+        
+
+
+
+
+
 
     def print_sale_bill(self, sale_id, invoice_num, total, method):
         """Ask user if they want to print the bill after sale completion"""
         reply = QMessageBox.question(
-            self, "Print Bill",
-            f"Sale completed successfully!\nInvoice: {invoice_num}\nAmount: {total:,.2f} AFN\n\nWould you like to print the bill?",
+            self, lang_manager.get("print"),
+            f"{lang_manager.get('sale_completed')}!\n{lang_manager.get('invoice')}: {invoice_num}\n{lang_manager.get('amount')}: {lang_manager.localize_digits(f'{total:,.2f}')} AFN\n\n{lang_manager.get('print')}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes
         )
@@ -616,34 +629,37 @@ class SalesView(QWidget):
                 
                 if bill_text:
                     thermal_printer.print_bill(bill_text)
-                    QMessageBox.information(self, "Success", "Bill printed successfully!")
+                    QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("bill_printed_successfully"))
                 else:
-                    QMessageBox.warning(self, "Print Error", "Failed to generate bill.")
+                    QMessageBox.warning(self, lang_manager.get("print_error"), lang_manager.get("failed_to_generate_bill"))
             except Exception as e:
-                QMessageBox.critical(self, "Print Error", f"Failed to print bill: {str(e)}")
+                QMessageBox.critical(self, lang_manager.get("print_error"), f"{lang_manager.get('failed_to_print_bill')}: {str(e)}")
     
     def load_next_bill_number(self):
-        """Load and display next bill number"""
-        try:
-            with db_manager.get_connection() as conn:
-                last_bill = conn.execute(
-                    "SELECT invoice_number FROM sales ORDER BY id DESC LIMIT 1"
-                ).fetchone()
-                
-                if last_bill:
-                    # Extract number and increment
-                    try:
-                        last_num = int(last_bill['invoice_number'].split('-')[-1])
-                        next_num = last_num + 1
-                    except:
-                        next_num = 1
-                else:
-                    next_num = 1
-                
-                self.bill_number_display.setText(f"INV-{datetime.now().strftime('%Y%m%d')}-{next_num:04d}")
-        except Exception as e:
-            print(f"Error loading bill number: {e}")
-            self.bill_number_display.setText("INV-0001")
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_next():
+            try:
+                with db_manager.get_connection() as conn:
+                    last_bill = conn.execute("SELECT invoice_number FROM sales ORDER BY id DESC LIMIT 1").fetchone()
+                    
+                    next_id = 1
+                    if last_bill:
+                        try:
+                            # Try to extract the trailing number from INV-YYYYMMDD-XXXX
+                            parts = last_bill['invoice_number'].split('-')
+                            if len(parts) >= 3:
+                                next_id = int(parts[-1]) + 1
+                        except: pass
+                    
+                    return f"INV-{datetime.now().strftime('%Y%m%d')}-{next_id:04d}"
+            except:
+                return "INV-0001"
+
+        def on_finished(next_bill):
+            self.bill_number_display.setText(next_bill)
+
+        task_manager.run_task(fetch_next, on_finished=on_finished)
 
     def reprint_last_bill(self):
         """Reprint the last generated bill"""
@@ -654,12 +670,12 @@ class SalesView(QWidget):
                 ).fetchone()
                 
                 if not last_sale:
-                    QMessageBox.warning(self, "No Bills", "No bills found to reprint")
+                    QMessageBox.warning(self, lang_manager.get("no_bills"), lang_manager.get("no_bills_found_to_reprint"))
                     return
                 
                 reply = QMessageBox.question(
-                    self, "Reprint Bill",
-                    f"Reprint Bill: {last_sale['invoice_number']}\nAmount: {last_sale['total_amount']:.2f} AFN?",
+                    self, lang_manager.get("reprint_bill"),
+                    f"{lang_manager.get('reprint_bill')}: {last_sale['invoice_number']}\n{lang_manager.get('amount')}: {lang_manager.localize_digits('{:.2f}'.format(last_sale['total_amount']))} AFN?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 

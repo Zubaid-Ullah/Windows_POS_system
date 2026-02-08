@@ -8,58 +8,7 @@ from src.ui.table_styles import style_table
 from src.database.db_manager import db_manager
 from src.core.localization import lang_manager
 
-class InvoiceLoadWorker(QObject):
-    """Background worker to load invoice data"""
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
-
-    def __init__(self, invoice_id):
-        super().__init__()
-        self.invoice_id = invoice_id
-
-    def run(self):
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # Search by invoice_number OR id
-                sale = conn.execute("""
-                    SELECT s.*, c.name as customer_name 
-                    FROM pharmacy_sales s
-                    LEFT JOIN pharmacy_customers c ON s.customer_id = c.id
-                    WHERE s.invoice_number = ? OR s.id = ?
-                """, (self.invoice_id, self.invoice_id)).fetchone()
-                
-                if not sale:
-                    self.error.emit("not_found")
-                    return
-                
-                items = conn.execute("""
-                    SELECT si.*, p.name_en
-                    FROM pharmacy_sale_items si
-                    JOIN pharmacy_products p ON si.product_id = p.id
-                    WHERE si.sale_id = ?
-                """, (sale['id'],)).fetchall()
-                
-                item_data = []
-                for item in items:
-                    # Calculate already returned quantity for THIS specific invoice line
-                    ret_row = conn.execute("""
-                        SELECT SUM(quantity) as returned_qty 
-                        FROM pharmacy_return_items 
-                        WHERE sale_item_id = ?
-                    """, (item['id'],)).fetchone()
-                    
-                    already_returned = ret_row['returned_qty'] or 0
-                    item_dict = dict(item)
-                    item_dict['already_returned'] = already_returned
-                    item_data.append(item_dict)
-                
-                result = {
-                    'sale': dict(sale),
-                    'items': item_data
-                }
-                self.finished.emit(result)
-        except Exception as e:
-            self.error.emit(str(e))
+# InvoiceLoadWorker logic will be moved into load_invoice task
 
 class ReplacementItemDialog(QDialog):
     """Dialog to select replacement items when action is REPLACEMENT"""
@@ -261,26 +210,11 @@ class PharmacyReturnsView(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.thread = None
-        self.worker = None
         self.is_loading = False
         self.init_ui()
-        self.destroyed.connect(self.cleanup_thread)
-
-    def cleanup_thread(self):
-        """Safely cleanup any running threads"""
-        if hasattr(self, 'thread') and self.thread is not None:
-            if self.thread.isRunning():
-                self.thread.quit()
-                self.thread.wait(1000)
-            self.thread = None
-        if hasattr(self, 'worker') and self.worker is not None:
-            self.worker = None
 
     def _reset_thread_refs(self):
-        """Reset thread and worker references"""
-        self.thread = None
-        self.worker = None
+        pass
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -335,23 +269,45 @@ class PharmacyReturnsView(QWidget):
             return
         
         self.is_loading = True
-        self.cleanup_thread()
         self.search_btn.setEnabled(False)
         self.search_btn.setText(lang_manager.get("loading") or "Loading...")
         
-        self.thread = QThread(self)
-        self.worker = InvoiceLoadWorker(sale_id)
-        self.worker.moveToThread(self.thread)
-        
-        self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.on_invoice_loaded)
-        self.worker.error.connect(self.on_invoice_error)
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
-        self.thread.destroyed.connect(self._reset_thread_refs)
-        
-        self.thread.start()
+        from src.core.blocking_task_manager import task_manager
+
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    sale = conn.execute("""
+                        SELECT s.*, c.name as customer_name FROM pharmacy_sales s
+                        LEFT JOIN pharmacy_customers c ON s.customer_id = c.id
+                        WHERE s.invoice_number = ? OR s.id = ?
+                    """, (sale_id, sale_id)).fetchone()
+                    
+                    if not sale: return {"success": False, "error": "not_found"}
+                    
+                    items = conn.execute("""
+                        SELECT si.*, p.name_en FROM pharmacy_sale_items si
+                        JOIN pharmacy_products p ON si.product_id = p.id WHERE si.sale_id = ?
+                    """, (sale['id'],)).fetchall()
+                    
+                    item_data = []
+                    for item in items:
+                        ret_row = conn.execute("SELECT SUM(quantity) as returned_qty FROM pharmacy_return_items WHERE sale_item_id = ?", (item['id'],)).fetchone()
+                        item_dict = dict(item)
+                        item_dict['already_returned'] = ret_row['returned_qty'] or 0
+                        item_data.append(item_dict)
+                    
+                    return {"success": True, "sale": dict(sale), "items": item_data}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if result["success"]:
+                self.on_invoice_loaded(result)
+            else:
+                self.on_invoice_error(result["error"])
+
+        task_manager.run_task(do_load, on_finished=on_finished)
 
     def on_invoice_loaded(self, result):
         """Handle loaded invoice data"""
@@ -467,77 +423,68 @@ class PharmacyReturnsView(QWidget):
         reason_text, ok = QInputDialog.getText(self, lang_manager.get("reason"), f"{lang_manager.get('enter_reason')}:")
         if not ok: return
 
-        from src.core.pharmacy_auth import PharmacyAuth
-        user = PharmacyAuth.get_current_user()
-        user_id = user['id'] if user else 1
-        
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # 1. Create Return Record
-                # Refund only if action is RETURN
-                actual_refund = qty * sale_item['unit_price'] if action == 'RETURN' else 0
-                
-                conn.execute("""
-                    INSERT INTO pharmacy_returns (original_sale_id, refund_amount, refund_type, reason, user_id) 
-                    VALUES (?, ?, ?, ?, ?)
-                """, (sale_item['sale_id'], actual_refund, refund_mode, reason_text, user_id))
-                return_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                
-                # 2. Add Return Item (Now with sale_item_id)
-                conn.execute("""
-                    INSERT INTO pharmacy_return_items (return_id, sale_item_id, product_id, quantity, unit_price, action)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (return_id, sale_item['id'], sale_item['product_id'], qty, sale_item['unit_price'], action))
-                return_item_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                
-                # 3. If REPLACEMENT, add replacement items
-                if action == 'REPLACEMENT' and replacement_items:
-                    for rep_item in replacement_items:
-                        conn.execute("""
-                            INSERT INTO pharmacy_replacement_items 
-                            (return_item_id, product_id, product_name, quantity, unit_price, total_price)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """, (return_item_id, rep_item['product_id'], rep_item['product_name'], 
-                              rep_item['quantity'], rep_item['unit_price'], rep_item['total_price']))
-                        
-                        # Deduct from inventory
-                        batch = conn.execute(
-                            "SELECT batch_number, quantity FROM pharmacy_inventory WHERE product_id=? AND quantity >= ? ORDER BY expiry_date ASC LIMIT 1", 
-                            (rep_item['product_id'], rep_item['quantity'])
-                        ).fetchone()
-                        
-                        if batch:
-                            conn.execute(
-                                "UPDATE pharmacy_inventory SET quantity = quantity - ? WHERE product_id=? AND batch_number=?", 
-                                (rep_item['quantity'], rep_item['product_id'], batch['batch_number'])
-                            )
-                
-                # 4. Update Stock (add back returned items)
-                batch = conn.execute("SELECT batch_number FROM pharmacy_inventory WHERE product_id=? ORDER BY created_at DESC LIMIT 1", (sale_item['product_id'],)).fetchone()
-                if batch:
-                    conn.execute("UPDATE pharmacy_inventory SET quantity = quantity + ? WHERE product_id=? AND batch_number=?", 
-                                 (qty, sale_item['product_id'], batch['batch_number']))
-                
-                # 5. Update Customer Balance (if it was a credit sale AND refund is to ACCOUNT)
-                sale = conn.execute("SELECT customer_id, payment_type FROM pharmacy_sales WHERE id=?", (sale_item['sale_id'],)).fetchone()
-                if sale and sale['customer_id'] and sale['payment_type'] == 'CREDIT' and actual_refund > 0 and refund_mode == 'ACCOUNT':
-                     # Update Customer Balance (Allow it to go negative/credit)
-                     conn.execute("UPDATE pharmacy_customers SET balance = balance - ? WHERE id=?", (actual_refund, sale['customer_id']))
-                     
-                     # Also update loan balance if exists
-                     conn.execute("UPDATE pharmacy_loans SET balance = balance - ? WHERE sale_id=?", (actual_refund, sale_item['sale_id']))
-                     
-                     # If loan balance is now <= 0, mark as COMPLETED
-                     conn.execute("""
-                        UPDATE pharmacy_loans 
-                        SET status = 'COMPLETED' 
-                        WHERE sale_id = ? AND balance <= 0
-                     """, (sale_item['sale_id'],))
+        from src.core.blocking_task_manager import task_manager
 
-                conn.commit()
-            
-            QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('success')}: {action}")
-            self.load_invoice()
-            self.return_processed.emit()
-        except Exception as e:
-            QMessageBox.critical(self, lang_manager.get("error"), str(e))
+        def do_process():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    # 1. Create Return Record
+                    actual_refund = qty * sale_item['unit_price'] if action == 'RETURN' else 0
+                    conn.execute("""
+                        INSERT INTO pharmacy_returns (original_sale_id, refund_amount, refund_type, reason, user_id) 
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (sale_item['sale_id'], actual_refund, refund_mode, reason_text, user_id))
+                    return_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    
+                    # 2. Add Return Item
+                    conn.execute("""
+                        INSERT INTO pharmacy_return_items (return_id, sale_item_id, product_id, quantity, unit_price, action)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (return_id, sale_item['id'], sale_item['product_id'], qty, sale_item['unit_price'], action))
+                    return_item_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    
+                    # 3. If REPLACEMENT, add replacement items
+                    if action == 'REPLACEMENT' and replacement_items:
+                        for rep_item in replacement_items:
+                            conn.execute("""
+                                INSERT INTO pharmacy_replacement_items 
+                                (return_item_id, product_id, product_name, quantity, unit_price, total_price)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            """, (return_item_id, rep_item['product_id'], rep_item['product_name'], 
+                                  rep_item['quantity'], rep_item['unit_price'], rep_item['total_price']))
+                            
+                            batch_p = conn.execute(
+                                "SELECT batch_number, quantity FROM pharmacy_inventory WHERE product_id=? AND quantity >= ? ORDER BY expiry_date ASC LIMIT 1", 
+                                (rep_item['product_id'], rep_item['quantity'])
+                            ).fetchone()
+                            if batch_p:
+                                conn.execute("UPDATE pharmacy_inventory SET quantity = quantity - ? WHERE product_id=? AND batch_number=?", 
+                                             (rep_item['quantity'], rep_item['product_id'], batch_p['batch_number']))
+                    
+                    # 4. Update Stock (add back returned items)
+                    batch_orig = conn.execute("SELECT batch_number FROM pharmacy_inventory WHERE product_id=? ORDER BY created_at DESC LIMIT 1", (sale_item['product_id'],)).fetchone()
+                    if batch_orig:
+                        conn.execute("UPDATE pharmacy_inventory SET quantity = quantity + ? WHERE product_id=? AND batch_number=?", 
+                                     (qty, sale_item['product_id'], batch_orig['batch_number']))
+                    
+                    # 5. Customer/Loan updates
+                    s_data = conn.execute("SELECT customer_id, payment_type FROM pharmacy_sales WHERE id=?", (sale_item['sale_id'],)).fetchone()
+                    if s_data and s_data['customer_id'] and s_data['payment_type'] == 'CREDIT' and actual_refund > 0 and refund_mode == 'ACCOUNT':
+                        conn.execute("UPDATE pharmacy_customers SET balance = balance - ? WHERE id=?", (actual_refund, s_data['customer_id']))
+                        conn.execute("UPDATE pharmacy_loans SET balance = balance - ? WHERE sale_id=?", (actual_refund, sale_item['sale_id']))
+                        conn.execute("UPDATE pharmacy_loans SET status = 'COMPLETED' WHERE sale_id = ? AND balance <= 0", (sale_item['sale_id'],))
+
+                    conn.commit()
+                return {"success": True}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if result["success"]:
+                QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('success')}: {action}")
+                self.load_invoice()
+                self.return_processed.emit()
+            else:
+                QMessageBox.critical(self, lang_manager.get("error"), result["error"])
+
+        task_manager.run_task(do_process, on_finished=on_finished)

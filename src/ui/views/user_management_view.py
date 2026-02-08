@@ -110,37 +110,40 @@ class UserManagementView(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to create user: {str(e)}")
 
     def load_users(self):
+        from src.core.blocking_task_manager import task_manager
         current_user = Auth.get_current_user()
         
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Query Logic
-            if current_user.get('username') == 'superadmin':
-                query = """
-                    SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary
-                    FROM users u 
-                    JOIN roles r ON u.role_id = r.id 
-                    WHERE u.username != 'psuper'
-                """
-            elif current_user.get('is_super_admin'):
-                query = """
-                    SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary
-                    FROM users u 
-                    JOIN roles r ON u.role_id = r.id 
-                    WHERE u.username != 'psuper'
-                """
-            else:
-                 query = """
-                    SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary
-                    FROM users u 
-                    JOIN roles r ON u.role_id = r.id 
-                    WHERE u.is_super_admin = 0 AND u.username != 'psuper'
-                """
-                 
-            cursor.execute(query)
-            users = cursor.fetchall()
-            
+        def fetch_users():
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Query Logic
+                if current_user.get('username') == 'superadmin':
+                    query = """
+                        SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary
+                        FROM users u 
+                        JOIN roles r ON u.role_id = r.id 
+                        WHERE u.username != 'psuper'
+                    """
+                elif current_user.get('is_super_admin'):
+                    query = """
+                        SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary
+                        FROM users u 
+                        JOIN roles r ON u.role_id = r.id 
+                        WHERE u.username != 'psuper'
+                    """
+                else:
+                     query = """
+                        SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary
+                        FROM users u 
+                        JOIN roles r ON u.role_id = r.id 
+                        WHERE u.is_super_admin = 0 AND u.username != 'psuper'
+                    """
+                     
+                cursor.execute(query)
+                return [dict(u) for u in cursor.fetchall()]
+
+        def on_finished(users):
             self.user_table.setRowCount(0)
             for i, u in enumerate(users):
                 self.user_table.insertRow(i)
@@ -196,6 +199,8 @@ class UserManagementView(QWidget):
                 btn_layout.addWidget(toggle_btn)
                 
                 self.user_table.setCellWidget(i, 7, btn_widget)
+
+        task_manager.run_task(fetch_users, on_finished=on_finished)
 
     def edit_user(self, user_id):
         with db_manager.get_connection() as conn:

@@ -13,7 +13,7 @@ class SupplierDialog(QDialog):
     def __init__(self, supplier=None):
         super().__init__()
         self.supplier = supplier
-        self.setWindowTitle("Supplier Details")
+        self.setWindowTitle(lang_manager.get("details"))
         self.setMinimumWidth(400)
         self.init_ui()
 
@@ -28,16 +28,16 @@ class SupplierDialog(QDialog):
             self.company.setText(self.supplier.get('company_name', ''))
             self.contact.setText(self.supplier.get('contact', ""))
 
-        layout.addRow("Supplier Name:", self.name)
-        layout.addRow("Company Name:", self.company)
-        layout.addRow("Contact Number:", self.contact)
+        layout.addRow(f"{lang_manager.get('supplier_name')}:", self.name)
+        layout.addRow(f"{lang_manager.get('company')}:", self.company)
+        layout.addRow(f"{lang_manager.get('contact')}:", self.contact)
         
         btns = QHBoxLayout()
-        save_btn = QPushButton("Save Supplier")
+        save_btn = QPushButton(lang_manager.get("save"))
         style_button(save_btn, variant="success")
         save_btn.clicked.connect(self.accept)
         
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(lang_manager.get("cancel"))
         style_button(cancel_btn, variant="secondary")
         cancel_btn.clicked.connect(self.reject)
         btns.addStretch()
@@ -73,7 +73,7 @@ class SupplierView(QWidget):
         header = QHBoxLayout()
         header.addStretch()
         
-        self.add_btn = QPushButton(" Register New Supplier")
+        self.add_btn = QPushButton(f" {lang_manager.get('add_supplier')}")
         style_button(self.add_btn, variant="primary")
         self.add_btn.setIcon(qta.icon("fa5s.truck-loading", color="white"))
         self.add_btn.clicked.connect(self.add_supplier)
@@ -85,7 +85,8 @@ class SupplierView(QWidget):
         
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels([
-            "ID", "Supplier Name", "Company", "Contact", "Actions"
+            "ID", lang_manager.get("supplier_name"), lang_manager.get("company"), 
+            lang_manager.get("contact"), lang_manager.get("actions")
         ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -96,18 +97,25 @@ class SupplierView(QWidget):
         main_layout.addWidget(self.container)
 
     def load_suppliers(self):
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM suppliers")
-            suppliers = [dict(row) for row in cursor.fetchall()]
-            
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_data():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT * FROM suppliers")
+                    return [dict(row) for row in cursor.fetchall()]
+            except:
+                return []
+
+        def on_loaded(suppliers):
             self.table.setRowCount(0)
             for i, s in enumerate(suppliers):
                 self.table.insertRow(i)
-                self.table.setItem(i, 0, QTableWidgetItem(str(s['id'])))
+                self.table.setItem(i, 0, QTableWidgetItem(lang_manager.localize_digits(str(s['id']))))
                 self.table.setItem(i, 1, QTableWidgetItem(s['name']))
                 self.table.setItem(i, 2, QTableWidgetItem(s['company_name'] or ''))
-                self.table.setItem(i, 3, QTableWidgetItem(s['contact'] or ''))
+                self.table.setItem(i, 3, QTableWidgetItem(lang_manager.localize_digits(s['contact'] or '')))
                 
                 actions = QWidget()
                 act_layout = QHBoxLayout(actions)
@@ -129,34 +137,50 @@ class SupplierView(QWidget):
                 
                 self.table.setCellWidget(i, 4, actions)
 
+        task_manager.run_task(fetch_data, on_finished=on_loaded)
+
     def add_supplier(self):
+        from src.core.blocking_task_manager import task_manager
         dialog = SupplierDialog()
         if dialog.exec():
             data = dialog.get_data()
             if not data['name']: return
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("INSERT INTO suppliers (name, company_name, contact) VALUES (?, ?, ?)", 
-                             (data['name'], data['company_name'], data['contact']))
-                conn.commit()
-            self.load_suppliers()
+            
+            def run_save():
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO suppliers (name, company_name, contact) VALUES (?, ?, ?)", 
+                                 (data['name'], data['company_name'], data['contact']))
+                    conn.commit()
+                return True
+
+            task_manager.run_task(run_save, on_finished=lambda _: self.load_suppliers())
 
     def edit_supplier(self, supplier):
+        from src.core.blocking_task_manager import task_manager
         dialog = SupplierDialog(supplier)
         if dialog.exec():
             data = dialog.get_data()
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE suppliers SET name=?, company_name=?, contact=? WHERE id=?", 
-                             (data['name'], data['company_name'], data['contact'], supplier['id']))
-                conn.commit()
-            self.load_suppliers()
+            
+            def run_update():
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE suppliers SET name=?, company_name=?, contact=? WHERE id=?", 
+                                 (data['name'], data['company_name'], data['contact'], supplier['id']))
+                    conn.commit()
+                return True
+
+            task_manager.run_task(run_update, on_finished=lambda _: self.load_suppliers())
 
     def delete_supplier(self, sid):
-        reply = QMessageBox.question(self, 'Confirm Delete', "Delete this supplier?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        from src.core.blocking_task_manager import task_manager
+        reply = QMessageBox.question(self, lang_manager.get("confirm_delete"), lang_manager.get("confirm_delete_supplier"), QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM suppliers WHERE id=?", (sid,))
-                conn.commit()
-            self.load_suppliers()
+            def run_delete():
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM suppliers WHERE id=?", (sid,))
+                    conn.commit()
+                return True
+
+            task_manager.run_task(run_delete, on_finished=lambda _: self.load_suppliers())

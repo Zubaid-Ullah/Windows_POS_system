@@ -320,7 +320,7 @@ class ProductDialog(QDialog):
 
     def validate_and_accept(self):
         if not self.name_en.text() or not self.barcode.text() or not self.brand.text():
-            QMessageBox.warning(self, "Missing Fields", "Product Name, Barcode, and Brand/Company are mandatory!")
+            QMessageBox.warning(self, lang_manager.get("warning"), lang_manager.get("name_contact_required"))
             return
         self.accept()
 
@@ -358,7 +358,7 @@ class ProductDialog(QDialog):
                 'internal_notes': self.notes.toPlainText()
             }
         except ValueError:
-            QMessageBox.warning(self, "Invalid Input", "Please enter valid numeric values for prices and quantities.")
+            QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("error"))
             return None
 
 class InventoryView(QWidget):
@@ -512,7 +512,7 @@ class InventoryView(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save Barcode", f"barcode_{code}.png", "Images (*.png)")
         if path:
             BarcodeGenerator.generate(code, path.replace(".png", ""))
-            QMessageBox.information(self, "Success", "Barcode saved")
+            QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
 
     def handle_barcode_scan(self):
         barcode = self.scan_input.text().strip()
@@ -539,13 +539,13 @@ class InventoryView(QWidget):
                     cursor.execute("INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
                                  (self.current_user['id'], 'STOCK_IN', 'inventory', product['id'], f'Added {qty_add} via scan'))
                     conn.commit()
-                    QMessageBox.information(self, "Success", "Stock updated")
+                    QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
                     print('\a', end='', flush=True) # Beep
                     self.load_products()
             else:
                 # AUTOMATED REGISTRY POPUP (Point 13.1)
-                reply = QMessageBox.question(self, "Not Found", 
-                                           f"Barcode '{barcode}' is not registered.\nWould you like to register this new product now?",
+                reply = QMessageBox.question(self, lang_manager.get("not_found"), 
+                                           f"{barcode} {lang_manager.get('not_found')}.\n{lang_manager.get('add')}?",
                                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                 if reply == QMessageBox.StandardButton.Yes:
                     self.add_product(barcode)
@@ -585,7 +585,7 @@ class InventoryView(QWidget):
                     conn.commit()
                 self.load_products()
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not add product: {e}")
+                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {e}")
 
     def edit_product(self, product):
         dialog = ProductDialog(product)
@@ -619,7 +619,7 @@ class InventoryView(QWidget):
                     conn.commit()
                 self.load_products()
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not edit product: {e}")
+                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {e}")
 
     def manage_categories(self):
         CategoryManagerDialog(self).exec()
@@ -727,9 +727,9 @@ class InventoryView(QWidget):
                             p['min_stock'], p['unit'] or 'pcs'
                         ])
                 
-                QMessageBox.information(self, "Success", f"Inventory exported successfully to:\n{filename}")
+                QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to export inventory: {str(e)}")
+                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {str(e)}")
     
     def print_labels(self):
         """Generate printable barcode labels"""
@@ -794,7 +794,7 @@ class InventoryView(QWidget):
         low_stock_dialog.exec()
         
     def delete_product(self, pid):
-        if QMessageBox.question(self, 'Delete', 'Are you sure?', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, lang_manager.get("delete"), lang_manager.get("confirm_delete"), QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("UPDATE products SET is_active = 0 WHERE id=?", (pid,))

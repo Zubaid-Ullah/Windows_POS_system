@@ -54,22 +54,39 @@ class LoanView(QWidget):
             self.load_loans()
             return
         
-        # Search for customers with matching name
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM customers WHERE name_en LIKE ? AND balance > 0 AND is_active = 1", (f"%{text}%",))
-            self.search_result_customers = cursor.fetchall()
-            
-            # Point: "if with same name there are more customer then show a list for choosing the right customer"
-            # Here I'll just filter the table live. If there's exact match or ambiguous, the table shows them all.
-            self.populate_table(self.search_result_customers)
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_search():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT * FROM customers WHERE name_en LIKE ? AND balance > 0 AND is_active = 1", (f"%{text}%",))
+                    return cursor.fetchall()
+            except:
+                return []
+
+        def on_finished(results):
+            self.search_result_customers = results
+            self.populate_table(results)
+
+        task_manager.run_task(fetch_search, on_finished=on_finished)
 
     def load_loans(self):
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM customers WHERE balance > 0 AND is_active = 1")
-            customers = cursor.fetchall()
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_data():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT * FROM customers WHERE balance > 0 AND is_active = 1")
+                    return cursor.fetchall()
+            except:
+                return []
+
+        def on_finished(customers):
             self.populate_table(customers)
+
+        task_manager.run_task(fetch_data, on_finished=on_finished)
 
     def populate_table(self, customers):
         self.table.setRowCount(0)
@@ -104,77 +121,106 @@ class LoanView(QWidget):
     def make_payment(self, cid):
         amount, ok = QInputDialog.getDouble(self, "Payment Received", "Enter amount to settle:", min=0.01)
         if ok and amount > 0:
-            remaining = amount
-            try:
-                from datetime import datetime
-                with db_manager.get_connection() as conn:
-                    cursor = conn.cursor()
-                    
-                    # FIFO Loan Settlement Logic
-                    cursor.execute("""
-                        SELECT id, loan_amount, paid_amount 
-                        FROM loans 
-                        WHERE customer_id = ? AND status = 'PENDING' 
-                        ORDER BY created_at ASC
-                    """, (cid,))
-                    pending_loans = cursor.fetchall()
-                    
-                    for loan in pending_loans:
-                        if remaining <= 0: break
-                        loan_id = loan['id']
-                        loan_rem = loan['loan_amount'] - loan['paid_amount']
+            from src.core.blocking_task_manager import task_manager
+            
+            def run_payment():
+                remaining = amount
+                try:
+                    from datetime import datetime
+                    with db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
                         
-                        if remaining >= loan_rem:
-                            cursor.execute("UPDATE loans SET paid_amount = loan_amount, status = 'PAID' WHERE id = ?", (loan_id,))
-                            remaining -= loan_rem
-                        else:
-                            cursor.execute("UPDATE loans SET paid_amount = paid_amount + ? WHERE id = ?", (remaining, loan_id))
-                            remaining = 0
+                        # FIFO Loan Settlement Logic
+                        cursor.execute("""
+                            SELECT id, loan_amount, paid_amount 
+                            FROM loans 
+                            WHERE customer_id = ? AND status = 'PENDING' 
+                            ORDER BY created_at ASC
+                        """, (cid,))
+                        pending_loans = cursor.fetchall()
+                        
+                        for loan in pending_loans:
+                            if remaining <= 0: break
+                            loan_id = loan['id']
+                            loan_rem = loan['loan_amount'] - loan['paid_amount']
+                            
+                            if remaining >= loan_rem:
+                                cursor.execute("UPDATE loans SET paid_amount = loan_amount, status = 'PAID' WHERE id = ?", (loan_id,))
+                                remaining -= loan_rem
+                            else:
+                                cursor.execute("UPDATE loans SET paid_amount = paid_amount + ? WHERE id = ?", (remaining, loan_id))
+                                remaining = 0
 
-                    cursor.execute("UPDATE customers SET balance = MAX(0, balance - ?) WHERE id = ?", (amount, cid))
-                    
-                    cursor.execute("""
-                        INSERT INTO customer_payments (customer_id, amount, payment_method, reference_number)
-                        VALUES (?, ?, 'CASH', ?)
-                    """, (cid, amount, f"Settle-{datetime.now().strftime('%Y%m%d%H%M')}") )
+                        cursor.execute("UPDATE customers SET balance = MAX(0, balance - ?) WHERE id = ?", (amount, cid))
+                        
+                        cursor.execute("""
+                            INSERT INTO customer_payments (customer_id, amount, payment_method, reference_number)
+                            VALUES (?, ?, 'CASH', ?)
+                        """, (cid, amount, f"Settle-{datetime.now().strftime('%Y%m%d%H%M')}") )
 
-                    conn.commit()
-                QMessageBox.information(self, "Success", "Payment recorded successfully.")
-                self.load_loans()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not process payment: {e}")
+                        conn.commit()
+                    return {"success": True}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+
+            def on_finished(result):
+                if result['success']:
+                    QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("payment_received"))
+                    self.load_loans()
+                else:
+                    QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {result['error']}")
+
+            task_manager.run_task(run_payment, on_finished=on_finished)
 
     def view_ledger(self, cid, name):
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT 'SALE' as type, s.created_at, s.total_amount as debit, 0 as credit,
-                (SELECT GROUP_CONCAT(product_name, ', ') FROM sale_items WHERE sale_id = s.id) as details
-                FROM sales s WHERE customer_id = ? AND payment_type = 'CREDIT'
-                UNION ALL
-                SELECT 'PAYMENT' as type, created_at, 0 as debit, amount as credit, 'Cash Payment' as details
-                FROM customer_payments WHERE customer_id = ?
-                ORDER BY created_at ASC
-            """, (cid, cid))
-            transactions = [dict(row) for row in cursor.fetchall()]
-            
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_ledger():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT 'SALE' as type, s.created_at, s.total_amount as debit, 0 as credit,
+                        (SELECT GROUP_CONCAT(product_name, ', ') FROM sale_items WHERE sale_id = s.id) as details
+                        FROM sales s WHERE customer_id = ? AND payment_type = 'CREDIT'
+                        UNION ALL
+                        SELECT 'PAYMENT' as type, created_at, 0 as debit, amount as credit, 'Cash Payment' as details
+                        FROM customer_payments WHERE customer_id = ?
+                        ORDER BY created_at ASC
+                    """, (cid, cid))
+                    return [dict(row) for row in cursor.fetchall()]
+            except:
+                return []
+
+        def on_finished(transactions):
             dialog = CustomerLedgerDialog(name, transactions, self)
             dialog.exec()
 
+        task_manager.run_task(fetch_ledger, on_finished=on_finished)
+
     def view_kyc(self, cid):
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM customers WHERE id = ?", (cid,))
-            row = cursor.fetchone()
-            if not row: return
-            cust = dict(row)
-            
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_kyc():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT * FROM customers WHERE id = ?", (cid,))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+            except:
+                return None
+
+        def on_finished(cust):
+            if not cust: return
             if not cust['photo'] and not cust['id_card_photo']:
-                QMessageBox.warning(self, "No Records", "No KYC documents found for this customer.")
+                QMessageBox.warning(self, lang_manager.get("no_records"), lang_manager.get("no_kyc_found"))
                 return
                 
             dialog = KYCViewerDialog(cust, self)
             dialog.exec()
+
+        task_manager.run_task(fetch_kyc, on_finished=on_finished)
 
 class CustomerLedgerDialog(QDialog):
     def __init__(self, name, transactions, parent=None):

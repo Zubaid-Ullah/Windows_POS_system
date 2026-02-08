@@ -593,14 +593,23 @@ class MainWindow(QMainWindow):
         self.view_stack.setCurrentWidget(self.current_view)
 
     def handle_logout(self):
-        from src.core.pharmacy_auth import PharmacyAuth
-        if self.business_mode == "PHARMACY":
-            PharmacyAuth.logout()
-        else:
-            Auth.logout()
+        from src.core.blocking_task_manager import task_manager
         
+        # Immediate UI cleanup
         if hasattr(self, "pharmacy_hub"):
             self.pharmacy_hub = None
-        self.login_view.stack.setCurrentIndex(0)
-        self.central_widget.setCurrentWidget(self.login_view)
+        
+        # Run database operations in background
+        def run_logout():
+            if self.business_mode == "PHARMACY":
+                PharmacyAuth.logout()
+            else:
+                Auth.logout()
+            return True
+
+        def on_finished(_):
+            self.login_view.stack.setCurrentIndex(0)
+            self.central_widget.setCurrentWidget(self.login_view)
+
+        task_manager.run_task(run_logout, on_finished=on_finished)
 

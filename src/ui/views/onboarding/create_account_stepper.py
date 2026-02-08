@@ -370,23 +370,31 @@ class CreateAccountWindow(QWidget):
         QTimer.singleShot(100, self._do_refresh_installers)
 
     def _do_refresh_installers(self):
-        try:
-            users = supabase_manager.get_installers()
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_installers():
+            try:
+                return supabase_manager.get_installers()
+            except Exception as e:
+                print(f"[ERROR] Cloud Error: {e}")
+                return None
+        
+        def on_finished(users):
             self.installer_user.clear()
             
             # Always ensure SuperAdmin is an option for activation
             all_users = ["SuperAdmin"]
             if users:
                 all_users.extend(users)
+                print(f"[SUCCESS] Loaded {len(all_users)} installers (including SuperAdmin)")
+            else:
+                print("[WARNING] Could not fetch installer list, using SuperAdmin only")
+                QMessageBox.warning(self, "Cloud Warning", "Could not fetch installer list. You can still activate using SuperAdmin Secret Key if you have one.")
             
             self.installer_user.addItems(all_users)
-            print(f"[SUCCESS] Loaded {len(all_users)} installers (including SuperAdmin)")
             self.installer_user.setEnabled(True)
-        except Exception as e:
-            print(f"[ERROR] Cloud Error: {e}")
-            self.installer_user.addItem("SuperAdmin") # Fallback to just SuperAdmin if cloud offline
-            self.installer_user.setEnabled(True)
-            QMessageBox.warning(self, "Cloud Warning", "Could not fetch installer list. You can still activate using SuperAdmin Secret Key if you have one.")
+        
+        task_manager.run_task(fetch_installers, on_finished=on_finished)
 
     def get_system_serial(self):
         """Find OS and run appropriate command to read the system serial number without sudo."""

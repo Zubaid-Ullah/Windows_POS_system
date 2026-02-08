@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, 
                              QPushButton, QComboBox, QFrame, QMessageBox)
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 import qtawesome as qta
 from src.core.supabase_manager import supabase_manager
 from src.core.local_config import local_config
@@ -80,17 +80,17 @@ class LoginWindow(QWidget):
         QTimer.singleShot(100, self._do_refresh_installers)
 
     def _do_refresh_installers(self):
-        class UserFetcher(QThread):
-            users_received = pyqtSignal(list)
-            def run(self):
-                try:
-                    users = supabase_manager.get_installers()
-                    self.users_received.emit(users or [])
-                except: self.users_received.emit([])
-
-        self.fetch_thread = UserFetcher()
-        self.fetch_thread.users_received.connect(self._on_users_fetched)
-        self.fetch_thread.start()
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_users():
+            try:
+                users = supabase_manager.get_installers()
+                return users or []
+            except Exception as e:
+                print(f"Error fetching users: {e}")
+                return []
+        
+        task_manager.run_task(fetch_users, on_finished=self._on_users_fetched)
 
     def _on_users_fetched(self, users):
         self.user_combo.clear()
@@ -115,34 +115,30 @@ class LoginWindow(QWidget):
         self.login_btn.setEnabled(False)
         self.login_btn.setText(" Verifying...")
         
-        # 1. Start background auth thread
-        class AuthWorker(QThread):
-            result = pyqtSignal(bool, dict) # success, status_data
-            def __init__(self, username, password, system_id):
-                super().__init__()
-                self.username = username
-                self.password = password
-                self.system_id = system_id
-
-            def run(self):
-                try:
-                    # Log attempt
-                    import platform
-                    supabase_manager.log_activation_attempt(self.username, self.system_id, platform.node())
-                    
-                    if supabase_manager.verify_installer(self.username, self.password):
-                        status = supabase_manager.get_installation_status(self.system_id)
-                        self.result.emit(True, status or {})
-                    else:
-                        self.result.emit(False, {})
-                except Exception as e:
-                    print(f"AuthWorker error: {e}")
-                    self.result.emit(False, {})
-
-        self.auth_thread = AuthWorker(username, password, local_config.get("system_id"))
-        self.auth_thread.result.connect(self._on_auth_result)
-        self.auth_thread.finished.connect(self.auth_thread.deleteLater)
-        self.auth_thread.start()
+        # 1. Start background auth
+        from src.core.blocking_task_manager import task_manager
+        import platform
+        
+        system_id = local_config.get("system_id")
+        
+        def authenticate():
+            try:
+                # Log attempt
+                supabase_manager.log_activation_attempt(username, system_id, platform.node())
+                
+                if supabase_manager.verify_installer(username, password):
+                    status = supabase_manager.get_installation_status(system_id)
+                    return {"success": True, "status_data": status or {}}
+                else:
+                    return {"success": False, "status_data": {}}
+            except Exception as e:
+                print(f"Auth error: {e}")
+                return {"success": False, "status_data": {}}
+        
+        def on_auth_finished(result):
+            self._on_auth_result(result["success"], result["status_data"])
+        
+        task_manager.run_task(authenticate, on_finished=on_auth_finished)
 
     def _on_auth_result(self, success, status_data):
         self.login_btn.setEnabled(True)

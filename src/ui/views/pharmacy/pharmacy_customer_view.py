@@ -268,6 +268,7 @@ class PharmacyCustomerView(QWidget):
             return None
 
     def save_customer(self):
+        from src.core.blocking_task_manager import task_manager
         name = self.name_input.text().strip()
         phone = self.phone_input.text().strip()
         address = self.address_input.text().strip()
@@ -281,75 +282,94 @@ class PharmacyCustomerView(QWidget):
              QMessageBox.warning(self, lang_manager.get("error"), f"{lang_manager.get('name')} {lang_manager.get('and')} {lang_manager.get('phone')} {lang_manager.get('required')}")
              return
              
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # Check for existing
-                existing = conn.execute("SELECT id FROM pharmacy_customers WHERE phone = ?", (phone,)).fetchone()
-                if existing:
-                    conn.execute("""
-                        UPDATE pharmacy_customers SET name=?, address=?, loan_enabled=?, loan_limit=?, kyc_photo=?, kyc_id_card=?
-                        WHERE id=?
-                    """, (name, address, loan_enabled, limit, photo, id_card, existing['id']))
-                else:
-                    conn.execute("""
-                        INSERT INTO pharmacy_customers (name, phone, address, loan_enabled, loan_limit, kyc_photo, kyc_id_card)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (name, phone, address, loan_enabled, limit, photo, id_card))
-                conn.commit()
-            
-            self.load_customers()
-            self.clear_form()
-            self.customers_updated.emit()
-            QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
-        except Exception as e:
-            QMessageBox.critical(self, lang_manager.get("error"), str(e))
+        def do_save():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    # Check for existing
+                    existing = conn.execute("SELECT id FROM pharmacy_customers WHERE phone = ?", (phone,)).fetchone()
+                    if existing:
+                        conn.execute("""
+                            UPDATE pharmacy_customers SET name=?, address=?, loan_enabled=?, loan_limit=?, kyc_photo=?, kyc_id_card=?
+                            WHERE id=?
+                        """, (name, address, loan_enabled, limit, photo, id_card, existing['id']))
+                    else:
+                        conn.execute("""
+                            INSERT INTO pharmacy_customers (name, phone, address, loan_enabled, loan_limit, kyc_photo, kyc_id_card)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (name, phone, address, loan_enabled, limit, photo, id_card))
+                    conn.commit()
+                return {"success": True}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if result["success"]:
+                self.load_customers()
+                self.clear_form()
+                self.customers_updated.emit()
+                QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
+            else:
+                QMessageBox.critical(self, lang_manager.get("error"), result["error"])
+
+        task_manager.run_task(do_save, on_finished=on_finished)
 
     def load_customers(self):
-        self.table.setRowCount(0)
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                rows = conn.execute("SELECT * FROM pharmacy_customers WHERE is_active=1").fetchall()
-                for i, row in enumerate(rows):
-                    self.table.insertRow(i)
-                    self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
-                    self.table.setItem(i, 1, QTableWidgetItem(row['name']))
-                    self.table.setItem(i, 2, QTableWidgetItem(row['phone']))
-                    
-                    bal_item = QTableWidgetItem(f"$ {row['balance']:,.2f}")
-                    if row['balance'] < 0:
-                        bal_item.setForeground(Qt.GlobalColor.darkGreen)
-                        bal_item.setText(f"Credit: ${abs(row['balance']):,.2f}")
-                    elif row['balance'] > 0:
-                        bal_item.setForeground(Qt.GlobalColor.red)
-                    self.table.setItem(i, 3, bal_item)
-                    
-                    actions = QWidget()
-                    act_layout = QHBoxLayout(actions)
-                    act_layout.setContentsMargins(0,0,0,0)
-                    act_layout.setSpacing(5)
-                    
-                    pay_btn = QPushButton(lang_manager.get("cash"))
-                    style_button(pay_btn, variant="info", size="small")
-                    
-                    edit_btn = QPushButton(lang_manager.get("edit"))
-                    style_button(edit_btn, variant="success", size="small")
-                    edit_btn.clicked.connect(lambda ch, r=row: self.edit_customer(r))
-                    
-                    del_btn = QPushButton(lang_manager.get("delete"))
-                    style_button(del_btn, variant="danger", size="small")
-                    del_btn.clicked.connect(lambda ch, cid=row['id']: self.delete_customer(cid))
-                    
-                    view_btn = QPushButton(lang_manager.get("details"))
-                    style_button(view_btn, variant="outline", size="small")
-                    view_btn.clicked.connect(lambda ch, r=row: self.show_visual_details(r))
-                    
-                    act_layout.addWidget(pay_btn)
-                    act_layout.addWidget(view_btn)
-                    act_layout.addWidget(edit_btn)
-                    act_layout.addWidget(del_btn)
-                    self.table.setCellWidget(i, 4, actions)
-        except Exception as e:
-            print(f"Error loading customers: {e}")
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    return {"success": True, "rows": [dict(r) for r in conn.execute("SELECT * FROM pharmacy_customers WHERE is_active=1").fetchall()]}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                print(f"Error loading customers: {result['error']}")
+                return
+
+            self.table.setRowCount(0)
+            for i, row in enumerate(result["rows"]):
+                self.table.insertRow(i)
+                self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
+                self.table.setItem(i, 1, QTableWidgetItem(row['name']))
+                self.table.setItem(i, 2, QTableWidgetItem(row['phone']))
+                
+                bal_item = QTableWidgetItem(f"AFN {row['balance']:,.2f}")
+                if row['balance'] < 0:
+                    bal_item.setForeground(Qt.GlobalColor.darkGreen)
+                    bal_item.setText(f"Credit: AFN {abs(row['balance']):,.2f}")
+                elif row['balance'] > 0:
+                    bal_item.setForeground(Qt.GlobalColor.red)
+                self.table.setItem(i, 3, bal_item)
+                
+                actions = QWidget()
+                act_layout = QHBoxLayout(actions)
+                act_layout.setContentsMargins(0,0,0,0)
+                act_layout.setSpacing(5)
+                
+                pay_btn = QPushButton(lang_manager.get("cash"))
+                style_button(pay_btn, variant="info", size="small")
+                
+                edit_btn = QPushButton(lang_manager.get("edit"))
+                style_button(edit_btn, variant="success", size="small")
+                edit_btn.clicked.connect(lambda ch, r=row: self.edit_customer(r))
+                
+                del_btn = QPushButton(lang_manager.get("delete"))
+                style_button(del_btn, variant="danger", size="small")
+                del_btn.clicked.connect(lambda ch, cid=row['id']: self.delete_customer(cid))
+                
+                view_btn = QPushButton(lang_manager.get("details"))
+                style_button(view_btn, variant="outline", size="small")
+                view_btn.clicked.connect(lambda ch, r=row: self.show_visual_details(r))
+                
+                act_layout.addWidget(pay_btn)
+                act_layout.addWidget(view_btn)
+                act_layout.addWidget(edit_btn)
+                act_layout.addWidget(del_btn)
+                self.table.setCellWidget(i, 4, actions)
+
+        task_manager.run_task(do_load, on_finished=on_finished)
 
     def show_visual_details(self, row):
         dialog = QDialog(self)

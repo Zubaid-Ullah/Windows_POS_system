@@ -214,42 +214,50 @@ class PharmacyFinanceView(QWidget):
         self.load_salaries()
 
     def load_users_combo(self):
+        from src.core.blocking_task_manager import task_manager
         self.user_combo.clear()
+        self.user_combo.addItem("Loading users...", None)
+        self.user_combo.setEnabled(False)
         
         curr_user = Auth.get_current_user()
         is_super = curr_user and (curr_user.get('is_super_admin') or curr_user.get('username') == 'admin')
         curr_user_id = curr_user.get('id') if curr_user else None
 
-        main_users = []
-        if is_super:
+        def fetch_all_users():
+            main_users = []
+            if is_super:
+                try:
+                    with db_manager.get_connection() as conn:
+                        rows = conn.execute("SELECT id, username, 'Main' as source FROM users WHERE is_active=1").fetchall()
+                        main_users = [dict(r) for r in rows]
+                except: pass
+
+            pharmacy_users = []
             try:
-                with db_manager.get_connection() as conn:
-                    main_users = conn.execute("SELECT id, username, 'Main' as source FROM users WHERE is_active=1").fetchall()
+                with db_manager.get_pharmacy_connection() as conn:
+                    if is_super:
+                        rows = conn.execute("SELECT id, username, 'Pharmacy' as source FROM pharmacy_users WHERE is_active=1").fetchall()
+                    else:
+                        rows = conn.execute("""
+                            SELECT id, username, 'Pharmacy' as source 
+                            FROM pharmacy_users 
+                            WHERE is_active=1 AND created_by=?
+                        """, (curr_user_id,)).fetchall()
+                    pharmacy_users = [dict(r) for r in rows]
             except: pass
+            
+            all_users = list(main_users) + list(pharmacy_users)
+            all_users.sort(key=lambda x: str(x['username']).lower())
+            return all_users
 
-        pharmacy_users = []
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                if is_super:
-                    # SuperAdmin sees everyone
-                    pharmacy_users = conn.execute("SELECT id, username, 'Pharmacy' as source FROM pharmacy_users WHERE is_active=1").fetchall()
-                else:
-                    # Normal admin only sees users they created
-                    pharmacy_users = conn.execute("""
-                        SELECT id, username, 'Pharmacy' as source 
-                        FROM pharmacy_users 
-                        WHERE is_active=1 AND created_by=?
-                    """, (curr_user_id,)).fetchall()
-        except: pass
+        def on_finished(all_users):
+            self.user_combo.clear()
+            self.user_combo.setEnabled(True)
+            for user in all_users:
+                display_text = f"{user['username']} ({user['source']})"
+                self.user_combo.addItem(display_text, (user['id'], user['source']))
 
-        # Combine and sort all users
-        all_users = list(main_users) + list(pharmacy_users)
-        all_users.sort(key=lambda x: str(x['username']).lower())
-
-        # Add to combobox with clear labeling
-        for user in all_users:
-            display_text = f"{user['username']} ({user['source']})"
-            self.user_combo.addItem(display_text, (user['id'], user['source']))
+        task_manager.run_task(fetch_all_users, on_finished=on_finished)
 
     def save_expense(self):
         etype = self.exp_type.currentText()
@@ -279,29 +287,42 @@ class PharmacyFinanceView(QWidget):
             QMessageBox.critical(self, "Error", str(e))
 
     def load_expenses(self):
-        self.exp_table.setRowCount(0)
+        from src.core.blocking_task_manager import task_manager
+        
         today = QDate.currentDate().toString("yyyy-MM-dd")
         month = QDate.currentDate().toString("yyyy-MM")
         
-        daily_sum = 0
-        monthly_sum = 0
-        
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                rows = conn.execute("SELECT * FROM pharmacy_expenses ORDER BY expense_date DESC, id DESC LIMIT 100").fetchall()
-                for i, row in enumerate(rows):
-                    self.exp_table.insertRow(i)
-                    self.exp_table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
-                    self.exp_table.setItem(i, 1, QTableWidgetItem(row['expense_date']))
-                    self.exp_table.setItem(i, 2, QTableWidgetItem(row['category']))
-                    self.exp_table.setItem(i, 3, QTableWidgetItem(row['description']))
-                    self.exp_table.setItem(i, 4, QTableWidgetItem(f"{row['amount']:,.2f} AFN"))
-                    
-                    if row['expense_date'] == today: daily_sum += row['amount']
-                    if row['expense_date'].startswith(month): monthly_sum += row['amount']
-                    
-                self.daily_total_lbl.setText(f"Daily Total: {daily_sum:,.2f} AFN")
-            self.monthly_total_lbl.setText(f"Monthly Total: {monthly_sum:,.2f} AFN")
+        def do_load():
+            daily_sum = 0
+            monthly_sum = 0
+            data = []
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    rows = conn.execute("SELECT * FROM pharmacy_expenses ORDER BY expense_date DESC, id DESC LIMIT 100").fetchall()
+                    for row in rows:
+                        data.append(dict(row))
+                        if row['expense_date'] == today: daily_sum += row['amount']
+                        if row['expense_date'].startswith(month): monthly_sum += row['amount']
+                return {"success": True, "rows": data, "daily_sum": daily_sum, "monthly_sum": monthly_sum}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                print(f"Error loading expenses: {result['error']}")
+                return
+
+            self.exp_table.setRowCount(0)
+            for i, row in enumerate(result["rows"]):
+                self.exp_table.insertRow(i)
+                self.exp_table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
+                self.exp_table.setItem(i, 1, QTableWidgetItem(row['expense_date']))
+                self.exp_table.setItem(i, 2, QTableWidgetItem(row['category']))
+                self.exp_table.setItem(i, 3, QTableWidgetItem(row['description']))
+                self.exp_table.setItem(i, 4, QTableWidgetItem(f"{row['amount']:,.2f} AFN"))
+            
+            self.daily_total_lbl.setText(f"Daily Total: {result['daily_sum']:,.2f} AFN")
+            self.monthly_total_lbl.setText(f"Monthly Total: {result['monthly_sum']:,.2f} AFN")
             
             # Autofit logic
             self.exp_table.resizeColumnsToContents()
@@ -309,8 +330,9 @@ class PharmacyFinanceView(QWidget):
                 self.exp_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
             else:
                 self.exp_table.horizontalHeader().setStretchLastSection(True)
-        except Exception as e:
-            print(f"Error loading expenses: {e}")
+
+        task_manager.run_task(do_load, on_finished=on_finished)
+
 
     def assign_salary(self):
         user_data = self.user_combo.currentData()
@@ -344,45 +366,53 @@ class PharmacyFinanceView(QWidget):
             QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {str(e)}")
 
     def load_salaries(self):
-        self.salary_table.setRowCount(0)
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # Load pharmacy user salaries
-                pharmacy_rows = conn.execute("""
-                    SELECT s.*, u.username, 'Pharmacy' as source
-                    FROM pharmacy_employee_salary s
-                    JOIN pharmacy_users u ON s.user_id = u.id
-                    WHERE s.is_active = 1
-                """).fetchall()
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    # Load pharmacy user salaries
+                    rows = conn.execute("""
+                        SELECT s.*, u.username, 'Pharmacy' as source
+                        FROM pharmacy_employee_salary s
+                        JOIN pharmacy_users u ON s.user_id = u.id
+                        WHERE s.is_active = 1
+                    """).fetchall()
+                    return {"success": True, "rows": [dict(r) for r in rows]}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
 
-                # For now, we'll only show pharmacy user salaries since the main salary management
-                # is handled in the main finance view
-                all_rows = pharmacy_rows
+        def on_finished(result):
+            if not result["success"]:
+                print(f"Error loading salaries: {result['error']}")
+                return
 
-                for i, row in enumerate(all_rows):
-                    self.salary_table.insertRow(i)
-                    self.salary_table.setItem(i, 0, QTableWidgetItem(row['username']))
-                    self.salary_table.setItem(i, 1, QTableWidgetItem(row['salary_type']))
-                    self.salary_table.setItem(i, 2, QTableWidgetItem(f"{row['amount']:,.2f} AFN"))
-                    self.salary_table.setItem(i, 3, QTableWidgetItem(lang_manager.get("active")))
-                    
-                    actions = QWidget()
-                    act_layout = QHBoxLayout(actions)
-                    act_layout.setContentsMargins(0,0,0,0)
-                    btn = QPushButton(lang_manager.get("remove"))
-                    style_button(btn, variant="danger", size="small")
-                    btn.clicked.connect(lambda ch, sid=row['id']: self.remove_salary(sid))
-                    act_layout.addWidget(btn)
-                    self.salary_table.setCellWidget(i, 4, actions)
-                    
-                # Autofit logic
-                self.salary_table.resizeColumnsToContents()
-                if self.salary_table.horizontalHeader().length() < self.salary_table.width():
-                    self.salary_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-                else:
-                    self.salary_table.horizontalHeader().setStretchLastSection(True)
-        except Exception as e:
-            print(f"Error loading salaries: {e}")
+            self.salary_table.setRowCount(0)
+            for i, row in enumerate(result["rows"]):
+                self.salary_table.insertRow(i)
+                self.salary_table.setItem(i, 0, QTableWidgetItem(row['username']))
+                self.salary_table.setItem(i, 1, QTableWidgetItem(row['salary_type']))
+                self.salary_table.setItem(i, 2, QTableWidgetItem(f"{row['amount']:,.2f} AFN"))
+                self.salary_table.setItem(i, 3, QTableWidgetItem(lang_manager.get("active")))
+                
+                actions = QWidget()
+                act_layout = QHBoxLayout(actions)
+                act_layout.setContentsMargins(0,0,0,0)
+                btn = QPushButton(lang_manager.get("remove"))
+                style_button(btn, variant="danger", size="small")
+                btn.clicked.connect(lambda ch, sid=row['id']: self.remove_salary(sid))
+                act_layout.addWidget(btn)
+                self.salary_table.setCellWidget(i, 4, actions)
+                
+            # Autofit logic
+            self.salary_table.resizeColumnsToContents()
+            if self.salary_table.horizontalHeader().length() < self.salary_table.width():
+                self.salary_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            else:
+                self.salary_table.horizontalHeader().setStretchLastSection(True)
+
+        task_manager.run_task(do_load, on_finished=on_finished)
+
 
     def init_summary_tab(self):
         layout = QVBoxLayout(self.summary_tab)

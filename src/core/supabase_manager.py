@@ -73,9 +73,12 @@ class SupabaseManager:
         self._fix_ssl()
         
         # DEBUG: Log key status (safe, partial)
+        is_service_role = "service_role" in (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "") or "service_role" in (os.getenv("SERVICE_ROLE_KEY") or "")
+        k_type = "SERVICE_ROLE" if is_service_role else "PUBLISHABLE/CLIENT"
         k_status = f"{self.key[:5]}...{self.key[-5:]}" if self.key and len(self.key) > 10 else "None/Short"
+        
         # Mask URL for security
-        self._log(f"Supabase Init: URL=[HIDDEN], Key={k_status}")
+        self._log(f"Supabase Init: URL=[HIDDEN], KeyType={k_type}, Key={k_status}")
 
     def _sanitize(self, msg: Any) -> str:
         """Hide sensitive URLs in log/output messages"""

@@ -64,44 +64,49 @@ class ReturnsView(QWidget):
         inv_num = self.invoice_input.text().strip()
         if not inv_num: return
         
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT s.*, c.name_en as customer_name , c.id as cust_id
-                FROM sales s 
-                LEFT JOIN customers c ON s.customer_id = c.id 
-                WHERE s.invoice_number = ?
-            """, (inv_num,))
-            sale = cursor.fetchone()
-            
-            if not sale:
-                QMessageBox.warning(self, "Not Found", f"No sale found with invoice {inv_num}")
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_data():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT s.*, c.name_en as customer_name , c.id as cust_id
+                        FROM sales s 
+                        LEFT JOIN customers c ON s.customer_id = c.id 
+                        WHERE s.invoice_number = ?
+                    """, (inv_num,))
+                    sale = cursor.fetchone()
+                    
+                    if not sale:
+                        return None
+                    
+                    cursor.execute("""
+                        SELECT si.*, 
+                        IFNULL((SELECT SUM(ri.quantity) 
+                         FROM return_items ri 
+                         JOIN sales_returns sr ON ri.return_id = sr.id 
+                         WHERE sr.sale_id = si.sale_id AND ri.product_id = si.product_id), 0) as already_returned
+                        FROM sale_items si 
+                        WHERE si.sale_id = ?
+                    """, (sale['id'],))
+                    
+                    items = cursor.fetchall()
+                    return {"sale": dict(sale), "items": [dict(it) for it in items]}
+            except:
+                return None
+
+        def on_finished(result):
+            if not result:
+                QMessageBox.warning(self, lang_manager.get("not_found"), f"{lang_manager.get('no_sale_found_with_invoice')} {inv_num}")
                 self.details_card.hide()
                 return
             
-            self.current_sale = dict(sale)
+            self.current_sale = result["sale"]
+            sale = result["sale"]
             self.sale_info.setText(f"Invoice: {sale['invoice_number']} | Customer: {sale['customer_name']} | Date: {sale['created_at']}")
             
-            # Load items
-            cursor.execute("""
-                SELECT si.*, 
-                (SELECT SUM(quantity) FROM return_items ri JOIN sales_returns sr ON ri.return_id = sr.id WHERE sr.sale_id = ?) as total_returned
-                FROM sale_items si 
-                WHERE si.sale_id = ?
-            """, (sale['id'], sale['id']))
-            # Actually the subquery above is wrong as it sums ALL items. Need per product.
-            
-            cursor.execute("""
-                SELECT si.*, 
-                IFNULL((SELECT SUM(ri.quantity) 
-                 FROM return_items ri 
-                 JOIN sales_returns sr ON ri.return_id = sr.id 
-                 WHERE sr.sale_id = si.sale_id AND ri.product_id = si.product_id), 0) as already_returned
-                FROM sale_items si 
-                WHERE si.sale_id = ?
-            """, (sale['id'],))
-            
-            items = cursor.fetchall()
+            items = result["items"]
             self.items_table.setRowCount(0)
             for i, item in enumerate(items):
                 self.items_table.insertRow(i)
@@ -127,9 +132,10 @@ class ReturnsView(QWidget):
             
             self.details_card.show()
 
+        task_manager.run_task(fetch_data, on_finished=on_finished)
+
     def process_item_return(self, item):
         max_ret = item['quantity'] - item['already_returned']
-        qty, ok = QDoubleSpinBox(), True # Placeholder logic for dialog
         
         # Proper Dialog for Return
         dialog = QDialog(self)
@@ -164,38 +170,50 @@ class ReturnsView(QWidget):
             refund_unit = item['total_price'] / item['quantity']
             total_refund = ret_qty * refund_unit
             
-            try:
-                with db_manager.get_connection() as conn:
-                    cursor = conn.cursor()
-                    # 1. Create return header
-                    cursor.execute("""
-                        INSERT INTO sales_returns (sale_id, user_id, reason, refund_amount)
-                        VALUES (?, ?, ?, ?)
-                    """, (self.current_sale['id'], self.current_user['id'], ret_reason, total_refund))
-                    return_id = cursor.lastrowid
-                    
-                    # 2. Create return item
-                    cursor.execute("""
-                        INSERT INTO return_items (return_id, product_id, quantity, refund_price)
-                        VALUES (?, ?, ?, ?)
-                    """, (return_id, item['product_id'], ret_qty, total_refund))
-                    
-                    # 3. Update Inventory
-                    cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE product_id = ?", 
-                                 (ret_qty, item['product_id']))
-                    
-                    # 4. If Credit sale, update customer balance
-                    if self.current_sale['payment_type'] == 'CREDIT':
-                        cursor.execute("UPDATE customers SET balance = MAX(0, balance - ?) WHERE id = ?",
-                                     (total_refund, self.current_sale['cust_id']))
-                    
-                    # 5. Audit Log
-                    cursor.execute("INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
-                                 (self.current_user['id'], 'RETURN_ITEM', 'sales_returns', return_id, 
-                                  f"Returned {ret_qty} of {item['product_name']} from INV {self.current_sale['invoice_number']}"))
-                    
-                    conn.commit()
-                QMessageBox.information(self, "Success", f"Successfully returned {ret_qty} items. Refund: {total_refund:.2f} AFN")
-                self.find_invoice()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not process return: {str(e)}")
+            from src.core.blocking_task_manager import task_manager
+            
+            def run_return():
+                try:
+                    with db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
+                        # 1. Create return header
+                        cursor.execute("""
+                            INSERT INTO sales_returns (sale_id, user_id, reason, refund_amount)
+                            VALUES (?, ?, ?, ?)
+                        """, (self.current_sale['id'], self.current_user['id'], ret_reason, total_refund))
+                        return_id = cursor.lastrowid
+                        
+                        # 2. Create return item
+                        cursor.execute("""
+                            INSERT INTO return_items (return_id, product_id, quantity, refund_price)
+                            VALUES (?, ?, ?, ?)
+                        """, (return_id, item['product_id'], ret_qty, total_refund))
+                        
+                        # 3. Update Inventory
+                        cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE product_id = ?", 
+                                     (ret_qty, item['product_id']))
+                        
+                        # 4. If Credit sale, update customer balance
+                        if self.current_sale['payment_type'] == 'CREDIT':
+                            cursor.execute("UPDATE customers SET balance = MAX(0, balance - ?) WHERE id = ?",
+                                         (total_refund, self.current_sale['cust_id']))
+                        
+                        # 5. Audit Log
+                        cursor.execute("INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
+                                     (self.current_user['id'], 'RETURN_ITEM', 'sales_returns', return_id, 
+                                      f"Returned {ret_qty} of {item['product_name']} from INV {self.current_sale['invoice_number']}"))
+                        
+                        conn.commit()
+                    return {"success": True}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+
+            def on_finished(result):
+                if result["success"]:
+                    msg = f"{lang_manager.get('successfully_returned')} {lang_manager.localize_digits(ret_qty)} {lang_manager.get('items')}. {lang_manager.get('refund')}: {lang_manager.localize_digits(f'{total_refund:.2f}')} AFN"
+                    QMessageBox.information(self, lang_manager.get("success"), msg)
+                    self.find_invoice()
+                else:
+                    QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {result['error']}")
+
+            task_manager.run_task(run_return, on_finished=on_finished)

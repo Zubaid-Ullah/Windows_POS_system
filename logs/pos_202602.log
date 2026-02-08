@@ -16,3 +16,29 @@
 2026-02-07 21:30:28,441 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
 2026-02-07 21:36:32,087 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
 2026-02-07 21:37:38,666 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-07 21:46:07,978 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-07 21:49:15,575 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-07 22:00:12,431 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-07 22:01:32,573 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-08 13:07:24,087 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 13:16:49,258 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 13:47:27,516 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 13:56:53,412 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:13:37,789 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:28:22,998 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:34:47,996 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:37:15,119 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:41:20,228 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:47:47,358 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:49:19,105 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:49:44,764 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:51:13,497 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 14:55:37,470 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 15:14:50,112 - INFO - Pharmacy User admin logged in successfully
+2026-02-08 15:18:41,044 - INFO - Pharmacy User zubaid logged in successfully
+2026-02-08 15:19:16,394 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-08 15:19:16,481 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-08 15:20:16,411 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-08 15:20:47,093 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-08 15:23:20,292 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-08 15:25:07,685 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"

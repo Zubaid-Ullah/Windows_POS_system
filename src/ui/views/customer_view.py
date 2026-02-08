@@ -308,33 +308,41 @@ class CustomerView(QWidget):
         if dialog.exec():
             data = dialog.get_data()
             if not data: return
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO customers (name_en, phone, loan_enabled, loan_limit, home_address, photo, id_card_photo)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (data['name_en'], data['phone'], data['loan_enabled'], data['loan_limit'], data['address'], data['photo'], data['id_card_photo']))
-                customer_id = cursor.lastrowid
-                cursor.execute("INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
-                             (self.current_user['id'], 'ADD_CUSTOMER', 'customers', customer_id, f"Added customer {data['name_en']}"))
-                conn.commit()
-            self.load_customers()
-            # If SalesView exists, refresh its customer list
-            # Usually handled by a global refresh signal or in main_window
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_add():
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO customers (name_en, phone, loan_enabled, loan_limit, home_address, photo, id_card_photo)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (data['name_en'], data['phone'], data['loan_enabled'], data['loan_limit'], data['address'], data['photo'], data['id_card_photo']))
+                    customer_id = cursor.lastrowid
+                    cursor.execute("INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
+                                 (self.current_user['id'], 'ADD_CUSTOMER', 'customers', customer_id, f"Added customer {data['name_en']}"))
+                    conn.commit()
+                return True
+
+            task_manager.run_task(do_add, on_finished=lambda _: self.load_customers())
 
     def edit_customer(self, customer):
         dialog = CustomerDialog(customer)
         if dialog.exec():
             data = dialog.get_data()
             if not data: return
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE customers SET name_en=?, phone=?, loan_enabled=?, loan_limit=?, home_address=?, photo=?, id_card_photo=?
-                    WHERE id=?
-                """, (data['name_en'], data['phone'], data['loan_enabled'], data['loan_limit'], data['address'], data['photo'], data['id_card_photo'], customer['id']))
-                conn.commit()
-            self.load_customers()
+            from src.core.blocking_task_manager import task_manager
+
+            def do_edit():
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE customers SET name_en=?, phone=?, loan_enabled=?, loan_limit=?, home_address=?, photo=?, id_card_photo=?
+                        WHERE id=?
+                    """, (data['name_en'], data['phone'], data['loan_enabled'], data['loan_limit'], data['address'], data['photo'], data['id_card_photo'], customer['id']))
+                    conn.commit()
+                return True
+
+            task_manager.run_task(do_edit, on_finished=lambda _: self.load_customers())
 
     def delete_customer(self, cid):
         if cid == 1:
@@ -342,24 +350,41 @@ class CustomerView(QWidget):
             return
         reply = QMessageBox.question(self, 'Confirm Delete', "Deactivate this customer?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE customers SET is_active = 0 WHERE id = ?", (cid,))
-                conn.commit()
-            self.load_customers()
-
-    def make_payment(self, cid):
-        amount, ok = QInputDialog.getDouble(self, "Payment", "Enter amount received:", 0, 0, 1000000, 2)
-        if ok and amount > 0:
-            try:
-                from datetime import datetime
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_delete():
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("UPDATE customers SET balance = MAX(0, balance - ?) WHERE id = ?", (amount, cid))
-                    cursor.execute("INSERT INTO customer_payments (customer_id, amount, payment_method, reference_number) VALUES (?, ?, 'CASH', ?)",
-                                 (cid, amount, f"Settle-{datetime.now().strftime('%Y%m%d%H%M')}"))
+                    cursor.execute("UPDATE customers SET is_active = 0 WHERE id = ?", (cid,))
                     conn.commit()
-                QMessageBox.information(self, "Success", "Payment recorded.")
-                self.load_customers()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+                return True
+
+            task_manager.run_task(do_delete, on_finished=lambda _: self.load_customers())
+
+    def make_payment(self, cid):
+        from PyQt6.QtWidgets import QInputDialog
+        amount, ok = QInputDialog.getDouble(self, "Payment", "Enter amount received:", 0, 0, 1000000, 2)
+        if ok and amount > 0:
+            from src.core.blocking_task_manager import task_manager
+            from datetime import datetime
+            
+            def do_payment():
+                try:
+                    with db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE customers SET balance = MAX(0, balance - ?) WHERE id = ?", (amount, cid))
+                        cursor.execute("INSERT INTO customer_payments (customer_id, amount, payment_method, reference_number) VALUES (?, ?, 'CASH', ?)",
+                                     (cid, amount, f"Settle-{datetime.now().strftime('%Y%m%d%H%M')}"))
+                        conn.commit()
+                    return {"success": True}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+
+            def on_finished(result):
+                if result["success"]:
+                    QMessageBox.information(self, "Success", "Payment recorded.")
+                    self.load_customers()
+                else:
+                    QMessageBox.critical(self, "Error", result["error"])
+
+            task_manager.run_task(do_payment, on_finished=on_finished)

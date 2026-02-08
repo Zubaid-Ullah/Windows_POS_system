@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QScrollArea, QComboBox, QDateEdit,
                              QGroupBox, QMessageBox, QSpinBox)
-from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal, QObject, QTimer
 from PyQt6.QtGui import QFont, QColor, QTextDocument, QTextCursor, QTextTable, QTextTableFormat, QTextCharFormat, \
     QTextLength, QPageSize, QPageLayout, QBrush
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPrintPreviewDialog
@@ -13,223 +13,24 @@ from src.ui.views.pharmacy.pharmacy_month_close_dialog import PharmacyMonthClose
 from src.core.localization import lang_manager
 from datetime import datetime
 
-class DataLoadWorker(QObject):
-    """Background worker to load report data without freezing GUI"""
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
-    
-    def __init__(self, time_filter, expiry_days_filter):
-        super().__init__()
-        self.time_filter = time_filter
-        self.expiry_days_filter = expiry_days_filter
-    
-    def run(self):
-        """Load all report data in background thread"""
-        try:
-            data = {}
-            with db_manager.get_pharmacy_connection() as conn:
-                # Load all data sections
-                data['sales'] = self._load_sales(conn)
-                data['returns'] = self._load_returns(conn)
-                data['loans'] = self._load_loans(conn)
-                data['low_stock'] = self._load_low_stock(conn)
-                data['expiry'] = self._load_expiry(conn)
-                data['stats'] = self._load_stats(conn)
-                
-            self.finished.emit(data)
-        except Exception as e:
-            self.error.emit(str(e))
-    
-    def _load_sales(self, conn):
-        """Load sales transactions with item counts in a single query"""
-        trans_query = f"""
-            SELECT s.*, c.name as customer_name,
-                   (SELECT COALESCE(SUM(quantity), 0) FROM pharmacy_sale_items WHERE sale_id = s.id) as total_items
-            FROM pharmacy_sales s
-            LEFT JOIN pharmacy_customers c ON s.customer_id = c.id
-            WHERE {self.time_filter.format(T='s')}
-            ORDER BY s.created_at DESC
-        """
-        rows = conn.execute(trans_query).fetchall()
-        return [dict(r) for r in rows]
-    
-    def _load_returns(self, conn):
-        """Load returns with replacement details"""
-        returns_query = f"""
-            SELECT 
-                s.invoice_number,
-                c.name as customer_name,
-                p.name_en as item_name,
-                ri.quantity as qty_returned,
-                ri.action,
-                r.refund_amount,
-                r.refund_type,
-                r.reason,
-                ri.unit_price,
-                ri.id as return_item_id
-            FROM pharmacy_returns r
-            JOIN pharmacy_return_items ri ON r.id = ri.return_id
-            JOIN pharmacy_sales s ON r.original_sale_id = s.id
-            LEFT JOIN pharmacy_customers c ON s.customer_id = c.id
-            JOIN pharmacy_products p ON ri.product_id = p.id
-            WHERE {self.time_filter.format(T='r')}
-            ORDER BY r.created_at DESC
-        """
-        returns_rows = conn.execute(returns_query).fetchall()
-        returns = []
-        
-        # For each return, get replacement items if action is REPLACEMENT
-        for row in returns_rows:
-            ret_dict = dict(row)
-            if ret_dict['action'] == 'REPLACEMENT':
-                replacements = conn.execute("""
-                    SELECT product_name, quantity, unit_price, total_price
-                    FROM pharmacy_replacement_items
-                    WHERE return_item_id = ?
-                """, (ret_dict['return_item_id'],)).fetchall()
-                ret_dict['replacements'] = [dict(r) for r in replacements]
-            returns.append(ret_dict)
-        
-        return returns
-    
-    def _load_loans(self, conn):
-        """Load loan/credit data"""
-        loans = conn.execute(f"""
-            SELECT l.*, c.name as customer_name, s.invoice_number
-            FROM pharmacy_loans l
-            JOIN pharmacy_customers c ON l.customer_id = c.id
-            JOIN pharmacy_sales s ON l.sale_id = s.id
-            WHERE {self.time_filter.format(T='l')}
-            ORDER BY l.created_at DESC
-        """).fetchall()
-        return loans
-    
-    def _load_low_stock(self, conn):
-        """Load low stock items"""
-        low_items = conn.execute("""
-            SELECT p.name_en, p.min_stock, SUM(i.quantity) as current_qty, MIN(i.expiry_date) as expiry
-            FROM pharmacy_products p
-            LEFT JOIN pharmacy_inventory i ON p.id = i.product_id
-            GROUP BY p.id
-            HAVING SUM(i.quantity) < p.min_stock
-            ORDER BY SUM(i.quantity) ASC LIMIT 10
-        """).fetchall()
-        return low_items
-    
-    def _load_expiry(self, conn):
-        """Load expiry data"""
-        expiry_items_query = """
-            SELECT p.name_en, i.batch_number, i.expiry_date, i.quantity
-            FROM pharmacy_inventory i
-            JOIN pharmacy_products p ON i.product_id = p.id
-            WHERE i.quantity > 0
-            ORDER BY i.expiry_date ASC
-        """
-        all_inventory = conn.execute(expiry_items_query).fetchall()
-        
-        today = datetime.now().date()
-        filtered_expiry_rows = []
-        
-        for row in all_inventory:
-            if not row['expiry_date']:
-                continue
-                
-            try:
-                exp_date = datetime.strptime(row['expiry_date'], "%Y-%m-%d").date()
-                days_left = (exp_date - today).days
-                
-                if days_left <= self.expiry_days_filter:
-                    filtered_expiry_rows.append({
-                        'name': row['name_en'],
-                        'batch': row['batch_number'] or "N/A",
-                        'expiry': row['expiry_date'],
-                        'days_left': days_left
-                    })
-            except Exception as e:
-                print(f"Error parsing date {row['expiry_date']}: {e}")
-        
-        return filtered_expiry_rows
-    
-    def _load_stats(self, conn):
-        """Load statistics using a cash-received model (Profit/Income only counts when paid)"""
-        stats = {}
-        
-        # Gross Sales - Only count CASH sales + Payments received in this period
-        # We use separate subqueries to ensure we only get money that actually entered the drawer.
-        sql = f"""
-            SELECT (
-                (SELECT COALESCE(SUM(total_amount), 0) FROM pharmacy_sales s WHERE payment_type='CASH' AND {self.time_filter.format(T='s')}) +
-                (SELECT COALESCE(SUM(amount), 0) FROM pharmacy_payments p WHERE {self.time_filter.format(T='p')})
-            ) as total
-        """
-        sale_row = conn.execute(sql).fetchone()
-        stats['gross_sales'] = sale_row['total'] or 0
-        
-        # Returns Value - Only count CASH refunds (ACCOUNT refunds are just loan adjustments)
-        sql_ret = f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE refund_type='CASH' AND {self.time_filter.format(T='r')}"
-        ret_val_row = conn.execute(sql_ret).fetchone()
-        stats['returned_amount'] = ret_val_row['total'] or 0
-        
-        # Return Items Count
-        ret_row = conn.execute(f"SELECT COUNT(*) as cnt FROM pharmacy_returns r WHERE {self.time_filter.format(T='r')}").fetchone()
-        stats['return_count'] = ret_row['cnt'] or 0
-        
-        # Total Orders
-        ord_row = conn.execute(f"SELECT COUNT(*) as cnt FROM pharmacy_sales s WHERE {self.time_filter.format(T='s')}").fetchone()
-        stats['total_orders'] = ord_row['cnt'] or 0
-        
-        # Fully returned orders
-        fully_returned_query = f"""
-            SELECT count(*) as cnt 
-            FROM pharmacy_sales s 
-            WHERE {self.time_filter.format(T='s')} 
-            AND s.id IN (
-                SELECT original_sale_id 
-                FROM pharmacy_returns 
-                GROUP BY original_sale_id 
-                HAVING SUM(refund_amount) >= (SELECT total_amount FROM pharmacy_sales WHERE id=original_sale_id)
-            )
-        """
-        full_ret_row = conn.execute(fully_returned_query).fetchone()
-        stats['fully_returned_cnt'] = full_ret_row['cnt'] or 0
-        
-        # Low Stock count
-        low_row = conn.execute("""
-            SELECT COUNT(*) as cnt FROM (
-                SELECT p.id
-                FROM pharmacy_products p
-                LEFT JOIN pharmacy_inventory i ON p.id = i.product_id
-                GROUP BY p.id
-                HAVING SUM(i.quantity) < p.min_stock
-            )
-        """).fetchone()
-        stats['low_stock_count'] = low_row['cnt'] or 0
-        
-        return stats
+# Helper functions moved inside PharmacyReportsView or as standalone if needed, 
+# but for now we'll put the loading logic into a task.
 
 class PharmacyReportsView(QWidget):
     def __init__(self):
         super().__init__()
-        self.thread = None  # Store thread reference to prevent premature destruction
-        self.worker = None  # Store worker reference
         self.is_loading = False  # Flag to prevent multiple simultaneous loads
+        
+        # Debounce timer for loading data
+        self.load_timer = QTimer(self)
+        self.load_timer.setSingleShot(True)
+        self.load_timer.setInterval(300)  # 300ms debounce
+        self.load_timer.timeout.connect(self._do_load_data)
+        
         self.init_ui()
         self.load_data()
         theme_manager.theme_changed.connect(self.update_styles)
         self.update_styles()
-        
-        # Connect destroyed signal to cleanup thread
-        self.destroyed.connect(self.cleanup_thread)
-    
-    def cleanup_thread(self):
-        """Safely cleanup any running threads"""
-        if hasattr(self, 'thread') and self.thread is not None:
-            if self.thread.isRunning():
-                self.thread.quit()
-                self.thread.wait(1000)  # Wait up to 1 second
-            self.thread = None
-        if hasattr(self, 'worker') and self.worker is not None:
-            self.worker = None
 
     def init_ui(self):
         # Main layout with scroll
@@ -519,15 +320,17 @@ class PharmacyReportsView(QWidget):
         # Labels are now part of group box headers, no need to style individually
 
     def load_data(self):
-        """Load data in background thread to prevent GUI freezing"""
-        # Prevent multiple simultaneous loads
+        """Trigger debounced data load"""
+        self.load_timer.start()
+
+    def _do_load_data(self):
+        """Actual data loading logic after debounce"""
         if self.is_loading:
+            # Restart timer if already loading to try again later
+            self.load_timer.start(500)
             return
         
         self.is_loading = True
-        
-        # Cleanup any existing thread first
-        self.cleanup_thread()
         
         # Determine time filter
         filter_text = self.filter_combo.currentText()
@@ -547,35 +350,136 @@ class PharmacyReportsView(QWidget):
             time_filter = f"date({{T}}.created_at) BETWEEN '{d_from}' AND '{d_to}'"
             self.period_name = f"{d_from} {lang_manager.get('to')} {d_to}"
         
-        # Create worker and thread
-        self.thread = QThread(self)  # Set parent to prevent premature destruction
-        self.worker = DataLoadWorker(time_filter, self.expiry_days_spin.value())
-        self.worker.moveToThread(self.thread)
-        
-        # Connect signals
-        self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.on_data_loaded)
-        self.worker.error.connect(self.on_data_error)
-        
-        # Ensure cleanup when finished
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
-        
-        # Reset references when the thread is actually deleted
-        self.thread.destroyed.connect(self._reset_thread_refs)
-        
-        # Start thread
-        self.thread.start()
-        
-        # Disable buttons while loading
+        expiry_days = self.expiry_days_spin.value()
+        from src.core.blocking_task_manager import task_manager
+
+        def do_load():
+            try:
+                data = {}
+                with db_manager.get_pharmacy_connection() as conn:
+                    # 1. Sales
+                    trans_query = f"""
+                        SELECT s.*, c.name as customer_name,
+                               (SELECT COALESCE(SUM(quantity), 0) FROM pharmacy_sale_items WHERE sale_id = s.id) as total_items
+                        FROM pharmacy_sales s
+                        LEFT JOIN pharmacy_customers c ON s.customer_id = c.id
+                        WHERE {time_filter.format(T='s')}
+                        ORDER BY s.created_at DESC
+                    """
+                    data['sales'] = [dict(r) for r in conn.execute(trans_query).fetchall()]
+
+                    # 2. Returns
+                    returns_query = f"""
+                        SELECT 
+                            s.invoice_number,
+                            c.name as customer_name,
+                            p.name_en as item_name,
+                            ri.quantity as qty_returned,
+                            ri.action,
+                            r.refund_amount,
+                            r.refund_type,
+                            r.reason,
+                            ri.unit_price,
+                            ri.id as return_item_id
+                        FROM pharmacy_returns r
+                        JOIN pharmacy_return_items ri ON r.id = ri.return_id
+                        JOIN pharmacy_sales s ON r.original_sale_id = s.id
+                        LEFT JOIN pharmacy_customers c ON s.customer_id = c.id
+                        JOIN pharmacy_products p ON ri.product_id = p.id
+                        WHERE {time_filter.format(T='r')}
+                        ORDER BY r.created_at DESC
+                    """
+                    returns_rows = conn.execute(returns_query).fetchall()
+                    returns_data = []
+                    for row in returns_rows:
+                        ret_dict = dict(row)
+                        if ret_dict['action'] == 'REPLACEMENT':
+                            replacements = conn.execute("""
+                                SELECT product_name, quantity, unit_price, total_price
+                                FROM pharmacy_replacement_items
+                                WHERE return_item_id = ?
+                            """, (ret_dict['return_item_id'],)).fetchall()
+                            ret_dict['replacements'] = [dict(r) for r in replacements]
+                        returns_data.append(ret_dict)
+                    data['returns'] = returns_data
+
+                    # 3. Loans
+                    loans = conn.execute(f"""
+                        SELECT l.*, c.name as customer_name, s.invoice_number
+                        FROM pharmacy_loans l
+                        JOIN pharmacy_customers c ON l.customer_id = c.id
+                        JOIN pharmacy_sales s ON l.sale_id = s.id
+                        WHERE {time_filter.format(T='l')}
+                        ORDER BY l.created_at DESC
+                    """).fetchall()
+                    data['loans'] = [dict(r) for r in loans]
+
+                    # 4. Low stock
+                    low_items = conn.execute("""
+                        SELECT p.name_en, p.min_stock, SUM(i.quantity) as current_qty, MIN(i.expiry_date) as expiry
+                        FROM pharmacy_products p
+                        LEFT JOIN pharmacy_inventory i ON p.id = i.product_id
+                        GROUP BY p.id
+                        HAVING SUM(i.quantity) < p.min_stock
+                        ORDER BY SUM(i.quantity) ASC LIMIT 10
+                    """).fetchall()
+                    data['low_stock'] = [dict(r) for r in low_items]
+
+                    # 5. Expiry
+                    expiry_items_query = """
+                        SELECT p.name_en, i.batch_number, i.expiry_date, i.quantity
+                        FROM pharmacy_inventory i
+                        JOIN pharmacy_products p ON i.product_id = p.id
+                        WHERE i.quantity > 0
+                        ORDER BY i.expiry_date ASC
+                    """
+                    all_inventory = conn.execute(expiry_items_query).fetchall()
+                    today = datetime.now().date()
+                    filtered_expiry_rows = []
+                    for row in all_inventory:
+                        if not row['expiry_date']: continue
+                        try:
+                            exp_date = datetime.strptime(row['expiry_date'], "%Y-%m-%d").date()
+                            days_left = (exp_date - today).days
+                            if days_left <= expiry_days:
+                                filtered_expiry_rows.append({
+                                    'name': row['name_en'],
+                                    'batch': row['batch_number'] or "N/A",
+                                    'expiry': row['expiry_date'],
+                                    'days_left': days_left
+                                })
+                        except: pass
+                    data['expiry'] = filtered_expiry_rows
+
+                    # 6. Stats
+                    stats = {}
+                    sql = f"SELECT ((SELECT COALESCE(SUM(total_amount), 0) FROM pharmacy_sales s WHERE payment_type='CASH' AND {time_filter.format(T='s')}) + (SELECT COALESCE(SUM(amount), 0) FROM pharmacy_payments p WHERE {time_filter.format(T='p')})) as total"
+                    stats['gross_sales'] = conn.execute(sql).fetchone()['total'] or 0
+                    stats['returned_amount'] = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE refund_type='CASH' AND {time_filter.format(T='r')}").fetchone()['total'] or 0
+                    stats['return_count'] = conn.execute(f"SELECT COUNT(*) as cnt FROM pharmacy_returns r WHERE {time_filter.format(T='r')}").fetchone()['cnt'] or 0
+                    stats['total_orders'] = conn.execute(f"SELECT COUNT(*) as cnt FROM pharmacy_sales s WHERE {time_filter.format(T='s')}").fetchone()['cnt'] or 0
+                    stats['fully_returned_cnt'] = conn.execute(f"SELECT count(*) as cnt FROM pharmacy_sales s WHERE {time_filter.format(T='s')} AND s.id IN (SELECT original_sale_id FROM pharmacy_returns GROUP BY original_sale_id HAVING SUM(refund_amount) >= (SELECT total_amount FROM pharmacy_sales WHERE id=original_sale_id))").fetchone()['cnt'] or 0
+                    stats['low_stock_count'] = conn.execute("SELECT COUNT(*) as cnt FROM (SELECT p.id FROM pharmacy_products p LEFT JOIN pharmacy_inventory i ON p.id = i.product_id GROUP BY p.id HAVING SUM(i.quantity) < p.min_stock)").fetchone()['cnt'] or 0
+                    data['stats'] = stats
+
+                return {"success": True, "data": data}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                self.on_data_error(result["error"])
+                return
+            self.on_data_loaded(result["data"])
+
         self.complete_report_btn.setEnabled(False)
         self.complete_report_btn.setText(lang_manager.get("loading") or "Loading...")
+        task_manager.run_task(do_load, on_finished=on_finished)
 
     def _reset_thread_refs(self):
         """Reset thread and worker references when they are destroyed"""
-        self.thread = None
-        self.worker = None
+        self.is_loading = False
+
     
     def on_data_loaded(self, data):
         """Handle loaded data and update UI"""
@@ -738,15 +642,14 @@ class PharmacyReportsView(QWidget):
                 self.expiry_table.setItem(row_idx, 3, days_item)
                 self.expiry_table.setItem(row_idx, 4, status_item_obj)
             
-            # Autofit all tables to content
+            # Autofit all tables to content - Optimized to avoid UI hangs
             for table in [self.trans_table, self.ret_table, self.loan_table, self.low_stock_table, self.expiry_table]:
-                table.resizeColumnsToContents()
-                # If the table is too narrow, make it stretch to fill space
-                if table.horizontalHeader().length() < table.width():
-                    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-                else:
-                    # Keep the last column stretched if it's already fitting well
-                    table.horizontalHeader().setStretchLastSection(True)
+                if table.rowCount() > 0:
+                    table.resizeColumnsToContents()
+                    if table.horizontalHeader().length() < table.width():
+                        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+                    else:
+                        table.horizontalHeader().setStretchLastSection(True)
             
             # Re-enable buttons
             self.complete_report_btn.setEnabled(True)

@@ -38,68 +38,82 @@ class PharmacyLoanView(QWidget):
         self.load_loans()
 
     def load_loans(self):
-        self.table.setRowCount(0)
         search = self.search_input.text().strip()
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                query = """
-                    SELECT l.*, c.name as customer_name, c.phone
-                    FROM pharmacy_loans l
-                    JOIN pharmacy_customers c ON l.customer_id = c.id
-                    WHERE l.status != 'COMPLETED'
-                """
-                params = []
-                if search:
-                    query += " AND c.name LIKE ?"
-                    params = [f"%{search}%"]
-                
-                rows = conn.execute(query, params).fetchall()
-                for i, row in enumerate(rows):
-                    self.table.insertRow(i)
-                    self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
-                    self.table.setItem(i, 1, QTableWidgetItem(row['customer_name'] or lang_manager.get("walk_in_customer")))
-                    self.table.setItem(i, 2, QTableWidgetItem(f"{row['total_amount']:,.2f}"))
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    query = """
+                        SELECT l.*, c.name as customer_name, c.phone
+                        FROM pharmacy_loans l
+                        JOIN pharmacy_customers c ON l.customer_id = c.id
+                        WHERE l.status != 'COMPLETED'
+                    """
+                    params = []
+                    if search:
+                        query += " AND c.name LIKE ?"
+                        params = [f"%{search}%"]
                     
-                    bal_item = QTableWidgetItem(f"{row['balance']:,.2f}")
-                    if row['balance'] < 0:
-                        bal_item.setForeground(Qt.GlobalColor.darkGreen)
-                        bal_item.setToolTip(lang_manager.get("customer_has_credit_balance"))
-                    elif row['balance'] > 0:
-                        bal_item.setForeground(Qt.GlobalColor.red)
-                    
-                    self.table.setItem(i, 3, bal_item)
-                    
-                    status = row['status']
-                    status_item = QTableWidgetItem(lang_manager.get(status.lower()))
-                    if status == 'PENDING': status_item.setForeground(Qt.GlobalColor.red)
-                    else: status_item.setForeground(Qt.GlobalColor.darkGreen)
-                    self.table.setItem(i, 4, status_item)
-                    
-                    actions = QWidget()
-                    act_layout = QHBoxLayout(actions)
-                    act_layout.setContentsMargins(0,0,0,0)
-                    act_layout.setSpacing(5)
+                    rows = conn.execute(query, params).fetchall()
+                    return {"success": True, "rows": [dict(r) for r in rows]}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
 
-                    pay_btn = QPushButton(lang_manager.get("pay"))
-                    style_button(pay_btn, variant="success", size="small")
-                    pay_btn.clicked.connect(lambda ch, r=row: self.receive_payment(r))
-                    
-                    detail_btn = QPushButton(lang_manager.get("details"))
-                    style_button(detail_btn, variant="info", size="small")
-                    detail_btn.clicked.connect(lambda ch, cid=row['customer_id'], name=row['customer_name']: self.show_visual_details(cid, name))
-
-                    act_layout.addWidget(pay_btn)
-                    act_layout.addWidget(detail_btn)
-                    self.table.setCellWidget(i, 5, actions)
+        def on_finished(result):
+            if not result["success"]:
+                print(f"Error loading loans: {result['error']}")
+                return
                 
-                # Autofit logic
-                self.table.resizeColumnsToContents()
-                if self.table.horizontalHeader().length() < self.table.width():
-                    self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-                else:
-                    self.table.horizontalHeader().setStretchLastSection(True)
-        except Exception as e:
-            print(f"Error loading loans: {e}")
+            self.table.setRowCount(0)
+            rows = result["rows"]
+            for i, row in enumerate(rows):
+                self.table.insertRow(i)
+                self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
+                self.table.setItem(i, 1, QTableWidgetItem(row['customer_name'] or lang_manager.get("walk_in_customer")))
+                self.table.setItem(i, 2, QTableWidgetItem(f"{row['total_amount']:,.2f}"))
+                
+                bal_item = QTableWidgetItem(f"{row['balance']:,.2f}")
+                if row['balance'] < 0:
+                    bal_item.setForeground(Qt.GlobalColor.darkGreen)
+                    bal_item.setToolTip(lang_manager.get("customer_has_credit_balance"))
+                elif row['balance'] > 0:
+                    bal_item.setForeground(Qt.GlobalColor.red)
+                
+                self.table.setItem(i, 3, bal_item)
+                
+                status = row['status']
+                status_item = QTableWidgetItem(lang_manager.get(status.lower()))
+                if status == 'PENDING': status_item.setForeground(Qt.GlobalColor.red)
+                else: status_item.setForeground(Qt.GlobalColor.darkGreen)
+                self.table.setItem(i, 4, status_item)
+                
+                actions = QWidget()
+                act_layout = QHBoxLayout(actions)
+                act_layout.setContentsMargins(0,0,0,0)
+                act_layout.setSpacing(5)
+
+                pay_btn = QPushButton(lang_manager.get("pay"))
+                style_button(pay_btn, variant="success", size="small")
+                pay_btn.clicked.connect(lambda ch, r=row: self.receive_payment(r))
+                
+                detail_btn = QPushButton(lang_manager.get("details"))
+                style_button(detail_btn, variant="info", size="small")
+                detail_btn.clicked.connect(lambda ch, cid=row['customer_id'], name=row['customer_name']: self.show_visual_details(cid, name))
+
+                act_layout.addWidget(pay_btn)
+                act_layout.addWidget(detail_btn)
+                self.table.setCellWidget(i, 5, actions)
+            
+            # Autofit logic
+            self.table.resizeColumnsToContents()
+            if self.table.horizontalHeader().length() < self.table.width():
+                self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            else:
+                self.table.horizontalHeader().setStretchLastSection(True)
+
+        task_manager.run_task(do_load, on_finished=on_finished)
+
 
     def show_visual_details(self, customer_id, name=None):
         try:

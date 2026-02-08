@@ -29,7 +29,7 @@ class PriceCheckView(QWidget):
         icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon_lbl)
         
-        info = QLabel("Please scan any product barcode to see its information")
+        info = QLabel(lang_manager.get("price_check_placeholder"))
         info.setStyleSheet("font-size: 18px; color: #a3aed0; margin-bottom: 30px;")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(info)
@@ -43,7 +43,7 @@ class PriceCheckView(QWidget):
         card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.setSpacing(20)
         
-        self.product_name_lbl = QLabel("READY TO SCAN")
+        self.product_name_lbl = QLabel(lang_manager.get("ready_to_scan"))
         self.product_name_lbl.setObjectName("page_header")
         self.product_name_lbl.setStyleSheet("font-size: 42px;")
         self.product_name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -59,7 +59,7 @@ class PriceCheckView(QWidget):
         
         # Hidden Scanner Input
         self.scan_input = QLineEdit()
-        self.scan_input.setPlaceholderText("SCAN HERE...")
+        self.scan_input.setPlaceholderText(lang_manager.get("scan") + "...")
         # Styling handled by ThemeManager
         self.scan_input.setFixedHeight(50)
         self.scan_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -82,24 +82,31 @@ class PriceCheckView(QWidget):
         
         if not barcode: return
         
+        from src.core.blocking_task_manager import task_manager
         lang = lang_manager.current_lang
         lang_col = f'name_{lang}'
         
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(f"SELECT {lang_col}, name_en, sale_price FROM products WHERE barcode = ? AND is_active = 1", (barcode,))
-            product = cursor.fetchone()
-            
+        def fetch_product():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(f"SELECT {lang_col}, name_en, sale_price FROM products WHERE barcode = ? AND is_active = 1", (barcode,))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+            except:
+                return None
+
+        def on_finished(product):
             if product:
-                name = product[0] or product[1]
-                price = product[2]
+                name = product[lang_col] or product['name_en']
+                price = product['sale_price']
                 
                 self.product_name_lbl.setText(name)
-                self.price_lbl.setText(f"{price:.2f} AFN")
+                self.price_lbl.setText(f"{lang_manager.localize_digits(f'{price:.2f}')} AFN")
                 self.display_card.setStyleSheet("")
                 print('\a', end='', flush=True) # Beep
             else:
-                self.product_name_lbl.setText("PRODUCT NOT FOUND")
+                self.product_name_lbl.setText(lang_manager.get("not_found"))
                 self.price_lbl.setText("---")
                 self.display_card.setStyleSheet("""
                     QFrame {
@@ -112,9 +119,11 @@ class PriceCheckView(QWidget):
             # Start timer
             self.clear_timer.start(4000) # 4 seconds
 
+        task_manager.run_task(fetch_product, on_finished=on_finished)
+
     def reset_display(self):
         self.clear_timer.stop()
-        self.product_name_lbl.setText("READY TO SCAN")
+        self.product_name_lbl.setText(lang_manager.get("ready_to_scan"))
         self.price_lbl.setText("")
         self.display_card.setStyleSheet("")
         self.scan_input.setFocus()

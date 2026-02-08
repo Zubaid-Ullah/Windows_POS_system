@@ -165,28 +165,28 @@ class SuperAdminView(QWidget):
         self.cred_table.resizeRowsToContents()
 
     def _start_cloud_fetch(self, sid):
-        # Prevent double fetch + safely handle deleted C++ objects
-        try:
-            if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
-                return
-        except RuntimeError:
-            self.worker = None
-
-        from PyQt6.QtCore import QThread, pyqtSignal
+        # Prevent double fetch
+        if hasattr(self, '_is_fetching') and self._is_fetching:
+            return
         
-        class CloudWorker(QThread):
-            data_received = pyqtSignal(dict)
-            def run(self):
-                try:
-                    cloud_data = supabase_manager.get_installation_status(sid)
-                    if cloud_data:
-                        self.data_received.emit(cloud_data)
-                except: pass
+        self._is_fetching = True
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_cloud_data():
+            try:
+                cloud_data = supabase_manager.get_installation_status(sid)
+                return cloud_data if cloud_data else None
+            except Exception as e:
+                print(f"Cloud fetch error: {e}")
+                return None
+        
+        def on_finished(cloud_data):
+            self._is_fetching = False
+            if cloud_data:
+                self._on_cloud_data_received(cloud_data)
+        
+        task_manager.run_task(fetch_cloud_data, on_finished=on_finished)
 
-        self.worker = CloudWorker()
-        self.worker.data_received.connect(self._on_cloud_data_received)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.worker.start()
 
     def _on_cloud_data_received(self, cloud_data):
         self.all_data_rows.append(("--- CLOUD DATA ---", "--- (installations table) ---"))

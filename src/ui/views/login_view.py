@@ -298,25 +298,55 @@ class LoginView(QWidget):
         self._set_login_enabled("STORE", True)
         if not ok:
             return
-        Auth.ensure_defaults()
-        if Auth.login(username, password):
-            self.store_uname.clear()
-            self.store_pword.clear()
-            self.login_success.emit("STORE", "user")
-        else:
-            QMessageBox.warning(self, "Error", "Invalid credentials")
+        
+        # Move Auth operations to background to prevent GUI hang
+        from src.core.blocking_task_manager import task_manager
+        
+        def authenticate():
+            try:
+                Auth.ensure_defaults()
+                return Auth.login(username, password)
+            except Exception as e:
+                print(f"Auth error: {e}")
+                return False
+        
+        def on_auth_finished(success):
+            if success:
+                self.store_uname.clear()
+                self.store_pword.clear()
+                self.login_success.emit("STORE", "user")
+            else:
+                QMessageBox.warning(self, "Error", "Invalid credentials")
+        
+        task_manager.run_task(authenticate, on_finished=on_auth_finished)
+
 
     def _finish_pharmacy_login(self, ok, username, password):
         self._set_login_enabled("PHARMACY", True)
         if not ok:
             return
-        PharmacyAuth.ensure_defaults()
-        if PharmacyAuth.login(username, password):
-            self.pharm_uname.clear()
-            self.pharm_pword.clear()
-            self.login_success.emit("PHARMACY", "user")
-        else:
-            QMessageBox.warning(self, "Error", "Invalid credentials")
+        
+        # Move PharmacyAuth operations to background to prevent GUI hang
+        from src.core.blocking_task_manager import task_manager
+        
+        def authenticate():
+            try:
+                PharmacyAuth.ensure_defaults()
+                return PharmacyAuth.login(username, password)
+            except Exception as e:
+                print(f"Pharmacy auth error: {e}")
+                return False
+        
+        def on_auth_finished(success):
+            if success:
+                self.pharm_uname.clear()
+                self.pharm_pword.clear()
+                self.login_success.emit("PHARMACY", "user")
+            else:
+                QMessageBox.warning(self, "Error", "Invalid credentials")
+        
+        task_manager.run_task(authenticate, on_finished=on_auth_finished)
+
 
     def verify_super_admin(self, username, password, mode):
         from src.core.blocking_task_manager import task_manager

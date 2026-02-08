@@ -113,34 +113,45 @@ class PharmacySupplierView(QWidget):
         self.load_suppliers()
 
     def load_suppliers(self):
-        self.table.setRowCount(0)
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                rows = conn.execute("SELECT * FROM pharmacy_suppliers WHERE is_active=1").fetchall()
-                for i, row in enumerate(rows):
-                    self.table.insertRow(i)
-                    self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
-                    self.table.setItem(i, 1, QTableWidgetItem(row['name']))
-                    self.table.setItem(i, 2, QTableWidgetItem(row['company_name'] or ""))
-                    self.table.setItem(i, 3, QTableWidgetItem(row['contact'] or ""))
-                    
-                    actions = QWidget()
-                    act_layout = QHBoxLayout(actions)
-                    act_layout.setContentsMargins(2,2,2,2)
-                    
-                    edit_btn = QPushButton(lang_manager.get("edit"))
-                    style_button(edit_btn, variant="info", size="small")
-                    edit_btn.clicked.connect(lambda ch, s=row: self.open_dialog(s))
-                    
-                    del_btn = QPushButton(lang_manager.get("delete"))
-                    style_button(del_btn, variant="danger", size="small")
-                    del_btn.clicked.connect(lambda ch, sid=row['id']: self.delete_supplier(sid))
-                    
-                    act_layout.addWidget(edit_btn)
-                    act_layout.addWidget(del_btn)
-                    self.table.setCellWidget(i, 4, actions)
-        except Exception as e:
-            print(f"Error loading suppliers: {e}")
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    return {"success": True, "rows": [dict(r) for r in conn.execute("SELECT * FROM pharmacy_suppliers WHERE is_active=1").fetchall()]}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                print(f"Error loading suppliers: {result['error']}")
+                return
+
+            self.table.setRowCount(0)
+            for i, row in enumerate(result["rows"]):
+                self.table.insertRow(i)
+                self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
+                self.table.setItem(i, 1, QTableWidgetItem(row['name']))
+                self.table.setItem(i, 2, QTableWidgetItem(row['company_name'] or ""))
+                self.table.setItem(i, 3, QTableWidgetItem(row['contact'] or ""))
+                
+                actions = QWidget()
+                act_layout = QHBoxLayout(actions)
+                act_layout.setContentsMargins(2,2,2,2)
+                
+                edit_btn = QPushButton(lang_manager.get("edit"))
+                style_button(edit_btn, variant="info", size="small")
+                edit_btn.clicked.connect(lambda ch, s=row: self.open_dialog(s))
+                
+                del_btn = QPushButton(lang_manager.get("delete"))
+                style_button(del_btn, variant="danger", size="small")
+                del_btn.clicked.connect(lambda ch, sid=row['id']: self.delete_supplier(cid=sid))
+                
+                act_layout.addWidget(edit_btn)
+                act_layout.addWidget(del_btn)
+                self.table.setCellWidget(i, 4, actions)
+
+        task_manager.run_task(do_load, on_finished=on_finished)
 
     def open_dialog(self, supplier_data=None):
         dialog = AddPharmacySupplierDialog(self, supplier_data)

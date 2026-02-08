@@ -70,9 +70,23 @@ class PharmacyLoginView(QWidget):
         user = self.username.text().strip()
         pw = self.password.text().strip()
         
-        if PharmacyAuth.login(user, pw):
-            self.username.clear()
-            self.password.clear()
-            self.login_success.emit()
-        else:
-            QMessageBox.critical(self, "Failed", "Invalid Pharmacy Credentials")
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_login():
+            try:
+                PharmacyAuth.ensure_defaults()
+                return PharmacyAuth.login(user, pw)
+            except Exception as e:
+                print(f"Pharmacy login error: {e}")
+                return False
+                
+        def on_finished(success):
+            if success:
+                self.username.clear()
+                self.password.clear()
+                self.login_success.emit()
+            else:
+                QMessageBox.critical(self, "Failed", "Invalid Pharmacy Credentials")
+                
+        task_manager.run_task(do_login, on_finished=on_finished)
+

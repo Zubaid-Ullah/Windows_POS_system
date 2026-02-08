@@ -57,23 +57,36 @@ class PharmacyPriceCheckView(QWidget):
             self.show_placeholder()
             return
             
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                row = conn.execute("""
-                    SELECT p.name_en, p.sale_price, SUM(i.quantity) as total_qty, p.size
-                    FROM pharmacy_products p
-                    LEFT JOIN pharmacy_inventory i ON p.id = i.product_id
-                    WHERE p.barcode = ? OR p.name_en LIKE ?
-                    GROUP BY p.id
-                    LIMIT 1
-                """, (term, f"%{term}%")).fetchone()
-                
-                if row:
-                    self.show_result(row)
-                else:
-                    self.show_not_found()
-        except Exception as e:
-            print(f"Price check error: {e}")
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    row = conn.execute("""
+                        SELECT p.name_en, p.sale_price, SUM(i.quantity) as total_qty, p.size
+                        FROM pharmacy_products p
+                        LEFT JOIN pharmacy_inventory i ON p.id = i.product_id
+                        WHERE p.barcode = ? OR p.name_en LIKE ?
+                        GROUP BY p.id
+                        LIMIT 1
+                    """, (term, f"%{term}%")).fetchone()
+                    return {"success": True, "row": dict(row) if row else None}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                print(f"Price check error: {result['error']}")
+                return
+            
+            row = result["row"]
+            if row:
+                self.show_result(row)
+            else:
+                self.show_not_found()
+
+        task_manager.run_task(do_load, on_finished=on_finished)
+
 
     def show_result(self, data):
         # Clear layout

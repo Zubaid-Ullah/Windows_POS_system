@@ -111,23 +111,31 @@ class PharmacySalesView(QWidget):
         layout.addLayout(footer)
 
     def load_customers(self):
+        from src.core.blocking_task_manager import task_manager
+        
         curr_text = self.customer_combo.currentText()
         self.customer_combo.blockSignals(True)
-        self.customer_combo.clear()
-        self.customer_combo.addItem(lang_manager.get("walk_in_customer"), None)
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                rows = conn.execute("SELECT id, name FROM pharmacy_customers WHERE is_active=1").fetchall()
-                for r in rows:
-                    self.customer_combo.addItem(r['name'], r['id'])
+        
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    return conn.execute("SELECT id, name FROM pharmacy_customers WHERE is_active=1").fetchall()
+            except:
+                return []
+
+        def on_finished(rows):
+            self.customer_combo.clear()
+            self.customer_combo.addItem(lang_manager.get("walk_in_customer"), None)
+            for r in rows:
+                self.customer_combo.addItem(r['name'], r['id'])
             
             # Restore selection if possible
             idx = self.customer_combo.findText(curr_text)
             if idx >= 0: self.customer_combo.setCurrentIndex(idx)
-        except Exception as e:
-            print(f"Error loading customers: {e}")
-        finally:
             self.customer_combo.blockSignals(False)
+
+        task_manager.run_task(do_load, on_finished=on_finished)
+
 
     def handle_customer_change(self, index):
         """Automatically set payment method based on customer selection"""
@@ -138,87 +146,111 @@ class PharmacySalesView(QWidget):
 
     # eventFilter removed to fix customer selection issue on Windows 10
 
-    def check_stock(self, product_id, batch, quantity):
-        with db_manager.get_pharmacy_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT quantity, expiry_date FROM pharmacy_inventory 
-                WHERE product_id = ? AND batch_number = ?
-            """, (product_id, batch))
-            row = cursor.fetchone()
-            if not row: return False, "Batch not found"
-            
-            stock, expiry = row['quantity'], row['expiry_date']
-            
-            # Check Expiry
-            if expiry:
-                exp_date = datetime.strptime(expiry, "%Y-%m-%d")
-                if exp_date < datetime.now():
-                    return False, f"Batch Expired on {expiry}"
-            
-            if stock < quantity:
-                return False, f"Insufficient Stock. Available: {stock}"
-            
-            return True, "OK"
+    def check_stock_async(self, product_id, batch, quantity, on_finished):
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_check():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT quantity, expiry_date FROM pharmacy_inventory 
+                        WHERE product_id = ? AND batch_number = ?
+                    """, (product_id, batch))
+                    row = cursor.fetchone()
+                    if not row: return False, "Batch not found"
+                    
+                    stock, expiry = row['quantity'], row['expiry_date']
+                    if expiry:
+                        exp_date = datetime.strptime(expiry, "%Y-%m-%d")
+                        if exp_date < datetime.now():
+                            return False, f"Batch Expired on {expiry}"
+                    
+                    if stock < quantity:
+                        return False, f"Insufficient Stock. Available: {stock}"
+                    
+                    return True, "OK"
+            except Exception as e:
+                return False, str(e)
+
+        task_manager.run_task(do_check, on_finished=on_finished)
+
 
     def handle_search(self):
         search_term = self.barcode_input.text().strip()
         if not search_term: return
         
-        with db_manager.get_pharmacy_connection() as conn:
-            cursor = conn.cursor()
-            # Fetch product with earliest expiring batch (FIFO)
-            cursor.execute("""
-                SELECT p.*, i.quantity as stock, i.batch_number, i.expiry_date 
-                FROM pharmacy_products p 
-                JOIN pharmacy_inventory i ON p.id = i.product_id 
-                WHERE (p.barcode = ? OR p.name_en LIKE ?) 
-                AND p.is_active = 1 
-                AND i.quantity > 0
-                ORDER BY i.expiry_date ASC 
-                LIMIT 1
-            """, (search_term, f"%{search_term}%"))
-            row = cursor.fetchone()
-            
-            if row:
-                product = dict(row)
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_search():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    cursor = conn.cursor()
+                    # Fetch product with earliest expiring batch (FIFO)
+                    cursor.execute("""
+                        SELECT p.*, i.quantity as stock, i.batch_number, i.expiry_date 
+                        FROM pharmacy_products p 
+                        JOIN pharmacy_inventory i ON p.id = i.product_id 
+                        WHERE (p.barcode = ? OR p.name_en LIKE ?) 
+                        AND p.is_active = 1 
+                        AND i.quantity > 0
+                        ORDER BY i.expiry_date ASC 
+                        LIMIT 1
+                    """, (search_term, f"%{search_term}%"))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+            except Exception as e:
+                print(f"Search error: {e}")
+                return None
+        
+        def on_finished(product):
+            if product:
                 self.add_to_cart(product)
                 self.barcode_input.clear()
             else:
                 QMessageBox.warning(self, lang_manager.get("not_found"), lang_manager.get("not_found") + " in system.")
+        
+        task_manager.run_task(do_search, on_finished=on_finished)
+
 
     def add_to_cart(self, p):
-        #1. Existing Item Logic
+        # 1. Existing Item Logic
         for item in self.cart:
             if item['id'] == p['id'] and item.get('batch') == p.get('batch_number'):
                 new_qty = item['qty'] + 1
-                valid, msg = self.check_stock(item['id'], item['batch'], new_qty)
-                if not valid:
-                    QMessageBox.warning(self, "Stock Issue", msg)
-                    return
-                item['qty'] = new_qty
-                self.refresh_table()
+                def on_checked(res):
+                    valid, msg = res
+                    if not valid:
+                        QMessageBox.warning(self, "Stock Issue", msg)
+                        return
+                    item['qty'] = new_qty
+                    self.refresh_table()
+                
+                self.check_stock_async(item['id'], item['batch'], new_qty, on_checked)
                 return
 
         # 2. New Item Logic
-        valid, msg = self.check_stock(p['id'], p.get('batch_number'), 1)
-        if not valid:
-             QMessageBox.warning(self, "Stock Issue", msg)
-             return
+        def on_new_checked(res):
+            valid, msg = res
+            if not valid:
+                 QMessageBox.warning(self, "Stock Issue", msg)
+                 return
 
-        self.cart.append({
-            'id': p['id'],
-            'barcode': p['barcode'],
-            'name': p['name_en'],
-            'size': p.get('size', 'N/A'),
-            'expiry': p.get('expiry_date', 'N/A'),
-            'price': p['sale_price'],
-            'batch': p.get('batch_number'),
-            'cost': p.get('cost_price', 0),
-            'qty': 1,
-            'stock': p.get('stock', 0)  # Store available stock
-        })
-        self.refresh_table()
+            self.cart.append({
+                'id': p['id'],
+                'barcode': p['barcode'],
+                'name': p['name_en'],
+                'size': p.get('size', 'N/A'),
+                'expiry': p.get('expiry_date', 'N/A'),
+                'price': p['sale_price'],
+                'batch': p.get('batch_number'),
+                'cost': p.get('cost_price', 0),
+                'qty': 1,
+                'stock': p.get('stock', 0)  
+            })
+            self.refresh_table()
+
+        self.check_stock_async(p['id'], p.get('batch_number'), 1, on_new_checked)
 
     def refresh_table(self):
         self.table.setRowCount(0)
@@ -238,10 +270,8 @@ class PharmacySalesView(QWidget):
             qty_spinbox = QSpinBox()
             qty_spinbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_spinbox.setMinimum(1)
-            qty_spinbox.setMaximum(int(item.get('stock', 999)))  # Convert to int
+            qty_spinbox.setMaximum(int(item.get('stock', 999)))  
             qty_spinbox.setValue(item['qty'])
-            qty_spinbox.setStyleSheet("font-size: 18px; font-weight: bold; height: 40px;")
-            qty_spinbox.setMaximumWidth(100)
             qty_spinbox.setStyleSheet("background-color: #f1f5f9; color: #475569; font-size: 18px; padding: 2px 6px; border: 1px solid #e2e8f0; border-radius: 4px;")
             qty_spinbox.editingFinished.connect(lambda s=qty_spinbox, idx=i: self.update_qty(idx, s.value()))
             self.table.setCellWidget(i, 5, qty_spinbox)
@@ -254,11 +284,10 @@ class PharmacySalesView(QWidget):
             remaining = item.get('stock', 0) - item['qty']
             remaining_item = QTableWidgetItem(str(remaining))
             remaining_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            # Color code: green if plenty, orange if low, red if very low
             if remaining > 10:
                 remaining_item.setForeground(Qt.GlobalColor.darkGreen)
             elif remaining > 5:
-                remaining_item.setForeground(QColor(255, 140, 0))  # Orange
+                remaining_item.setForeground(QColor(255, 140, 0))  
             else:
                 remaining_item.setForeground(Qt.GlobalColor.red)
             self.table.setItem(i, 7, remaining_item)
@@ -277,13 +306,17 @@ class PharmacySalesView(QWidget):
         """Update quantity when spinbox changes"""
         if idx < len(self.cart):
             item = self.cart[idx]
-            valid, msg = self.check_stock(item['id'], item['batch'], new_qty)
-            if not valid:
-                QMessageBox.warning(self, "Stock Issue", msg)
+            def on_checked(res):
+                valid, msg = res
+                if not valid:
+                    QMessageBox.warning(self, "Stock Issue", msg)
+                    self.refresh_table()
+                    return
+                item['qty'] = new_qty
                 self.refresh_table()
-                return
-            item['qty'] = new_qty
-            self.refresh_table()
+            
+            self.check_stock_async(item['id'], item['batch'], new_qty, on_checked)
+
 
     def remove_item(self, idx):
         self.cart.pop(idx)
@@ -306,103 +339,103 @@ class PharmacySalesView(QWidget):
             QMessageBox.warning(self, "Error", "Customer must be selected for Credit sales.")
             return
 
-        # Check Loan Limit
-        if payment_method == "CREDIT":
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_checkout_heavy():
             try:
                 with db_manager.get_pharmacy_connection() as conn:
-                    # Fetch customer limit and balance
-                    cust = conn.execute("SELECT balance, loan_limit, loan_enabled FROM pharmacy_customers WHERE id=?", (customer_id,)).fetchone()
-                    if cust:
-                        if not cust['loan_enabled']:
-                            QMessageBox.warning(self, "Loan Disabled", "Credit sales are disabled for this customer.")
-                            return
-                            
-                        # If limit is 0, maybe it means unlimited? 
-                        # User requirement: "if customer loan is set to a specific number then display a message if amount goes beyond loan limit"
-                        # Usually 0 means no limit or no credit allowed. Let's assume >0 is the limit. 
-                        # If the user specifically sets a number, we enforce it.
+                    cursor = conn.cursor()
+                    
+                    # 1. Check Loan Limit if CREDIT
+                    if payment_method == "CREDIT":
+                        cust = conn.execute("SELECT balance, loan_limit, loan_enabled FROM pharmacy_customers WHERE id=?", (customer_id,)).fetchone()
+                        if not cust: return {"success": False, "error": "Customer not found"}
+                        if not cust['loan_enabled']: return {"success": False, "error": "Credit sales are disabled for this customer."}
+                        
                         limit = cust['loan_limit']
                         if limit > 0:
                             current_bal = cust['balance']
                             if (current_bal + total_amount) > limit:
-                                QMessageBox.warning(self, "Limit Exceeded", 
-                                    f"Transaction denied. \nCustomer Loan Limit: {limit:,.2f}\nCurrent Balance: {current_bal:,.2f}\nNew Balance would be: {(current_bal+total_amount):,.2f}")
-                                return
+                                return {"success": False, "limit_exceeded": True, "limit": limit, "balance": current_bal}
+
+                    # 2. Create Sale Header
+                    cursor.execute("""
+                        INSERT INTO pharmacy_sales (invoice_number, user_id, total_amount, customer_id, payment_type)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (invoice, user_id, total_amount, customer_id, payment_method))
+                    sale_id = cursor.lastrowid
+                    
+                    # 3. Process Items and Inventory
+                    for item in self.cart:
+                        cursor.execute("""
+                            INSERT INTO pharmacy_sale_items 
+                            (sale_id, product_id, product_name, batch_number, expiry_date, quantity, unit_price, total_price, cost_price_at_sale)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (sale_id, item['id'], item['name'], item.get('batch'), item.get('expiry'), 
+                              item['qty'], item['price'], item['price']*item['qty'], item.get('cost', 0)))
+                        
+                        cursor.execute("""
+                            UPDATE pharmacy_inventory 
+                            SET quantity = quantity - ? 
+                            WHERE product_id = ? AND batch_number = ?
+                        """, (item['qty'], item['id'], item.get('batch')))
+                    
+                    # 4. Handle Credit/Loan
+                    if payment_method == "CREDIT":
+                        cursor.execute("""
+                            INSERT INTO pharmacy_loans (customer_id, sale_id, total_amount, balance)
+                            VALUES (?, ?, ?, ?)
+                        """, (customer_id, sale_id, total_amount, total_amount))
+                        cursor.execute("UPDATE pharmacy_customers SET balance = balance + ? WHERE id = ?", (total_amount, customer_id))
+
+                    conn.commit()
+                    return {"success": True, "sale_id": sale_id}
             except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to verify loan limit: {e}")
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                if result.get("limit_exceeded"):
+                    QMessageBox.warning(self, "Limit Exceeded", 
+                        f"Transaction denied. \nCustomer Loan Limit: {result['limit']:,.2f}\nCurrent Balance: {result['balance']:,.2f}\nNew Balance would be: {(result['balance']+total_amount):,.2f}")
+                else:
+                    QMessageBox.critical(self, "Error", f"Transaction Failed: {result['error']}")
                 return
 
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                cursor = conn.cursor()
-                
-                # 1. Create Sale Header
-                cursor.execute("""
-                    INSERT INTO pharmacy_sales (invoice_number, user_id, total_amount, customer_id, payment_type)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (invoice, user_id, total_amount, customer_id, payment_method))
-                sale_id = cursor.lastrowid
-                
-                # 2. Process Items and Inventory
-                for item in self.cart:
-                    # Record Item
-                    cursor.execute("""
-                        INSERT INTO pharmacy_sale_items 
-                        (sale_id, product_id, product_name, batch_number, expiry_date, quantity, unit_price, total_price, cost_price_at_sale)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (sale_id, item['id'], item['name'], item.get('batch'), item.get('expiry'), 
-                          item['qty'], item['price'], item['price']*item['qty'], item.get('cost', 0)))
-                    
-                    # Update Inventory (Specific Batch)
-                    cursor.execute("""
-                        UPDATE pharmacy_inventory 
-                        SET quantity = quantity - ? 
-                        WHERE product_id = ? AND batch_number = ?
-                    """, (item['qty'], item['id'], item.get('batch')))
-                
-                # 3. Handle Credit/Loan
-                if payment_method == "CREDIT":
-                    cursor.execute("""
-                        INSERT INTO pharmacy_loans (customer_id, sale_id, total_amount, balance)
-                        VALUES (?, ?, ?, ?)
-                    """, (customer_id, sale_id, total_amount, total_amount))
-                    
-                    # Update customer balance
-                    cursor.execute("UPDATE pharmacy_customers SET balance = balance + ? WHERE id = ?", (total_amount, customer_id))
+            # Success Path
+            sale_id = result["sale_id"]
+            self.print_pharmacy_sale_bill(sale_id, invoice, total_amount, payment_method)
+            self.load_last_bill_number()
 
-                conn.commit()
+            QMessageBox.information(self, "Success", f"Pharmacy Sale Completed!\nInvoice: {invoice}")
+            self.cart = []
+            self.refresh_table()
+            self.sale_completed.emit() 
+            self.barcode_input.setFocus()
+            
+        task_manager.run_task(do_checkout_heavy, on_finished=on_finished)
 
-                # Ask for bill printing after successful sale
-                self.print_pharmacy_sale_bill(sale_id, invoice, total_amount, payment_method)
-
-                # Auto update bill number display for next sale
-                self.load_last_bill_number()
-
-                QMessageBox.information(self, "Success", f"Pharmacy Sale Completed!\nInvoice: {invoice}")
-                self.cart = []
-                self.refresh_table()
-                self.sale_completed.emit() # Notify reports
-                self.barcode_input.setFocus()
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Transaction Failed: {e}")
 
     def load_last_bill_number(self):
         """Load and display last pharmacy bill number for today"""
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # Find the last bill from today
-                last_bill = conn.execute(
-                    "SELECT invoice_number FROM pharmacy_sales WHERE date(created_at) = date('now') ORDER BY id DESC LIMIT 1"
-                ).fetchone()
-                
-                if last_bill:
-                    self.bill_number_display.setText(last_bill['invoice_number'])
-                else:
-                    self.bill_number_display.setText("no bill")
-        except Exception as e:
-            print(f"Error loading pharmacy bill number: {e}")
-            self.bill_number_display.setText("Error")
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    # Find the last bill from today
+                    last_bill = conn.execute(
+                        "SELECT invoice_number FROM pharmacy_sales WHERE date(created_at) = date('now') ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+                    return last_bill['invoice_number'] if last_bill else "no bill"
+            except:
+                return "Error"
+
+        def on_finished(val):
+            self.bill_number_display.setText(val)
+
+        task_manager.run_task(do_load, on_finished=on_finished)
+
 
     def reprint_last_bill(self):
         """Reprint the last pharmacy bill"""

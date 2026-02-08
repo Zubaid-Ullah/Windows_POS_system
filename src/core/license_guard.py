@@ -46,6 +46,7 @@ class LicenseGuard(QObject):
         # Keep reference to active thread to avoid GC and overwriting
         self._active_thread = None
         self.shutdown_window = None
+        self._last_processed_shutdown = None # Avoid re-processing same marker
 
     def start_async_check(self):
         """Launches a one-off thread for the network poll."""
@@ -109,6 +110,10 @@ class LicenseGuard(QObject):
                 from datetime import timezone
                 # Support relative shutdown marker (client time based)
                 if isinstance(shutdown_time_str, str) and shutdown_time_str.startswith("IN_MINUTES:"):
+                    if self._last_processed_shutdown == shutdown_time_str:
+                        return # Already handled this specific relative marker
+                    
+                    self._last_processed_shutdown = shutdown_time_str
                     try:
                         minutes = int(shutdown_time_str.split(":", 1)[1].strip())
                     except:
@@ -158,6 +163,9 @@ class LicenseGuard(QObject):
                         self._execute_immediate_shutdown(status_data)
             except Exception as e:
                 print(f"Shutdown check error: {e}")
+        else:
+            # Clear tracker if no shutdown is pending
+            self._last_processed_shutdown = None
 
     def _show_shutdown_countdown(self, target_time):
         """Displays a GUI countdown window for the remote shutdown."""
