@@ -10,9 +10,11 @@ data/pharmacy_pos.db
 test_out_src/
 test_out/
 keys/
+PharmacyNotes/*.m4a
 afex_pharmacy.db
 afex_store.db
 logs/*.log
 platform/windows/windows_exe_dist/
 platform/windows/windows_build_temp/
 platform/windows/windows_secured_dist/
+visual\ data\ for\ videos/*.png

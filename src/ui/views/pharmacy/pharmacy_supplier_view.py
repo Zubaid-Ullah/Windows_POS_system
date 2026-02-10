@@ -64,18 +64,29 @@ class AddPharmacySupplierDialog(QDialog):
             QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("name_contact_required"))
             return
             
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                if self.supplier_data:
-                    conn.execute("UPDATE pharmacy_suppliers SET name=?, company_name=?, contact=?, address=? WHERE id=?", 
-                                 (name, company, contact, address, self.supplier_data['id']))
-                else:
-                    conn.execute("INSERT INTO pharmacy_suppliers (name, company_name, contact, address) VALUES (?, ?, ?, ?)",
-                                 (name, company, contact, address))
-                conn.commit()
-            self.accept()
-        except Exception as e:
-            QMessageBox.critical(self, lang_manager.get("error"), str(e))
+        from src.core.blocking_task_manager import task_manager
+
+        def do_save():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    if self.supplier_data:
+                        conn.execute("UPDATE pharmacy_suppliers SET name=?, company_name=?, contact=?, address=? WHERE id=?", 
+                                     (name, company, contact, address, self.supplier_data['id']))
+                    else:
+                        conn.execute("INSERT INTO pharmacy_suppliers (name, company_name, contact, address) VALUES (?, ?, ?, ?)",
+                                     (name, company, contact, address))
+                    conn.commit()
+                return True
+            except Exception as e:
+                return str(e)
+
+        def on_finished(result):
+            if result is True:
+                self.accept()
+            else:
+                QMessageBox.critical(self, lang_manager.get("error"), result)
+
+        task_manager.run_task(do_save, on_finished=on_finished)
 
 
 class PharmacySupplierView(QWidget):
@@ -160,7 +171,21 @@ class PharmacySupplierView(QWidget):
 
     def delete_supplier(self, sid):
         if QMessageBox.question(self, lang_manager.get("confirm"), lang_manager.get("confirm_delete_supplier")) == QMessageBox.StandardButton.Yes:
-            with db_manager.get_pharmacy_connection() as conn:
-                conn.execute("UPDATE pharmacy_suppliers SET is_active=0 WHERE id=?", (sid,))
-                conn.commit()
-            self.load_suppliers()
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_delete():
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        conn.execute("UPDATE pharmacy_suppliers SET is_active=0 WHERE id=?", (sid,))
+                        conn.commit()
+                    return True
+                except:
+                    return False
+
+            def on_finished(success):
+                if success:
+                    self.load_suppliers()
+                else:
+                    QMessageBox.critical(self, lang_manager.get("error"), "Could not delete supplier")
+
+            task_manager.run_task(do_delete, on_finished=on_finished)

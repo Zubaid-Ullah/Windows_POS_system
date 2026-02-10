@@ -13,6 +13,11 @@ class PharmacyCustomerView(QWidget):
     customers_updated = pyqtSignal()
     def __init__(self):
         super().__init__()
+        # Pagination
+        self.current_page = 1
+        self.page_size = 50
+        self.total_pages = 1
+        
         self.init_ui()
 
     def init_ui(self):
@@ -130,8 +135,32 @@ class PharmacyCustomerView(QWidget):
             lang_manager.get("balance"), lang_manager.get("actions")
         ])
         style_table(self.table, variant="premium")
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # Fix width for Actions to make it bigger
+        # Fix width for Actions to make it bigger
+        self.table.setColumnWidth(4, 400) 
         layout.addWidget(self.table)
+        
+        # Pagination Controls
+        pag_layout = QHBoxLayout()
+        pag_layout.addStretch()
+        
+        self.prev_btn = QPushButton(lang_manager.get("previous") if lang_manager.get("previous") != "Key not found: previous" else "Previous")
+        style_button(self.prev_btn, variant="outline", size="small")
+        self.prev_btn.clicked.connect(self.prev_page)
+        
+        self.page_label = QLabel(f"Page 1")
+        self.page_label.setStyleSheet("font-weight: bold; color: #555;")
+        
+        self.next_btn = QPushButton(lang_manager.get("next") if lang_manager.get("next") != "Key not found: next" else "Next")
+        style_button(self.next_btn, variant="outline", size="small")
+        self.next_btn.clicked.connect(self.next_page)
+        
+        pag_layout.addWidget(self.prev_btn)
+        pag_layout.addWidget(self.page_label)
+        pag_layout.addWidget(self.next_btn)
+        pag_layout.addStretch()
+        
+        layout.addLayout(pag_layout)
         
         self.load_customers()
 
@@ -174,98 +203,22 @@ class PharmacyCustomerView(QWidget):
                     self.id_img.setPixmap(pix.scaled(self.id_img.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
     
     def capture_photo_from_camera(self, photo_type):
-        """Capture photo using OpenCV"""
-        try:
-            import cv2
-            import os
-            from datetime import datetime
-            
-            # Detect available cameras
-            available_cameras = []
-            for i in range(5):  # Check first 5 camera indices
-                cap = cv2.VideoCapture(i)
-                if cap.isOpened():
-                    available_cameras.append(i)
-                    cap.release()
-            
-            if not available_cameras:
-                QMessageBox.warning(self, "No Camera", "No camera detected on this system.")
-                return None
-            
-            # If multiple cameras, let user choose
-            camera_index = 0
-            if len(available_cameras) > 1:
-                from PyQt6.QtWidgets import QInputDialog
-                items = [f"Camera {i}" for i in available_cameras]
-                item, ok = QInputDialog.getItem(
-                    self, "Select Camera", 
-                    "Multiple cameras detected. Choose one:", 
-                    items, 0, False
-                )
-                if ok and item:
-                    camera_index = available_cameras[items.index(item)]
-                else:
-                    return None
-            else:
-                camera_index = available_cameras[0]
-            
-            # Open camera
-            cap = cv2.VideoCapture(camera_index)
-            if not cap.isOpened():
-                QMessageBox.warning(self, "Camera Error", "Could not open camera.")
-                return None
-            
-            QMessageBox.information(
-                self, "Camera Instructions", 
-                "Position yourself in frame and press SPACE to capture.\nPress ESC to cancel."
-            )
-            
-            captured_frame = None
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                
-                # Add text overlay
-                cv2.putText(frame, "Press SPACE to capture, ESC to cancel", 
-                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                
-                cv2.imshow(f'Capture {photo_type.replace("_", " ").title()}', frame)
-                
-                key = cv2.waitKey(1) & 0xFF
-                if key == 27:  # ESC
-                    break
-                elif key == 32:  # SPACE
-                    captured_frame = frame
-                    break
-            
-            cap.release()
-            cv2.destroyAllWindows()
-            
-            if captured_frame is not None:
-                # Save the captured image
-                save_dir = os.path.join("data", "kyc")
-                os.makedirs(save_dir, exist_ok=True)
-                
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"{photo_type}_{timestamp}.jpg"
-                filepath = os.path.join(save_dir, filename)
-                
-                cv2.imwrite(filepath, captured_frame)
-                QMessageBox.information(self, "Success", f"Photo captured and saved!")
-                return filepath
-            
-            return None
-            
-        except ImportError:
-            QMessageBox.warning(
-                self, "OpenCV Not Installed",
-                "OpenCV (cv2) is not installed.\nInstall with: pip install opencv-python"
-            )
-            return None
-        except Exception as e:
-            QMessageBox.critical(self, "Camera Error", f"Error accessing camera: {e}")
-            return None
+        """Capture photo using the centralized async camera utility"""
+        import os
+        import uuid
+        from src.utils.camera import capture_image
+        
+        save_dir = os.path.join("data", "kyc")
+        os.makedirs(save_dir, exist_ok=True)
+        filepath = os.path.join(save_dir, f"{photo_type}_{uuid.uuid4().hex[:8]}.jpg")
+        
+        success, msg = capture_image(filepath, self)
+        if success:
+            QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
+            return filepath
+        elif msg:
+            QMessageBox.warning(self, "Camera Error", msg)
+        return None
 
     def save_customer(self):
         from src.core.blocking_task_manager import task_manager
@@ -319,7 +272,14 @@ class PharmacyCustomerView(QWidget):
         def do_load():
             try:
                 with db_manager.get_pharmacy_connection() as conn:
-                    return {"success": True, "rows": [dict(r) for r in conn.execute("SELECT * FROM pharmacy_customers WHERE is_active=1").fetchall()]}
+                    # Count total
+                    total_count = conn.execute("SELECT COUNT(*) FROM pharmacy_customers WHERE is_active=1").fetchone()[0]
+                    
+                    # Fetch page
+                    offset = (self.current_page - 1) * self.page_size
+                    rows = [dict(r) for r in conn.execute(f"SELECT * FROM pharmacy_customers WHERE is_active=1 ORDER BY id DESC LIMIT ? OFFSET ?", (self.page_size, offset)).fetchall()]
+                    
+                    return {"success": True, "rows": rows, "total": total_count}
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
@@ -327,6 +287,14 @@ class PharmacyCustomerView(QWidget):
             if not result["success"]:
                 print(f"Error loading customers: {result['error']}")
                 return
+
+            total_count = result["total"]
+            import math
+            self.total_pages = math.ceil(total_count / self.page_size) if total_count > 0 else 1
+            
+            self.page_label.setText(f"Page {self.current_page} of {self.total_pages}")
+            self.prev_btn.setEnabled(self.current_page > 1)
+            self.next_btn.setEnabled(self.current_page < self.total_pages)
 
             self.table.setRowCount(0)
             for i, row in enumerate(result["rows"]):
@@ -348,19 +316,29 @@ class PharmacyCustomerView(QWidget):
                 act_layout.setContentsMargins(0,0,0,0)
                 act_layout.setSpacing(5)
                 
-                pay_btn = QPushButton(lang_manager.get("cash"))
-                style_button(pay_btn, variant="info", size="small")
+                import qtawesome as qta
                 
-                edit_btn = QPushButton(lang_manager.get("edit"))
-                style_button(edit_btn, variant="success", size="small")
+                pay_btn = QPushButton(" " + lang_manager.get("cash"))
+                pay_btn.setIcon(qta.icon("fa5s.money-bill", color="white"))
+                style_button(pay_btn, variant="info")
+                pay_btn.setMinimumHeight(40)
+                
+                edit_btn = QPushButton(" " + lang_manager.get("edit"))
+                edit_btn.setIcon(qta.icon("fa5s.edit", color="white"))
+                style_button(edit_btn, variant="success")
+                edit_btn.setMinimumHeight(40)
                 edit_btn.clicked.connect(lambda ch, r=row: self.edit_customer(r))
                 
-                del_btn = QPushButton(lang_manager.get("delete"))
-                style_button(del_btn, variant="danger", size="small")
+                del_btn = QPushButton(" " + lang_manager.get("delete"))
+                del_btn.setIcon(qta.icon("fa5s.trash", color="white"))
+                style_button(del_btn, variant="danger")
+                del_btn.setMinimumHeight(40)
                 del_btn.clicked.connect(lambda ch, cid=row['id']: self.delete_customer(cid))
                 
-                view_btn = QPushButton(lang_manager.get("details"))
-                style_button(view_btn, variant="outline", size="small")
+                view_btn = QPushButton(" " + lang_manager.get("details"))
+                view_btn.setIcon(qta.icon("fa5s.eye", color="#4318ff"))
+                style_button(view_btn, variant="outline")
+                view_btn.setMinimumHeight(40)
                 view_btn.clicked.connect(lambda ch, r=row: self.show_visual_details(r))
                 
                 act_layout.addWidget(pay_btn)
@@ -370,6 +348,16 @@ class PharmacyCustomerView(QWidget):
                 self.table.setCellWidget(i, 4, actions)
 
         task_manager.run_task(do_load, on_finished=on_finished)
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.load_customers()
+
+    def next_page(self):
+        if self.current_page < self.total_pages:
+            self.current_page += 1
+            self.load_customers()
 
     def show_visual_details(self, row):
         dialog = QDialog(self)
@@ -483,11 +471,25 @@ class PharmacyCustomerView(QWidget):
 
     def delete_customer(self, cid):
         if QMessageBox.question(self, "Confirm", "Delete this customer?") == QMessageBox.StandardButton.Yes:
-            with db_manager.get_pharmacy_connection() as conn:
-                conn.execute("UPDATE pharmacy_customers SET is_active=0 WHERE id=?", (cid,))
-                conn.commit()
-            self.load_customers()
-            self.customers_updated.emit()
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_delete():
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        conn.execute("UPDATE pharmacy_customers SET is_active=0 WHERE id=?", (cid,))
+                        conn.commit()
+                    return True
+                except:
+                    return False
+
+            def on_finished(success):
+                if success:
+                    self.load_customers()
+                    self.customers_updated.emit()
+                else:
+                    QMessageBox.critical(self, "Error", "Could not delete customer")
+
+            task_manager.run_task(do_delete, on_finished=on_finished)
 
     def clear_form(self):
         self.name_input.clear()

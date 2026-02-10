@@ -80,12 +80,14 @@ class LicenseGuard(QObject):
         self._active_thread = None
 
     def handle_status(self, status_data):
-        self.last_status = status_data
+        # 1. Modular Activation Flags
+        store_active = bool(status_data.get('store_active', True))
+        pharmacy_active = bool(status_data.get('pharmacy_active', True))
         
-        # 1. Modular Activation Flags (Admin can toggle Store/Pharmacy separately)
-        store_active = status_data.get('store_active', True)
-        pharmacy_active = status_data.get('pharmacy_active', True)
-        self.modules_updated.emit(bool(store_active), bool(pharmacy_active))
+        if store_active != self.store_active or pharmacy_active != self.pharmacy_active:
+            self.store_active = store_active
+            self.pharmacy_active = pharmacy_active
+            self.modules_updated.emit(store_active, pharmacy_active)
 
         # 2. Critical Deactivation Check
         status = status_data.get('status', 'active')
@@ -97,6 +99,8 @@ class LicenseGuard(QObject):
             if self.is_currently_locked:
                 self.is_currently_locked = False
                 self.system_activated.emit(status_data) # Auto-Unlock signal
+
+        self.last_status = status_data
 
         # 3. Sync Contract Expiry
         expiry_str = status_data.get('contract_expiry')

@@ -25,7 +25,8 @@ class SettingsView(QWidget):
         # Background Sync Timer for offline changes
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self.check_and_sync_online)
-        self.sync_timer.start(30000) # Every 30 seconds
+        self.sync_timer.start(60000) # Every 60 seconds (less aggressive)
+        self._last_save_data = None
 
 
     def create_card(self, title, icon_name):
@@ -417,8 +418,25 @@ class SettingsView(QWidget):
             self.generate_whatsapp_qr(auto=True)
 
     def check_and_sync_online(self):
-        """Timer callback - triggered every 30s. Must be non-blocking."""
+        """Timer callback - triggered every 60s. Must be non-blocking."""
         if self.is_syncing: return
+        
+        # Prevent background activity if app is not focused or no changes
+        from PyQt6.QtWidgets import QApplication
+        if QApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
+            return
+
+        current_data = (
+            self.company_name.text(),
+            self.company_address.toPlainText(),
+            self.company_phone.text(),
+            self.whatsapp_number.text()
+        )
+        
+        if self._last_save_data == current_data:
+            return
+            
+        self._last_save_data = current_data
         self.save_settings(silent=True)
 
     def save_settings(self, silent=False):
@@ -493,25 +511,40 @@ class SettingsView(QWidget):
         task_manager.run_task(_write_db, on_finished=_on_written)
 
     def generate_whatsapp_qr(self, auto=False):
-        """Generate WhatsApp QR code"""
+        """Generate WhatsApp QR code asynchronously"""
         number = self.whatsapp_number.text().strip()
         if not number:
             if not auto: QMessageBox.warning(self, "Error", "Please enter a WhatsApp number first")
             return
 
-        try:
-            # Create WhatsApp link
-            whatsapp_link = f"https://wa.me/{number.replace('+', '')}"
+        from src.core.blocking_task_manager import task_manager
 
-            # Generate QR code
-            qr = qrcode.QRCode(version=1, box_size=10, border=5)
-            qr.add_data(whatsapp_link)
-            qr.make(fit=True)
+        def do_generate():
+            try:
+                # Create WhatsApp link
+                whatsapp_link = f"https://wa.me/{number.replace('+', '').replace(' ', '')}"
 
-            # Create image
-            img = qr.make_image(fill_color="black", back_color="white")
-            img = img.convert("RGBA")
+                # Generate QR code
+                qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                qr.add_data(whatsapp_link)
+                qr.make(fit=True)
 
+                # Create image
+                img = qr.make_image(fill_color="black", back_color="white")
+                img = img.convert("RGBA")
+                
+                # We can't pass QPixmap/QImage directly easily if we want to stay thread safe, 
+                # so we'll pass the raw bytes or just the image object if it's not a Qt object
+                return {"success": True, "img": img}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                if not auto: QMessageBox.critical(self, "Error", f"Failed to generate QR code: {result['error']}")
+                return
+
+            img = result["img"]
             # Convert to QPixmap
             img_data = img.tobytes("raw", "RGBA")
             qimage = QImage(img_data, img.size[0], img.size[1], QImage.Format.Format_RGBA8888)
@@ -520,11 +553,9 @@ class SettingsView(QWidget):
             # Scale to fit label
             scaled_pixmap = pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio)
             self.qr_label.setPixmap(scaled_pixmap)
-
             self.generated_qr_data = img  # Store for saving
 
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate QR code: {str(e)}")
+        task_manager.run_task(do_generate, on_finished=on_finished)
 
     def save_qr_code(self):
         """Save QR code to file"""
@@ -555,9 +586,12 @@ class SettingsView(QWidget):
         QMessageBox.information(self, "Language Changed", "Please restart the application for language changes to take full effect.")
 
     def run_vacuum(self):
-        with db_manager.get_connection() as conn:
-            conn.execute("VACUUM")
-        QMessageBox.information(self, "Success", "Database optimized.")
+        from src.core.blocking_task_manager import task_manager
+        def do_vacuum():
+            with db_manager.get_connection() as conn:
+                conn.execute("VACUUM")
+            return True
+        task_manager.run_task(do_vacuum, on_finished=lambda _: QMessageBox.information(self, "Success", "Database optimized."))
 
     def system_reset(self):
         # Multiple confirmations as per spec safety
@@ -569,27 +603,40 @@ class SettingsView(QWidget):
                                         "Are you absolutely sure? This action is irreversible.",
                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply2 == QMessageBox.StandardButton.Yes:
-                try:
-                    with db_manager.get_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("DELETE FROM sales")
-                        cursor.execute("DELETE FROM sale_items")
-                        cursor.execute("DELETE FROM loans")
-                        cursor.execute("DELETE FROM cash_transactions")
-                        cursor.execute("DELETE FROM audit_logs")
-                        cursor.execute("UPDATE customers SET balance = 0")
-                        cursor.execute("UPDATE inventory SET quantity = 0")
-                        conn.commit()
-                    QMessageBox.information(self, "Success", "System has been reset to initial state.")
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Reset failed: {e}")
+                from src.core.blocking_task_manager import task_manager
+                def do_reset():
+                    try:
+                        with db_manager.get_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("DELETE FROM sales")
+                            cursor.execute("DELETE FROM sale_items")
+                            cursor.execute("DELETE FROM loans")
+                            cursor.execute("DELETE FROM cash_transactions")
+                            cursor.execute("DELETE FROM audit_logs")
+                            cursor.execute("UPDATE customers SET balance = 0")
+                            cursor.execute("UPDATE inventory SET quantity = 0")
+                            conn.commit()
+                        return {"success": True}
+                    except Exception as e:
+                        return {"success": False, "error": str(e)}
+
+                def on_finished(result):
+                    if result["success"]:
+                        QMessageBox.information(self, "Success", "System has been reset to initial state.")
+                    else:
+                        QMessageBox.critical(self, "Error", f"Reset failed: {result['error']}")
+
+                task_manager.run_task(do_reset, on_finished=on_finished)
 
     def clear_logs(self):
         if QMessageBox.question(self, "Confirm", "Clear all audit logs?") == QMessageBox.StandardButton.Yes:
-            with db_manager.get_connection() as conn:
-                conn.execute("DELETE FROM audit_logs")
-                conn.commit()
-            QMessageBox.information(self, "Success", "Logs cleared.")
+            from src.core.blocking_task_manager import task_manager
+            def do_clear():
+                with db_manager.get_connection() as conn:
+                    conn.execute("DELETE FROM audit_logs")
+                    conn.commit()
+                return True
+            task_manager.run_task(do_clear, on_finished=lambda _: QMessageBox.information(self, "Success", "Logs cleared."))
 
     def run_backup(self):
         path = QFileDialog.getExistingDirectory(self, "Select Backup Folder")

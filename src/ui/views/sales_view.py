@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
                              QPushButton, QLabel, QFrame, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QAbstractItemView, QMessageBox, QDialog, QInputDialog, QCompleter, QTextEdit, QComboBox, QFormLayout)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QStringListModel
-from PyQt6.QtGui import QImage, QPixmap, QFont
+from PyQt6.QtGui import QImage, QPixmap, QFont, QColor
 from datetime import datetime
 import qtawesome as qta
 # import cv2 # Camera feature placeholder
@@ -62,7 +62,7 @@ class CreditKYCDialog(QDialog):
     def take_photo(self):
         from src.utils.camera import capture_image
         path = os.path.join("data", "kyc", f"cust_{int(time.time())}.jpg")
-        success, msg = capture_image(path)
+        success, msg = capture_image(path, self)
         if success:
             self.photo_path = path
             self.photo_btn.setText(f" {lang_manager.get('customer_photo')} ✓")
@@ -73,7 +73,7 @@ class CreditKYCDialog(QDialog):
     def take_id_photo(self):
         from src.utils.camera import capture_image
         path = os.path.join("data", "kyc", f"id_{int(time.time())}.jpg")
-        success, msg = capture_image(path)
+        success, msg = capture_image(path, self)
         if success:
             self.id_photo_path = path
             self.id_btn.setText(f" {lang_manager.get('id_card_photo')} ✓")
@@ -579,15 +579,27 @@ class SalesView(QWidget):
                     kyc = CreditKYCDialog(self, result["customer_name"])
                     if kyc.exec():
                         data = kyc.get_data()
-                        with db_manager.get_connection() as conn:
-                            cursor = conn.cursor()
-                            cursor.execute("""
-                                UPDATE customers 
-                                SET home_address = ?, photo = ?, id_card_photo = ?, phone = ? 
-                                WHERE id = ?
-                            """, (data['address'], data['photo'], data['id_photo'], data['phone'], self.selected_customer_id))
-                            conn.commit()
-                        self.process_payment(method) # Retry after KYC
+                        
+                        def update_kyc():
+                            try:
+                                with db_manager.get_connection() as conn:
+                                    conn.execute("""
+                                        UPDATE customers 
+                                        SET home_address = ?, photo = ?, id_card_photo = ?, phone = ? 
+                                        WHERE id = ?
+                                    """, (data['address'], data['photo'], data['id_photo'], data['phone'], self.selected_customer_id))
+                                    conn.commit()
+                                return True
+                            except Exception as e:
+                                return str(e)
+                        
+                        def on_kyc_updated(res):
+                            if res is True:
+                                self.process_payment(method) # Retry after KYC
+                            else:
+                                QMessageBox.critical(self, "Error", f"Failed to update KYC: {res}")
+                                
+                        task_manager.run_task(update_kyc, on_finished=on_kyc_updated)
                     return
                 
                 if result.get("type") == "warning":
@@ -622,18 +634,27 @@ class SalesView(QWidget):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            try:
-                # Use thermal printer for exact format from demand.txt
-                from src.utils.thermal_bill_printer import thermal_printer
-                bill_text = thermal_printer.generate_sales_bill(sale_id, method == "CREDIT")
-                
-                if bill_text:
-                    thermal_printer.print_bill(bill_text)
+            from src.core.blocking_task_manager import task_manager
+            from src.utils.thermal_bill_printer import thermal_printer
+            
+            def do_print():
+                try:
+                    # Heavy lifting: DB queries + QR generation
+                    bill_text = thermal_printer.generate_sales_bill(sale_id, method == "CREDIT")
+                    if bill_text:
+                        thermal_printer.print_bill(bill_text)
+                        return True
+                    return "Failed to generate bill content."
+                except Exception as e:
+                    return str(e)
+            
+            def on_print_finished(result):
+                if result is True:
                     QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("bill_printed_successfully"))
                 else:
-                    QMessageBox.warning(self, lang_manager.get("print_error"), lang_manager.get("failed_to_generate_bill"))
-            except Exception as e:
-                QMessageBox.critical(self, lang_manager.get("print_error"), f"{lang_manager.get('failed_to_print_bill')}: {str(e)}")
+                    QMessageBox.critical(self, lang_manager.get("print_error"), f"{lang_manager.get('failed_to_print_bill')}: {result}")
+            
+            task_manager.run_task(do_print, on_finished=on_print_finished)
     
     def load_next_bill_number(self):
         from src.core.blocking_task_manager import task_manager

@@ -77,23 +77,33 @@ class ReplacementItemDialog(QDialog):
         
     def load_products(self):
         """Load available products in background to prevent freezing"""
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                products = conn.execute("""
-                    SELECT p.id, p.name_en, p.sale_price, 
-                           COALESCE(SUM(i.quantity), 0) as stock
-                    FROM pharmacy_products p
-                    LEFT JOIN pharmacy_inventory i ON p.id = i.product_id
-                    WHERE p.is_active = 1
-                    GROUP BY p.id
-                    HAVING stock > 0
-                    ORDER BY p.name_en
-                """).fetchall()
-                
-                self.all_products = products
-                self.display_products(products)
-        except Exception as e:
-            QMessageBox.critical(self, lang_manager.get("error"), str(e))
+        from src.core.blocking_task_manager import task_manager
+
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    products = conn.execute("""
+                        SELECT p.id, p.name_en, p.sale_price, 
+                               COALESCE(SUM(i.quantity), 0) as stock
+                        FROM pharmacy_products p
+                        LEFT JOIN pharmacy_inventory i ON p.id = i.product_id
+                        WHERE p.is_active = 1
+                        GROUP BY p.id
+                        HAVING stock > 0
+                        ORDER BY p.name_en
+                    """).fetchall()
+                    return {"success": True, "products": [dict(p) for p in products]}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if result["success"]:
+                self.all_products = result["products"]
+                self.display_products(self.all_products)
+            else:
+                QMessageBox.critical(self, lang_manager.get("error"), result["error"])
+
+        task_manager.run_task(do_load, on_finished=on_finished)
     
     def display_products(self, products):
         """Display products in table"""
@@ -258,6 +268,10 @@ class PharmacyReturnsView(QWidget):
         ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch) # Product stretches
+        # Fix width for Action columns
+        self.table.setColumnWidth(6, 150) # Action combo
+        self.table.setColumnWidth(7, 150) # Refund Mode combo
+        self.table.setColumnWidth(8, 150) # Confirm button
         layout.addWidget(self.table)
 
     def load_invoice(self):
@@ -379,8 +393,11 @@ class PharmacyReturnsView(QWidget):
                 row_refund_combo.setCurrentIndex(1)
             self.table.setCellWidget(i, 7, row_refund_combo)
             
-            proc_btn = QPushButton(lang_manager.get("confirm"))
-            style_button(proc_btn, variant="info", size="small")
+            import qtawesome as qta
+            proc_btn = QPushButton(" " + lang_manager.get("confirm"))
+            proc_btn.setIcon(qta.icon("fa5s.check-circle", color="white"))
+            style_button(proc_btn, variant="info")
+            proc_btn.setMinimumHeight(40)
             proc_btn.clicked.connect(lambda ch, it=item, r=i: self.process_return(it, r))
             self.table.setCellWidget(i, 8, proc_btn)
 
@@ -424,6 +441,9 @@ class PharmacyReturnsView(QWidget):
         if not ok: return
 
         from src.core.blocking_task_manager import task_manager
+        from src.core.pharmacy_auth import PharmacyAuth
+        user = PharmacyAuth.get_current_user()
+        user_id = user['id'] if user else 1
 
         def do_process():
             try:

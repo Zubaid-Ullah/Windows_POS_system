@@ -608,27 +608,38 @@ class FinanceView(QWidget):
         return tab
 
     def load_adv_users(self):
+        from src.core.blocking_task_manager import task_manager
         self.adv_user_combo.clear()
+        self.adv_user_combo.addItem("Loading...", None)
+        self.adv_user_combo.setEnabled(False)
 
-        with db_manager.get_connection() as conn:
-            # Load main system users
-            main_users = conn.execute("SELECT id, username, 'Main' as source FROM users WHERE is_active=1").fetchall()
-
-            # Load pharmacy users if tables exist
-            pharmacy_users = []
+        def fetch_all():
             try:
-                pharmacy_users = conn.execute("SELECT id, username, 'Pharmacy' as source FROM pharmacy_users WHERE is_active=1").fetchall()
-            except:
-                pass  # Pharmacy tables might not exist
+                with db_manager.get_connection() as conn:
+                    # Load main system users
+                    main_users = [dict(u) for u in conn.execute("SELECT id, username, 'Main' as source FROM users WHERE is_active=1").fetchall()]
 
-            # Combine and sort all users
-            all_users = main_users + pharmacy_users
-            all_users.sort(key=lambda x: x['username'].lower())
+                    # Load pharmacy users if tables exist
+                    pharmacy_users = []
+                    try:
+                        pharmacy_users = [dict(u) for u in conn.execute("SELECT id, username, 'Pharmacy' as source FROM pharmacy_users WHERE is_active=1").fetchall()]
+                    except:
+                        pass
 
-            # Add to combobox with clear labeling
+                    all_users = main_users + pharmacy_users
+                    all_users.sort(key=lambda x: x['username'].lower())
+                    return all_users
+            except Exception:
+                return []
+
+        def on_finished(all_users):
+            self.adv_user_combo.clear()
+            self.adv_user_combo.setEnabled(True)
             for user in all_users:
                 display_text = f"{user['username']} ({user['source']})"
                 self.adv_user_combo.addItem(display_text, (user['id'], user['source']))
+
+        task_manager.run_task(fetch_all, on_finished=on_finished)
 
     def save_advance(self):
         user_data = self.adv_user_combo.currentData()

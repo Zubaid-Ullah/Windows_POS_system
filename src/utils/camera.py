@@ -1,66 +1,164 @@
 import cv2
 import os
 import time
-
+import PyQt6
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
+
+from PyQt6.QtWidgets import QInputDialog, QMessageBox, QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtGui import QImage, QPixmap
+
+class CameraWorker(QThread):
+    change_pixmap_signal = pyqtSignal(QImage)
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, camera_index):
+        super().__init__()
+        self.camera_index = camera_index
+        self._run_flag = True
+
+    def run(self):
+        cap = cv2.VideoCapture(self.camera_index)
+        if not cap.isOpened():
+            self.error_signal.emit(f"Could not open camera {self.camera_index}")
+            return
+
+        while self._run_flag:
+            ret, cv_img = cap.read()
+            if ret:
+                # Convert to RGB
+                rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_image.shape
+                bytes_per_line = ch * w
+                qt_img = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+                self.change_pixmap_signal.emit(qt_img)
+            else:
+                self.error_signal.emit("Failed to grab frame")
+                break
+            # Throttle to ~30 FPS to prevent GUI freeze
+            self.msleep(33)
+        cap.release()
+
+    def stop(self):
+        if self.isRunning():
+            self._run_flag = False
+            self.quit()
+            self.wait()
+
+class CameraDialog(QDialog):
+    def __init__(self, camera_index, save_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Camera Capture")
+        self.setFixedSize(660, 540)
+        self.save_path = save_path
+        self.captured = False
+        self.current_frame = None
+        
+        layout = QVBoxLayout(self)
+        self.label = QLabel("Loading camera...")
+        self.label.setFixedSize(640, 480)
+        self.label.setStyleSheet("background: black; border: 2px solid #ccc;")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.label)
+        
+        btn_layout = QHBoxLayout()
+        self.capture_btn = QPushButton("Capture (Space)")
+        self.capture_btn.setFixedHeight(40)
+        self.capture_btn.clicked.connect(self.capture)
+        
+        self.cancel_btn = QPushButton("Cancel (Esc)")
+        self.cancel_btn.setFixedHeight(40)
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        btn_layout.addWidget(self.capture_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        self.thread = CameraWorker(camera_index)
+        self.thread.change_pixmap_signal.connect(self.update_image)
+        self.thread.error_signal.connect(self.handle_error)
+        self.thread.start()
+
+    def reject(self):
+        self.thread.stop()
+        super().reject()
+
+    def update_image(self, qt_img):
+        self.current_frame = qt_img
+        pixmap = QPixmap.fromImage(qt_img)
+        self.label.setPixmap(pixmap.scaled(self.label.size(), Qt.AspectRatioMode.KeepAspectRatio))
+
+    def handle_error(self, msg):
+        QMessageBox.critical(self, "Camera Error", msg)
+        self.reject()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Space:
+            self.capture()
+        elif event.key() == Qt.Key.Key_Escape:
+            self.reject()
+        else:
+            super().keyPressEvent(event)
+
+    def capture(self):
+        if self.current_frame:
+            os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+            self.current_frame.save(self.save_path)
+            self.captured = True
+            self.accept()
+
+    def closeEvent(self, event):
+        self.thread.stop()
+        super().closeEvent(event)
 
 def capture_image(save_path, parent=None):
     """
-    Opens camera, waits for spacebar to capture, or 'q' to quit.
-    Returns True if captured, False otherwise.
+    Opens camera dialog, allows capture via spacebar.
+    Returns (True, "") if captured, (False, error_msg) otherwise.
     """
-    # Point: "first ask to choose camera"
-    # Try common indices 0, 1, 2
-    available = []
-    for i in range(3):
-        temp = cv2.VideoCapture(i)
-        if temp.isOpened():
-            available.append(str(i))
-            temp.release()
+    from src.core.blocking_task_manager import task_manager
+    from PyQt6.QtWidgets import QProgressDialog
     
-    if not available:
+    # Use a progress dialog for probing since it can take seconds
+    progress = QProgressDialog("Scanning for cameras...", None, 0, 0, parent)
+    progress.setWindowModality(Qt.WindowModality.WindowModal)
+    progress.show()
+    
+    def probe_cameras():
+        # Quick probe: Is camera 0 available?
+        temp = cv2.VideoCapture(0)
+        has_zero = temp.isOpened()
+        if has_zero: temp.release()
+        
+        if has_zero: return 0
+        
+        # Check camera 1
+        temp = cv2.VideoCapture(1)
+        has_one = temp.isOpened()
+        if has_one: temp.release()
+        
+        if has_one: return 1
+        return -1
+
+    # We need a synchronous-looking execution but without blocking the event loop
+    # Actually, we can use a nested event loop or just make capture_image async if we wanted.
+    # But for simplicity, we'll use a result placeholder.
+    probe_result = {"index": -1, "done": False}
+    
+    def on_ready(idx):
+        probe_result["index"] = idx
+        probe_result["done"] = True
+        progress.accept()
+
+    task_manager.run_task(probe_cameras, on_finished=on_ready)
+    progress.exec() # This keeps local event loop running while task finishes
+    
+    camera_index = probe_result["index"]
+    if camera_index == -1:
         return False, "No cameras found"
-        
-    index_str, ok = QInputDialog.getItem(parent, "Select Camera", "Choose Camera Index:", available, 0, False)
-    if not ok: return False, ""
     
-    camera_index = int(index_str)
-    print(f"DEBUG: Attempting to open camera {camera_index} for: {save_path}")
-    cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        print(f"DEBUG: Camera {camera_index} failed to open")
-        return False, f"Could not open camera {camera_index}"
-    print(f"DEBUG: Camera {camera_index} opened successfully")
+    dialog = CameraDialog(camera_index, save_path, parent)
+    if dialog.exec():
+        return True, ""
+    return False, ""
 
-    captured = False
-    error_msg = ""
-    
-    # Create directory if not exists
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            error_msg = "Failed to grab frame"
-            break
-
-        # Show preview
-        cv2.imshow("Press SPACE to Capture, ESC to Cancel", frame)
-        
-        key = cv2.waitKey(1) & 0xFF
-        if key == 32:  # Space
-            print("DEBUG: SPACE pressed, capturing...")
-            cv2.imwrite(save_path, frame)
-            captured = True
-            break
-        elif key == 27 or key == ord('q'):  # ESC or Q
-            print("DEBUG: ESC or Q pressed, cancelling...")
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-    # On some systems (especially Mac), we need to pump events to close the window
-    for _ in range(10): cv2.waitKey(1)
-    
-    print(f"DEBUG: Camera session ended. Captured: {captured}")
-    return captured, error_msg

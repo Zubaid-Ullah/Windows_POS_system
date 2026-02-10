@@ -152,7 +152,7 @@ class CustomerDialog(QDialog):
         print("DEBUG: take_photo button clicked")
         from src.utils.camera import capture_image
         path = os.path.join("data", "kyc", f"cust_{uuid.uuid4()}.jpg")
-        success, msg = capture_image(path)
+        success, msg = capture_image(path, self)
         if success:
             self.photo_path = path
             self.photo_status.setText("Photo: Captured ✓")
@@ -163,7 +163,7 @@ class CustomerDialog(QDialog):
     def take_id_photo(self):
         from src.utils.camera import capture_image
         path = os.path.join("data", "kyc", f"id_{uuid.uuid4()}.jpg")
-        success, msg = capture_image(path)
+        success, msg = capture_image(path, self)
         if success:
             self.id_photo_path = path
             self.id_status.setText("ID Card: Captured ✓")
@@ -196,6 +196,11 @@ class CustomerView(QWidget):
         super().__init__()
         self.current_user = Auth.get_current_user()
         self.is_admin = self.current_user['role_name'] in ['Admin', 'Manager', 'SuperAdmin']
+        # Pagination
+        self.current_page = 1
+        self.page_size = 50
+        self.total_pages = 1
+        
         self.init_ui()
         self.load_customers()
 
@@ -234,7 +239,30 @@ class CustomerView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch) # Name stretches
         self.table.setColumnWidth(4, 200) # Actions fixed
+        self.table.setColumnWidth(4, 200) # Actions fixed
         layout.addWidget(self.table)
+        
+        # Pagination Controls
+        pag_layout = QHBoxLayout()
+        pag_layout.addStretch()
+        
+        self.prev_btn = QPushButton("Previous")
+        style_button(self.prev_btn, variant="outline", size="small")
+        self.prev_btn.clicked.connect(self.prev_page)
+        
+        self.page_label = QLabel(f"Page 1")
+        self.page_label.setStyleSheet("font-weight: bold; color: #555;")
+        
+        self.next_btn = QPushButton("Next")
+        style_button(self.next_btn, variant="outline", size="small")
+        self.next_btn.clicked.connect(self.next_page)
+        
+        pag_layout.addWidget(self.prev_btn)
+        pag_layout.addWidget(self.page_label)
+        pag_layout.addWidget(self.next_btn)
+        pag_layout.addStretch()
+        
+        layout.addLayout(pag_layout)
         
         main_layout.addWidget(self.container)
 
@@ -245,16 +273,42 @@ class CustomerView(QWidget):
         def fetch_data():
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
-                query = "SELECT * FROM customers WHERE is_active = 1"
+                
+                # Base query
+                base_query = "FROM customers WHERE is_active = 1"
                 params = []
+                
                 if search:
-                    query += " AND (name_en LIKE ? OR phone LIKE ?)"
-                    params = [f"%{search}%", f"%{search}%"]
+                    base_query += " AND (name_en LIKE ? OR phone LIKE ?)"
+                    params.extend([f"%{search}%", f"%{search}%"])
+                
+                # Count total
+                cursor.execute(f"SELECT COUNT(*) {base_query}", params)
+                total_count = cursor.fetchone()[0]
+                
+                # Fetch page
+                offset = (self.current_page - 1) * self.page_size
+                query = f"SELECT * {base_query} ORDER BY id DESC LIMIT ? OFFSET ?"
+                params.extend([self.page_size, offset])
                 
                 cursor.execute(query, params)
-                return [dict(row) for row in cursor.fetchall()]
+                rows = [dict(row) for row in cursor.fetchall()]
+                
+                return {"rows": rows, "total": total_count}
 
-        def on_loaded(customers):
+        def on_loaded(result):
+            customers = result["rows"]
+            total_count = result["total"]
+            
+            # Calculate total pages
+            import math
+            self.total_pages = math.ceil(total_count / self.page_size) if total_count > 0 else 1
+            
+            # Update UI controls
+            self.page_label.setText(f"Page {self.current_page} of {self.total_pages}")
+            self.prev_btn.setEnabled(self.current_page > 1)
+            self.next_btn.setEnabled(self.current_page < self.total_pages)
+            
             self.table.setRowCount(0)
             for i, c in enumerate(customers):
                 self.table.insertRow(i)
@@ -302,6 +356,16 @@ class CustomerView(QWidget):
             self.table.setColumnWidth(4, 200)
 
         task_manager.run_task(fetch_data, on_finished=on_loaded)
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.load_customers()
+
+    def next_page(self):
+        if self.current_page < self.total_pages:
+            self.current_page += 1
+            self.load_customers()
 
     def add_customer(self):
         dialog = CustomerDialog()

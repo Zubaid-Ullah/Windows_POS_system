@@ -261,7 +261,9 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_inventory_pid ON inventory(product_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_cust ON sales(customer_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_ts ON audit_logs(timestamp)")
             
             conn.commit()
 
@@ -381,71 +383,88 @@ class DatabaseManager:
                     )
                 ''')
                 # Migration: Add refund_type to pharmacy_returns if missing
-            try:
-                cursor.execute("ALTER TABLE pharmacy_returns ADD COLUMN refund_type TEXT DEFAULT 'ACCOUNT'")
-            except: pass
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_returns ADD COLUMN refund_type TEXT DEFAULT 'ACCOUNT'")
+                except: pass
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_return_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, return_id INTEGER, 
-                    sale_item_id INTEGER, product_id INTEGER,
-                    quantity REAL NOT NULL, unit_price REAL NOT NULL, action TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (return_id) REFERENCES pharmacy_returns(id),
-                    FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
-                )
-            ''')
-            # Migration: Add sale_item_id to pharmacy_return_items if missing
-            try:
-                cursor.execute("ALTER TABLE pharmacy_return_items ADD COLUMN sale_item_id INTEGER")
-            except: pass
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_return_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, return_id INTEGER, 
+                        sale_item_id INTEGER, product_id INTEGER,
+                        quantity REAL NOT NULL, unit_price REAL NOT NULL, action TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (return_id) REFERENCES pharmacy_returns(id),
+                        FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
+                    )
+                ''')
+                # Migration: Add sale_item_id to pharmacy_return_items if missing
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_return_items ADD COLUMN sale_item_id INTEGER")
+                except: pass
 
-            # Table to track replacement items when action is REPLACEMENT
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_replacement_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    return_item_id INTEGER NOT NULL,
-                    product_id INTEGER NOT NULL,
-                    product_name TEXT,
-                    quantity REAL NOT NULL,
-                    unit_price REAL NOT NULL,
-                    total_price REAL NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (return_item_id) REFERENCES pharmacy_return_items(id),
-                    FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
-                )
-            ''')
+                # Table to track replacement items when action is REPLACEMENT
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_replacement_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        return_item_id INTEGER NOT NULL,
+                        product_id INTEGER NOT NULL,
+                        product_name TEXT,
+                        quantity REAL NOT NULL,
+                        unit_price REAL NOT NULL,
+                        total_price REAL NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (return_item_id) REFERENCES pharmacy_return_items(id),
+                        FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
+                    )
+                ''')
 
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pharmacy_month_close (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, month_str TEXT UNIQUE, total_sold_items REAL,
-                    total_sales REAL, total_profit REAL, total_petty_cash REAL, total_salaries REAL,
-                    net_profit REAL, closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, closed_by INTEGER
-                )
-            ''')
-            
-            # Duplicated app/system settings for Pharmacy logic independence
-            cursor.execute('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)')
-            cursor.execute("CREATE TABLE IF NOT EXISTS system_settings (id INTEGER PRIMARY KEY DEFAULT 1, is_active INTEGER DEFAULT 1, activation_key TEXT, mode TEXT DEFAULT 'OFFLINE', valid_until TIMESTAMP)")
-            
-            back_date = "2023-01-01"
-            cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('contract_end', ?)", (back_date,))
-            cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_number', '')")
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_month_close (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, month_str TEXT UNIQUE, total_sold_items REAL,
+                        total_sales REAL, total_profit REAL, total_petty_cash REAL, total_salaries REAL,
+                        net_profit REAL, closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, closed_by INTEGER
+                    )
+                ''')
+                
+                # Duplicated app/system settings for Pharmacy logic independence
+                cursor.execute('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)')
+                cursor.execute("CREATE TABLE IF NOT EXISTS system_settings (id INTEGER PRIMARY KEY DEFAULT 1, is_active INTEGER DEFAULT 1, activation_key TEXT, mode TEXT DEFAULT 'OFFLINE', valid_until TIMESTAMP)")
+                
+                back_date = "2023-01-01"
+                cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('contract_end', ?)", (back_date,))
+                cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_number', '')")
 
-            cursor.execute('CREATE TABLE IF NOT EXISTS pharmacy_info (id INTEGER PRIMARY KEY DEFAULT 1, name TEXT, address TEXT, phone TEXT, email TEXT)')
-            cursor.execute("INSERT OR IGNORE INTO pharmacy_info (id, name, address, phone, email) VALUES (1, 'FaqiriTech Pharmacy', 'Main Road, Kabul', '0700000000', 'pharmacy@faqiritech.com')")
-            cursor.execute("INSERT OR IGNORE INTO system_settings (id, is_active, mode, valid_until) VALUES (1, 1, 'OFFLINE', ?)", (back_date,))
+                cursor.execute('CREATE TABLE IF NOT EXISTS pharmacy_info (id INTEGER PRIMARY KEY DEFAULT 1, name TEXT, address TEXT, phone TEXT, email TEXT)')
+                cursor.execute("INSERT OR IGNORE INTO pharmacy_info (id, name, address, phone, email) VALUES (1, 'FaqiriTech Pharmacy', 'Main Road, Kabul', '0700000000', 'pharmacy@faqiritech.com')")
+                cursor.execute("INSERT OR IGNORE INTO system_settings (id, is_active, mode, valid_until) VALUES (1, 1, 'OFFLINE', ?)", (back_date,))
 
-            # Performance Indexes for Pharmacy
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_prod_bc ON pharmacy_products(barcode)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_inv_pid ON pharmacy_inventory(product_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_sales_date ON pharmacy_sales(created_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_sale_items_sid ON pharmacy_sale_items(sale_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_payments_sid ON pharmacy_payments(sale_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_payments_date ON pharmacy_payments(created_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_returns_date ON pharmacy_returns(created_at)")
+                # Performance Indexes for Pharmacy
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_prod_bc ON pharmacy_products(barcode)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_inv_pid ON pharmacy_inventory(product_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_sale_items_pid ON pharmacy_sale_items(product_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_sales_date ON pharmacy_sales(created_at)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_sale_items_sid ON pharmacy_sale_items(sale_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_payments_sid ON pharmacy_payments(sale_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_payments_date ON pharmacy_payments(created_at)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ph_returns_date ON pharmacy_returns(created_at)")
 
-            conn.commit()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_notes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        type TEXT,
+                        title TEXT,
+                        content TEXT,
+                        duration TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Migration: Add title if missing
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_notes ADD COLUMN title TEXT")
+                except: pass
+
+                conn.commit()
         except Exception as e:
             print(f"[CRITICAL] Pharmacy DB Init Error: {e}")
             import traceback

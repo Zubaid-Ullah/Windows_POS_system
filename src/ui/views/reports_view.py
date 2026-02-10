@@ -297,7 +297,7 @@ class ReportsView(QWidget):
         # Auto-refresh dashboard periodically
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.load_dashboard_data)
-        self.refresh_timer.start(15000)  # refresh every 15 seconds
+        self.refresh_timer.start(60000)  # refresh every 60 seconds (less aggressive)
     
     def cleanup_thread(self):
         if self.worker:
@@ -311,6 +311,11 @@ class ReportsView(QWidget):
     
     def check_midnight(self):
         """Clear table data at midnight without affecting database"""
+        # Prevent background activity if app is not focused
+        from PyQt6.QtWidgets import QApplication
+        if QApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
+            return
+
         current_date = datetime.now().date()
         if current_date > self.last_clear_date:
             self.last_clear_date = current_date
@@ -327,6 +332,14 @@ class ReportsView(QWidget):
         """Auto-refresh data when view becomes visible"""
         super().showEvent(event)
         self.load_dashboard_data()
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.start()
+
+    def hideEvent(self, event):
+        """Stop timer when view is hidden to save resources"""
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
+        super().hideEvent(event)
 
     def init_ui(self):
         main_vbox = QVBoxLayout(self)
@@ -598,6 +611,12 @@ class ReportsView(QWidget):
 
     def load_dashboard_data(self):
         if self.is_loading: return
+        
+        # Prevent background activity if app is not focused
+        from PyQt6.QtWidgets import QApplication
+        if QApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
+            return
+            
         self.is_loading = True
         self.cleanup_thread()
         

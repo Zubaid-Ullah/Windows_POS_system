@@ -42,3 +42,38 @@
 2026-02-08 15:20:47,093 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
 2026-02-08 15:23:20,292 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
 2026-02-08 15:25:07,685 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-09 01:53:47,155 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:11:08,815 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:11:55,193 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:16:38,993 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:20:18,622 - INFO - Pharmacy User HaaniGhani logged in successfully
+2026-02-09 02:21:10,417 - INFO - Pharmacy User HaaniGhani logged in successfully
+2026-02-09 02:21:16,902 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:21:46,027 - INFO - Pharmacy User HaaniGhani logged in successfully
+2026-02-09 02:23:16,972 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:27:07,812 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-09 02:27:07,958 - INFO - HTTP Request: GET https://gwmtlvquhlqtkyynuexf.supabase.co/rest/v1/installations?select=%2A&order=installation_time.desc "HTTP/2 200 OK"
+2026-02-09 02:34:10,437 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:37:51,692 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:46:51,737 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 02:51:33,987 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 03:03:28,159 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 03:19:47,773 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 03:26:29,817 - INFO - Pharmacy User admin logged in successfully
+2026-02-09 03:37:31,844 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 17:18:53,406 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 18:23:53,108 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 18:25:06,946 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 18:35:50,377 - INFO - User admin logged in successfully
+2026-02-10 18:36:32,410 - INFO - User admin logged in successfully
+2026-02-10 18:39:20,485 - INFO - User admin logged in successfully
+2026-02-10 18:43:06,355 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 18:52:08,195 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 19:14:11,352 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 19:16:03,997 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 20:31:01,300 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 20:34:11,347 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 20:44:51,689 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 20:49:13,823 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 21:11:53,897 - INFO - Pharmacy User admin logged in successfully
+2026-02-10 21:46:10,884 - INFO - Pharmacy User admin logged in successfully

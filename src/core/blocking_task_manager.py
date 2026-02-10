@@ -41,6 +41,9 @@ class BlockingTaskManager(QObject):
     """
     Global manager to prevent GUI hangs by offloading blocking operations.
     """
+    task_started = pyqtSignal(str)
+    task_finished = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
         self.pool = QThreadPool.globalInstance()
@@ -53,14 +56,21 @@ class BlockingTaskManager(QObject):
         """
         Runs a function in the background.
         """
+        task_name = fn.__name__ if hasattr(fn, '__name__') else 'lambda'
         worker = TaskWorker(fn, self, *args, **kwargs)
         self._active_workers.add(worker)
+        
+        # Logging and signals for visibility
+        print(f"[TaskManager] Starting task: {task_name}. Active: {len(self._active_workers)}")
+        self.task_started.emit(task_name)
 
         def cleanup_worker():
             """Safe cleanup of worker references and signals."""
             try:
                 if worker in self._active_workers:
                     self._active_workers.remove(worker)
+                print(f"[TaskManager] Task finished: {task_name}. Remaining: {len(self._active_workers)}")
+                self.task_finished.emit(task_name)
                 worker.signals.deleteLater()
             except:
                 pass

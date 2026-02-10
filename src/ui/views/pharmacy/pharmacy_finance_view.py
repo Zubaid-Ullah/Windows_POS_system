@@ -273,18 +273,29 @@ class PharmacyFinanceView(QWidget):
             QMessageBox.warning(self, lang_manager.get("error"), f"{lang_manager.get('amount')} {lang_manager.get('and')} {lang_manager.get('description')} {lang_manager.get('required')}")
             return
             
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                conn.execute("""
-                    INSERT INTO pharmacy_expenses (category, amount, description, expense_date, created_by)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (etype, amt, purpose, date, user_id))
-                conn.commit()
-            self.load_expenses()
-            self.exp_amount.setValue(0)
-            self.exp_purpose.clear()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_save():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    conn.execute("""
+                        INSERT INTO pharmacy_expenses (category, amount, description, expense_date, created_by)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (etype, amt, purpose, date, user_id))
+                    conn.commit()
+                return True
+            except Exception as e:
+                return str(e)
+
+        def on_finished(result):
+            if result is True:
+                self.load_expenses()
+                self.exp_amount.setValue(0)
+                self.exp_purpose.clear()
+            else:
+                QMessageBox.critical(self, "Error", result)
+
+        task_manager.run_task(do_save, on_finished=on_finished)
 
     def load_expenses(self):
         from src.core.blocking_task_manager import task_manager
@@ -344,26 +355,33 @@ class PharmacyFinanceView(QWidget):
         amt = self.salary_amount.value()
         stype = self.salary_type.currentText()
 
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                if user_source == 'Main':
-                    # For main users, we need to use the main salary table or expenses
-                    # Since pharmacy_employee_salary is for pharmacy users, we'll use a different approach
-                    QMessageBox.warning(self, lang_manager.get("warning"), lang_manager.get("main_finance_notice"))
-                    return
-                else:
-                    # For pharmacy users
+        if user_source == 'Main':
+            QMessageBox.warning(self, lang_manager.get("warning"), lang_manager.get("main_finance_notice"))
+            return
+
+        from src.core.blocking_task_manager import task_manager
+
+        def do_assign():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
                     existing = conn.execute("SELECT id FROM pharmacy_employee_salary WHERE user_id=? AND is_active=1", (user_id,)).fetchone()
                     if existing:
                         conn.execute("UPDATE pharmacy_employee_salary SET amount=?, salary_type=? WHERE id=?", (amt, stype, existing['id']))
                     else:
                         conn.execute("INSERT INTO pharmacy_employee_salary (user_id, amount, salary_type) VALUES (?, ?, ?)", (user_id, amt, stype))
                     conn.commit()
+                return True
+            except Exception as e:
+                return str(e)
 
-            self.load_salaries()
-            QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("salary_configured_success"))
-        except Exception as e:
-            QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {str(e)}")
+        def on_finished(result):
+            if result is True:
+                self.load_salaries()
+                QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("salary_configured_success"))
+            else:
+                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {result}")
+
+        task_manager.run_task(do_assign, on_finished=on_finished)
 
     def load_salaries(self):
         from src.core.blocking_task_manager import task_manager
@@ -511,133 +529,122 @@ class PharmacyFinanceView(QWidget):
         return card
 
     def load_summary(self):
-        """Asynchronously load financial summary data"""
-        self._start_finance_worker()
-
-    def _start_finance_worker(self):
-        # Prevent double loading
-        if hasattr(self, '_worker') and self._worker and self._worker.isRunning():
-            return
-
-        # Prepare filters
+        """Asynchronously load financial summary data using task_manager"""
         filter_text = self.filter_combo.currentText()
         date_from = self.date_from.date().toString("yyyy-MM-dd")
         date_to = self.date_to.date().toString("yyyy-MM-dd")
 
-        from PyQt6.QtCore import QThread, pyqtSignal
-        class FinanceWorker(QThread):
-            data_loaded = pyqtSignal(dict)
-            error = pyqtSignal(str)
+        from src.core.blocking_task_manager import task_manager
 
-            def __init__(self, filter_text, d_from, d_to):
-                super().__init__()
-                self.filter_text = filter_text
-                self.d_from = d_from
-                self.d_to = d_to
-
-            def run(self):
-                try:
-                    with db_manager.get_pharmacy_connection() as conn:
-                        # 1. Determine filters
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    # 1. Determine filters
+                    days_count = 30
+                    if lang_manager.get("daily_report") in filter_text:
+                        time_filter = "date({T}.created_at) = date('now')"
+                        exp_filter = "date({T}.expense_date) = date('now')"
+                        period_name = lang_manager.get("today")
+                        days_count = 1
+                    elif lang_manager.get("weekly_report") in filter_text:
+                        time_filter = "date({T}.created_at) >= date('now', '-7 days')"
+                        exp_filter = "date({T}.expense_date) >= date('now', '-7 days')"
+                        period_name = lang_manager.get("last_7_days")
+                        days_count = 7
+                    elif lang_manager.get("monthly_report") in filter_text:
+                        time_filter = "date({T}.created_at) >= date('now', 'start of month')"
+                        exp_filter = "date({T}.expense_date) >= date('now', 'start of month')"
+                        period_name = lang_manager.get("this_month")
                         days_count = 30
-                        if lang_manager.get("daily_report") in self.filter_text:
-                            time_filter = "date({T}.created_at) = date('now')"
-                            exp_filter = "date({T}.expense_date) = date('now')"
-                            period_name = lang_manager.get("today")
-                            days_count = 1
-                        elif lang_manager.get("weekly_report") in self.filter_text:
-                            time_filter = "date({T}.created_at) >= date('now', '-7 days')"
-                            exp_filter = "date({T}.expense_date) >= date('now', '-7 days')"
-                            period_name = lang_manager.get("last_7_days")
-                            days_count = 7
-                        elif lang_manager.get("monthly_report") in self.filter_text:
-                            time_filter = "date({T}.created_at) >= date('now', 'start of month')"
-                            exp_filter = "date({T}.expense_date) >= date('now', 'start of month')"
-                            period_name = lang_manager.get("this_month")
-                            days_count = 30
-                        else:
-                            time_filter = f"date({{T}}.created_at) BETWEEN '{self.d_from}' AND '{self.d_to}'"
-                            exp_filter = f"date({{T}}.expense_date) BETWEEN '{self.d_from}' AND '{self.d_to}'"
-                            period_name = f"{self.d_from} {lang_manager.get('to')} {self.d_to}"
-                            # Calculate days between manually or just store as string
-                            days_count = 30 # Approximation 
+                    else:
+                        time_filter = f"date({{T}}.created_at) BETWEEN '{date_from}' AND '{date_to}'"
+                        exp_filter = f"date({{T}}.expense_date) BETWEEN '{date_from}' AND '{date_to}'"
+                        period_name = f"{date_from} {lang_manager.get('to')} {date_to}"
+                        days_count = 30 
 
-                        # 2. Net Sales (Revenue)
-                        gross_received_sql = f"""
-                            SELECT (
-                                (SELECT COALESCE(SUM(total_amount), 0) FROM pharmacy_sales s WHERE payment_type='CASH' AND {time_filter.format(T='s')}) +
-                                (SELECT COALESCE(SUM(amount), 0) FROM pharmacy_payments p WHERE {time_filter.format(T='p')})
-                            ) as total
-                        """
-                        gross_sales = conn.execute(gross_received_sql).fetchone()[0] or 0
-                        
-                        ret_row = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE refund_type='CASH' AND {time_filter.format(T='r')}").fetchone()
-                        returns_total = ret_row['total'] or 0
-                        net_sales = gross_sales - returns_total
+                    # 2. Net Sales (Revenue)
+                    gross_received_sql = f"""
+                        SELECT (
+                            (SELECT COALESCE(SUM(total_amount), 0) FROM pharmacy_sales s WHERE payment_type='CASH' AND {time_filter.format(T='s')}) +
+                            (SELECT COALESCE(SUM(amount), 0) FROM pharmacy_payments p WHERE {time_filter.format(T='p')})
+                        ) as total
+                    """
+                    gross_sales = conn.execute(gross_received_sql).fetchone()[0] or 0
+                    
+                    ret_row = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE refund_type='CASH' AND {time_filter.format(T='r')}").fetchone()
+                    returns_total = ret_row['total'] or 0
+                    net_sales = gross_sales - returns_total
 
-                        # 3. Net Cost of Goods (COGS)
-                        cash_cost_sql = f"""
-                            SELECT SUM(si.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), p.cost_price))
+                    # 3. Net Cost of Goods (COGS) - Optimized with JOINs
+                    cash_cost_sql = f"""
+                        SELECT SUM(si.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), p.cost_price))
+                        FROM pharmacy_sale_items si
+                        JOIN pharmacy_products p ON si.product_id = p.id
+                        JOIN pharmacy_sales s ON si.sale_id = s.id
+                        WHERE s.payment_type='CASH' AND {time_filter.format(T='s')}
+                    """
+                    gross_cost_cash = conn.execute(cash_cost_sql).fetchone()[0] or 0
+                    
+                    # Optimized Credit COGS calculation to avoid nested selects
+                    credit_payment_cost_sql = f"""
+                        WITH SaleCosts AS (
+                            SELECT si.sale_id, SUM(si.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), pp.cost_price)) as total_cost
                             FROM pharmacy_sale_items si
-                            JOIN pharmacy_products p ON si.product_id = p.id
-                            JOIN pharmacy_sales s ON si.sale_id = s.id
-                            WHERE s.payment_type='CASH' AND {time_filter.format(T='s')}
-                        """
-                        gross_cost_cash = conn.execute(cash_cost_sql).fetchone()[0] or 0
-                        
-                        credit_payment_cost_sql = f"""
-                            SELECT SUM( p.amount * (
-                                SELECT SUM(si.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), pp.cost_price))
-                                FROM pharmacy_sale_items si
-                                JOIN pharmacy_products pp ON si.product_id = pp.id
-                                WHERE si.sale_id = p.sale_id
-                            ) / CAST(s.total_amount AS REAL) )
-                            FROM pharmacy_payments p
-                            JOIN pharmacy_sales s ON p.sale_id = s.id
-                            WHERE {time_filter.format(T='p')}
-                        """
-                        gross_cost_payments = conn.execute(credit_payment_cost_sql).fetchone()[0] or 0
-                        gross_cost = gross_cost_cash + gross_cost_payments
+                            JOIN pharmacy_products pp ON si.product_id = pp.id
+                            GROUP BY si.sale_id
+                        )
+                        SELECT SUM( p.amount * sc.total_cost / CAST(s.total_amount AS REAL) )
+                        FROM pharmacy_payments p
+                        JOIN pharmacy_sales s ON p.sale_id = s.id
+                        JOIN SaleCosts sc ON p.sale_id = sc.sale_id
+                        WHERE {time_filter.format(T='p')}
+                    """
+                    gross_cost_payments = conn.execute(credit_payment_cost_sql).fetchone()[0] or 0
+                    gross_cost = gross_cost_cash + gross_cost_payments
 
-                        ret_cost_sql = f"""
-                            SELECT SUM(ri.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), p.cost_price))
-                            FROM pharmacy_return_items ri
-                            JOIN pharmacy_sale_items si ON ri.sale_item_id = si.id
-                            JOIN pharmacy_products p ON ri.product_id = p.id
-                            JOIN pharmacy_returns r ON ri.return_id = r.id
-                            WHERE r.refund_type='CASH' AND {time_filter.format(T='r')}
-                        """
-                        return_cost = conn.execute(ret_cost_sql).fetchone()[0] or 0
-                        net_cost = gross_cost - return_cost
-                        trading_profit = net_sales - net_cost
-                        
-                        # 4. Expenses & Salaries
-                        full_monthly_salaries = conn.execute("SELECT SUM(amount) as total FROM pharmacy_employee_salary WHERE is_active=1").fetchone()
-                        total_salaries_val = (full_monthly_salaries['total'] or 0) / 30.0 * days_count
-                        
-                        expense_data = conn.execute(f"SELECT SUM(amount) as total FROM pharmacy_expenses e WHERE {exp_filter.format(T='e')}").fetchone()
-                        total_expenses = expense_data['total'] or 0
-                        
-                        self.data_loaded.emit({
-                            'gross_sales': gross_sales,
-                            'returns_total': returns_total,
-                            'net_sales': net_sales,
-                            'gross_cost': gross_cost,
-                            'return_cost': return_cost,
-                            'net_cost': net_cost,
-                            'trading_profit': trading_profit,
-                            'total_salaries': total_salaries_val,
-                            'total_expenses': total_expenses,
-                            'period_name': period_name,
-                            'days_count': days_count
-                        })
-                except Exception as e:
-                    self.error.emit(str(e))
+                    ret_cost_sql = f"""
+                        SELECT SUM(ri.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), p.cost_price))
+                        FROM pharmacy_return_items ri
+                        JOIN pharmacy_sale_items si ON ri.sale_item_id = si.id
+                        JOIN pharmacy_products p ON ri.product_id = p.id
+                        JOIN pharmacy_returns r ON ri.return_id = r.id
+                        WHERE r.refund_type='CASH' AND {time_filter.format(T='r')}
+                    """
+                    return_cost = conn.execute(ret_cost_sql).fetchone()[0] or 0
+                    net_cost = gross_cost - return_cost
+                    trading_profit = net_sales - net_cost
+                    
+                    # 4. Expenses & Salaries
+                    full_monthly_salaries = conn.execute("SELECT SUM(amount) as total FROM pharmacy_employee_salary WHERE is_active=1").fetchone()
+                    total_salaries_val = (full_monthly_salaries['total'] or 0) / 30.0 * days_count
+                    
+                    expense_data = conn.execute(f"SELECT SUM(amount) as total FROM pharmacy_expenses e WHERE {exp_filter.format(T='e')}").fetchone()
+                    total_expenses = expense_data['total'] or 0
+                    
+                    return {
+                        'success': True,
+                        'gross_sales': gross_sales,
+                        'returns_total': returns_total,
+                        'net_sales': net_sales,
+                        'gross_cost': gross_cost,
+                        'return_cost': return_cost,
+                        'net_cost': net_cost,
+                        'trading_profit': trading_profit,
+                        'total_salaries': total_salaries_val,
+                        'total_expenses': total_expenses,
+                        'period_name': period_name,
+                        'days_count': days_count
+                    }
+            except Exception as e:
+                return {'success': False, 'error': str(e)}
 
-        self._worker = FinanceWorker(filter_text, date_from, date_to)
-        self._worker.data_loaded.connect(self._on_summary_loaded)
-        self._worker.error.connect(lambda e: print(f"FinanceWorker Error: {e}"))
-        self._worker.start()
+        def on_finished(result):
+            if result.get('success'):
+                self._on_summary_loaded(result)
+            else:
+                print(f"Finance Load Error: {result.get('error')}")
+
+        task_manager.run_task(do_load, on_finished=on_finished)
 
     def _on_summary_loaded(self, data):
         self.month_lbl.setText(f"{lang_manager.get('overview')} ({data['period_name']})")
@@ -678,8 +685,22 @@ class PharmacyFinanceView(QWidget):
 
     def remove_salary(self, sid):
         if QMessageBox.question(self, lang_manager.get("confirm"), lang_manager.get("confirm_remove_salary")) == QMessageBox.StandardButton.Yes:
-            with db_manager.get_pharmacy_connection() as conn:
-                conn.execute("UPDATE pharmacy_employee_salary SET is_active=0 WHERE id=?", (sid,))
-                conn.commit()
-            self.load_salaries()
-            self.load_summary()
+            from src.core.blocking_task_manager import task_manager
+
+            def do_remove():
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        conn.execute("UPDATE pharmacy_employee_salary SET is_active=0 WHERE id=?", (sid,))
+                        conn.commit()
+                    return True
+                except:
+                    return False
+
+            def on_finished(success):
+                if success:
+                    self.load_salaries()
+                    self.load_summary()
+                else:
+                    QMessageBox.critical(self, "Error", "Could not remove salary")
+
+            task_manager.run_task(do_remove, on_finished=on_finished)

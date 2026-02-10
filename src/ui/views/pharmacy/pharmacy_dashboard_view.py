@@ -242,6 +242,7 @@ class PharmacyDashboardView(QWidget):
         self.product_list = QListWidget()
         self.product_list.setObjectName("product_stats_list")
         self.product_list.itemClicked.connect(self.on_product_selected)
+        self.product_list.itemActivated.connect(self.on_product_selected)
         list_vbox.addWidget(self.product_list)
         
         stats_layout.addWidget(list_container, 3)
@@ -255,61 +256,55 @@ class PharmacyDashboardView(QWidget):
         self.load_products_data()
 
     def load_products_data(self):
-        # Prevent multiple simultaneous loads - Safely handle deleted C++ objects
-        try:
-            if hasattr(self, '_loading_thread') and self._loading_thread and self._loading_thread.isRunning():
-                return
-        except RuntimeError:
-            self._loading_thread = None
-
+        # Prevent multiple simultaneous loads
+        if hasattr(self, '_is_loading') and self._is_loading:
+            return
+            
+        self._is_loading = True
         self.product_list.clear()
         self.product_list.addItem("Loading statistics...")
 
-        from PyQt6.QtCore import QThread, pyqtSignal
-        class StatsWorker(QThread):
-            data_received = pyqtSignal(list)
-            def run(self):
-                try:
-                    with db_manager.get_pharmacy_connection() as conn:
-                        products = conn.execute("""
-                            SELECT 
-                                p.id, 
-                                p.name_en,
-                                COALESCE(sales.total_sold, 0) as sold_qty,
-                                COALESCE(inv.total_current, 0) as current_qty
-                            FROM pharmacy_products p
-                            LEFT JOIN (
-                                SELECT product_id, SUM(quantity) as total_sold 
-                                FROM pharmacy_sale_items 
-                                GROUP BY product_id
-                            ) sales ON p.id = sales.product_id
-                            LEFT JOIN (
-                                SELECT product_id, SUM(quantity) as total_current 
-                                FROM pharmacy_inventory 
-                                GROUP BY product_id
-                            ) inv ON p.id = inv.product_id
-                            WHERE p.is_active = 1
-                            ORDER BY p.name_en ASC
-                        """).fetchall()
-                        # Convert sqlite3.Row to list of dicts for safe thread passing
-                        self.data_received.emit([dict(p) for p in products])
-                except Exception as e:
-                    print(f"StatsWorker Error: {e}")
-                    self.data_received.emit([])
+        from src.core.blocking_task_manager import task_manager
+
+        def fetch_stats():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    products = conn.execute("""
+                        SELECT 
+                            p.id, 
+                            p.name_en,
+                            COALESCE(sales.total_sold, 0) as sold_qty,
+                            COALESCE(inv.total_current, 0) as current_qty
+                        FROM pharmacy_products p
+                        LEFT JOIN (
+                            SELECT product_id, SUM(quantity) as total_sold 
+                            FROM pharmacy_sale_items 
+                            GROUP BY product_id
+                        ) sales ON p.id = sales.product_id
+                        LEFT JOIN (
+                            SELECT product_id, SUM(quantity) as total_current 
+                            FROM pharmacy_inventory 
+                            GROUP BY product_id
+                        ) inv ON p.id = inv.product_id
+                        WHERE p.is_active = 1
+                        ORDER BY p.name_en ASC
+                    """).fetchall()
+                    return [dict(p) for p in products]
+            except Exception as e:
+                print(f"Stats Load Error: {e}")
+                return []
 
         # Remember selection before clear
         selected_items = self.product_list.selectedItems()
         self.last_selected_name = selected_items[0].text() if selected_items else None
 
-        self._loading_thread = StatsWorker()
-        self._loading_thread.data_received.connect(self._on_stats_loaded)
-        self._loading_thread.finished.connect(self._cleanup_loading_thread)
-        self._loading_thread.finished.connect(self._loading_thread.deleteLater)
-        self._loading_thread.start()
+        def on_finished(results):
+            self._is_loading = False
+            self._on_stats_loaded(results)
 
-    def _cleanup_loading_thread(self):
-        """Nullify the thread reference after it finishes to prevent RuntimeError."""
-        self._loading_thread = None
+        task_manager.run_task(fetch_stats, on_finished=on_finished)
+
+    # Removed old cleanup method as we use global task_manager
 
     def _on_stats_loaded(self, products):
         self.product_list.clear()

@@ -144,6 +144,8 @@ class PharmacyUsersView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Username
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Password
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)  # Features
+        # Fix width for Actions
+        self.table.setColumnWidth(4, 200) 
         
         table_layout.addWidget(self.table)
         content_layout.addWidget(table_container)
@@ -169,114 +171,127 @@ class PharmacyUsersView(QWidget):
              QMessageBox.warning(self, "Error", "Username is required")
              return
         
-        # Store plaintext password if provided
         if password:
             self.password_store[username] = password
              
-        # Collect permissions
         perms = [k for k, cb in self.feature_checkboxes.items() if cb.isChecked()]
         perms_json = json.dumps(perms)
-        
-        # Get role from combo
         role_name = self.role_combo.currentText()
-        
-        # Hash password if provided
         hashed_pw = Auth.hash_password(password) if password else None
         
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # Check if exists
-                existing = conn.execute("SELECT id FROM pharmacy_users WHERE username = ?", (username,)).fetchone()
-                
-                if existing:
-                    if hashed_pw:
-                        conn.execute("""
-                            UPDATE pharmacy_users SET password_hash=?, title=?, permissions=?, role=?
-                            WHERE id=?
-                        """, (hashed_pw, title, perms_json, role_name, existing['id']))
-                    else:
-                        conn.execute("""
-                            UPDATE pharmacy_users SET title=?, permissions=?, role=?
-                            WHERE id=?
-                        """, (title, perms_json, role_name, existing['id']))
-                else:
-                    if not password:
-                         QMessageBox.warning(self, "Error", "Password is required for new users")
-                         return
-                    
-                    # Get current logged in user ID
-                    curr_user = Auth.get_current_user()
-                    curr_user_id = curr_user.get('id') if curr_user else None
+        from src.core.blocking_task_manager import task_manager
 
-                    # Create new user
-                    conn.execute("""
-                        INSERT INTO pharmacy_users (username, password_hash, title, permissions, role, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (username, hashed_pw, title, perms_json, role_name, curr_user_id))
-                
-                conn.commit()
-            
-            QMessageBox.information(self, "Success", "Pharmacy User saved successfully")
-            self.load_users()
-            self.clear_form()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+        def do_save():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    existing = conn.execute("SELECT id FROM pharmacy_users WHERE username = ?", (username,)).fetchone()
+                    
+                    if existing:
+                        if hashed_pw:
+                            conn.execute("""
+                                UPDATE pharmacy_users SET password_hash=?, title=?, permissions=?, role=?
+                                WHERE id=?
+                            """, (hashed_pw, title, perms_json, role_name, existing['id']))
+                        else:
+                            conn.execute("""
+                                UPDATE pharmacy_users SET title=?, permissions=?, role=?
+                                WHERE id=?
+                            """, (title, perms_json, role_name, existing['id']))
+                    else:
+                        if not password:
+                             return {"success": False, "error": "Password is required for new users"}
+                        
+                        curr_user = Auth.get_current_user()
+                        curr_user_id = curr_user.get('id') if curr_user else None
+
+                        conn.execute("""
+                            INSERT INTO pharmacy_users (username, password_hash, title, permissions, role, created_by)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (username, hashed_pw, title, perms_json, role_name, curr_user_id))
+                    
+                    conn.commit()
+                return {"success": True}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if result["success"]:
+                QMessageBox.information(self, "Success", "Pharmacy User saved successfully")
+                self.load_users()
+                self.clear_form()
+            else:
+                QMessageBox.critical(self, "Error", result["error"])
+
+        task_manager.run_task(do_save, on_finished=on_finished)
 
     def load_users(self):
-        self.table.setRowCount(0)
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # Show all pharmacy users except psuper
-                rows = conn.execute("""
-                    SELECT * FROM pharmacy_users
-                    WHERE is_active = 1 AND username != 'psuper'
-                    ORDER BY id DESC
-                """).fetchall()
+        from src.core.blocking_task_manager import task_manager
+
+        def do_load():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    rows = conn.execute("""
+                        SELECT * FROM pharmacy_users
+                        WHERE is_active = 1 AND username != 'psuper'
+                        ORDER BY id DESC
+                    """).fetchall()
+                    return {"success": True, "rows": [dict(r) for r in rows]}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                print(f"Error loading users: {result['error']}")
+                return
+
+            self.table.setRowCount(0)
+            for i, row in enumerate(result["rows"]):
+                self.table.insertRow(i)
+                self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
+                self.table.setItem(i, 1, QTableWidgetItem(row['username']))
                 
-                for i, row in enumerate(rows):
-                    self.table.insertRow(i)
-                    self.table.setItem(i, 0, QTableWidgetItem(str(row['id'])))
-                    self.table.setItem(i, 1, QTableWidgetItem(row['username']))
-                    
-                    # Password column - show actual password if available, otherwise show masked
-                    username = row['username']
-                    if self.show_passwords and username in self.password_store:
-                        password_display = self.password_store[username]
-                    else:
-                        password_display = "••••••••"  # Masked by default
-                    
-                    password_item = QTableWidgetItem(password_display)
-                    password_item.setForeground(Qt.GlobalColor.gray if not self.show_passwords else Qt.GlobalColor.blue)
-                    self.table.setItem(i, 2, password_item)
-                    
-                    perms = []
-                    if row['permissions']:
-                        try:
-                            perms = json.loads(row['permissions'])
-                        except:
-                            perms = [row['permissions']]
-                    
-                    self.table.setItem(i, 3, QTableWidgetItem(", ".join(perms)))
-                    
-                    actions = QWidget()
-                    act_layout = QHBoxLayout(actions)
-                    act_layout.setContentsMargins(0,0,0,0)
-                    act_layout.setSpacing(5)
-                    
-                    edit_btn = QPushButton("Edit")
-                    style_button(edit_btn, variant="info", size="small")
-                    edit_btn.clicked.connect(lambda ch, r=row: self.edit_user(r))
-                    
-                    del_btn = QPushButton("Del")
-                    style_button(del_btn, variant="danger", size="small")
-                    del_btn.clicked.connect(lambda ch, uid=row['id']: self.delete_user(uid))
-                    
-                    act_layout.addWidget(edit_btn)
-                    act_layout.addWidget(del_btn)
-                    self.table.setCellWidget(i, 4, actions)
-        except Exception as e:
-            print(f"Error loading users: {e}")
+                username = row['username']
+                if self.show_passwords and username in self.password_store:
+                    password_display = self.password_store[username]
+                else:
+                    password_display = "••••••••"
+                
+                password_item = QTableWidgetItem(password_display)
+                password_item.setForeground(Qt.GlobalColor.gray if not self.show_passwords else Qt.GlobalColor.blue)
+                self.table.setItem(i, 2, password_item)
+                
+                perms = []
+                if row['permissions']:
+                    try:
+                        perms = json.loads(row['permissions'])
+                    except:
+                        perms = [row['permissions']]
+                
+                self.table.setItem(i, 3, QTableWidgetItem(", ".join(perms)))
+                
+                actions = QWidget()
+                act_layout = QHBoxLayout(actions)
+                act_layout.setContentsMargins(0,0,0,0)
+                act_layout.setSpacing(5)
+                
+                import qtawesome as qta
+                edit_btn = QPushButton(" Edit")
+                edit_btn.setIcon(qta.icon("fa5s.edit", color="white"))
+                style_button(edit_btn, variant="info")
+                edit_btn.setMinimumHeight(40)
+                edit_btn.clicked.connect(lambda ch, r=row: self.edit_user(r))
+                
+                del_btn = QPushButton(" Del")
+                del_btn.setIcon(qta.icon("fa5s.trash", color="white"))
+                style_button(del_btn, variant="danger")
+                del_btn.setMinimumHeight(40)
+                del_btn.clicked.connect(lambda ch, uid=row['id']: self.delete_user(uid))
+                
+                act_layout.addWidget(edit_btn)
+                act_layout.addWidget(del_btn)
+                self.table.setCellWidget(i, 4, actions)
+
+        task_manager.run_task(do_load, on_finished=on_finished)
 
     def edit_user(self, user_row):
         self.username_input.setText(user_row['username'])
@@ -296,10 +311,24 @@ class PharmacyUsersView(QWidget):
 
     def delete_user(self, uid):
         if QMessageBox.question(self, "Confirm", "Deactivate this pharmacy user?") == QMessageBox.StandardButton.Yes:
-            with db_manager.get_pharmacy_connection() as conn:
-                conn.execute("UPDATE pharmacy_users SET is_active=0 WHERE id=?", (uid,))
-                conn.commit()
-            self.load_users()
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_delete():
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        conn.execute("UPDATE pharmacy_users SET is_active=0 WHERE id=?", (uid,))
+                        conn.commit()
+                    return True
+                except:
+                    return False
+
+            def on_finished(success):
+                if success:
+                    self.load_users()
+                else:
+                    QMessageBox.critical(self, "Error", "Could not deactivate user")
+
+            task_manager.run_task(do_delete, on_finished=on_finished)
 
     def clear_form(self):
         self.username_input.clear()

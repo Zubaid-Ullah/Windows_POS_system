@@ -224,6 +224,64 @@ class PharmacySettingsView(QWidget):
         self.load_company_settings()
         return scroll
 
+    def load_company_settings(self):
+        """Load pharmacy settings from database asynchronously"""
+        from src.core.blocking_task_manager import task_manager
+        
+        self.save_settings_btn.setEnabled(False)
+        self.save_settings_btn.setText(lang_manager.get("loading"))
+
+        def fetch_settings():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    # Load Pharmacy Info
+                    info = {}
+                    try:
+                        row = conn.execute("SELECT * FROM pharmacy_info WHERE id=1").fetchone()
+                        if row:
+                            info['name'] = row['name'] or ""
+                            info['address'] = row['address'] or ""
+                            info['phone'] = row['phone'] or ""
+                            info['email'] = row['email'] or ""
+                    except: pass
+
+                    # Load app_settings
+                    settings = {}
+                    try:
+                        rows = conn.execute("SELECT key, value FROM app_settings WHERE key IN ('whatsapp_number', 'walking_receipt_note', 'loan_receipt_note', 'receipt_note')").fetchall()
+                        for row in rows:
+                            settings[row['key']] = row['value'] or ""
+                    except: pass
+                    
+                    return {"info": info, "settings": settings}
+            except Exception as e:
+                print(f"Error loading settings: {e}")
+                return None
+
+        def on_finished(result):
+            self.save_settings_btn.setEnabled(True)
+            self.save_settings_btn.setText(lang_manager.get("save"))
+            if not result:
+                return
+
+            info = result['info']
+            if info:
+                self.company_name.setText(info.get('name', ""))
+                self.company_address.setPlainText(info.get('address', ""))
+                self.company_phone.setText(info.get('phone', ""))
+                self.company_email.setText(info.get('email', ""))
+
+            settings = result['settings']
+            if settings:
+                self.whatsapp_number.setText(settings.get('whatsapp_number', ""))
+                self.walking_receipt_note.setPlainText(settings.get('walking_receipt_note', settings.get('receipt_note', "")))
+                self.loan_receipt_note.setPlainText(settings.get('loan_receipt_note', ""))
+            
+            # Auto-update QR
+            self.generate_whatsapp_qr(auto=True)
+
+        task_manager.run_task(fetch_settings, on_finished=on_finished)
+
     def create_maintenance_tab(self):
         """Create maintenance settings tab"""
         tab = QWidget()
@@ -291,93 +349,88 @@ class PharmacySettingsView(QWidget):
         layout.addStretch()
         return tab
 
-    def load_company_settings(self):
-        """Load pharmacy settings from database"""
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # Load Pharmacy Info from pharmacy_info table
-                try:
-                    row = conn.execute("SELECT * FROM pharmacy_info WHERE id=1").fetchone()
-                    if row:
-                        self.company_name.setText(row['name'] or "")
-                        self.company_address.setPlainText(row['address'] or "")
-                        self.company_phone.setText(row['phone'] or "")
-                        self.company_email.setText(row['email'] or "")
-                except Exception as e:
-                    print(f"Error loading pharmacy_info: {e}")
-
-                # Load WhatsApp and Receipt Notes from app_settings
-                try:
-                    rows = conn.execute("SELECT key, value FROM app_settings WHERE key IN ('whatsapp_number', 'walking_receipt_note', 'loan_receipt_note', 'receipt_note')").fetchall()
-                    for row in rows:
-                        if row['key'] == 'whatsapp_number':
-                            self.whatsapp_number.setText(row['value'] or "")
-                        elif row['key'] == 'walking_receipt_note':
-                            self.walking_receipt_note.setPlainText(row['value'] or "")
-                        elif row['key'] == 'loan_receipt_note':
-                            self.loan_receipt_note.setPlainText(row['value'] or "")
-                        elif row['key'] == 'receipt_note' and not self.walking_receipt_note.toPlainText():
-                             # Migrate old single note to walking note
-                             self.walking_receipt_note.setPlainText(row['value'] or "")
-                except: pass
-
-        except Exception as e:
-            print(f"Error loading pharmacy settings: {e}")
+    # Old load_company_settings removed - replaced by async version above
 
     def save_settings(self):
-        """Save pharmacy settings to database"""
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                # Save to pharmacy_info
-                conn.execute("""
-                    INSERT OR REPLACE INTO pharmacy_info (id, name, address, phone, email)
-                    VALUES (1, ?, ?, ?, ?)
-                """, (
-                    self.company_name.text().strip(),
-                    self.company_address.toPlainText().strip(),
-                    self.company_phone.text().strip(),
-                    self.company_email.text().strip()
-                ))
-                
-                # Save WhatsApp and Receipt Notes to app_settings
-                conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('whatsapp_number', ?)",
-                            (self.whatsapp_number.text().strip(),))
-                conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('walking_receipt_note', ?)",
-                            (self.walking_receipt_note.toPlainText().strip(),))
-                conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('loan_receipt_note', ?)",
-                            (self.loan_receipt_note.toPlainText().strip(),))
-                
-                conn.commit()
+        """Save pharmacy settings to database asynchronously"""
+        from src.core.blocking_task_manager import task_manager
+        
+        data = {
+            'name': self.company_name.text().strip(),
+            'address': self.company_address.toPlainText().strip(),
+            'phone': self.company_phone.text().strip(),
+            'email': self.company_email.text().strip(),
+            'whatsapp': self.whatsapp_number.text().strip(),
+            'walking_note': self.walking_receipt_note.toPlainText().strip(),
+            'loan_note': self.loan_receipt_note.toPlainText().strip()
+        }
 
-            # Auto-update QR
-            self.generate_whatsapp_qr(auto=True)
+        self.save_settings_btn.setEnabled(False)
+        self.save_settings_btn.setText(lang_manager.get("saving") or "Saving...")
 
-            QMessageBox.information(self, "Success", "Pharmacy settings saved successfully.")
+        def do_save():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    # Save to pharmacy_info
+                    conn.execute("""
+                        INSERT OR REPLACE INTO pharmacy_info (id, name, address, phone, email)
+                        VALUES (1, ?, ?, ?, ?)
+                    """, (data['name'], data['address'], data['phone'], data['email']))
+                    
+                    # Save WhatsApp and Receipt Notes
+                    conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('whatsapp_number', ?)", (data['whatsapp'],))
+                    conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('walking_receipt_note', ?)", (data['walking_note'],))
+                    conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('loan_receipt_note', ?)", (data['loan_note'],))
+                    
+                    conn.commit()
+                return True
+            except Exception as e:
+                return str(e)
 
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
+        def on_finished(result):
+            self.save_settings_btn.setEnabled(True)
+            self.save_settings_btn.setText(lang_manager.get("save"))
+            if result is True:
+                QMessageBox.information(self, "Success", "Pharmacy settings saved successfully.")
+                self.generate_whatsapp_qr(auto=True)
+            else:
+                QMessageBox.critical(self, "Error", f"Failed to save settings: {result}")
+
+        task_manager.run_task(do_save, on_finished=on_finished)
 
     def generate_whatsapp_qr(self, auto=False):
-        """Generate WhatsApp QR code"""
+        """Generate WhatsApp QR code asynchronously"""
         number = self.whatsapp_number.text().strip()
         if not number:
             if not auto:
                 QMessageBox.warning(self, "Error", "Please enter a WhatsApp number first")
             return
 
-        try:
-            # Create WhatsApp link
-            whatsapp_link = f"https://wa.me/{number.replace('+', '')}"
+        from src.core.blocking_task_manager import task_manager
 
-            # Generate QR code
-            qr = qrcode.QRCode(version=1, box_size=10, border=5)
-            qr.add_data(whatsapp_link)
-            qr.make(fit=True)
+        def do_generate():
+            try:
+                # Create WhatsApp link
+                whatsapp_link = f"https://wa.me/{number.replace('+', '').replace(' ', '')}"
 
-            # Create image
-            img = qr.make_image(fill_color="black", back_color="white")
-            img = img.convert("RGBA")
+                # Generate QR code
+                qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                qr.add_data(whatsapp_link)
+                qr.make(fit=True)
 
+                # Create image
+                img = qr.make_image(fill_color="black", back_color="white")
+                img = img.convert("RGBA")
+                return {"success": True, "img": img}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_finished(result):
+            if not result["success"]:
+                if not auto: QMessageBox.critical(self, "Error", f"Failed to generate QR code: {result['error']}")
+                return
+
+            img = result["img"]
             # Convert to QPixmap
             img_data = img.tobytes("raw", "RGBA")
             qimage = QImage(img_data, img.size[0], img.size[1], QImage.Format.Format_RGBA8888)
@@ -386,11 +439,9 @@ class PharmacySettingsView(QWidget):
             # Scale to fit label
             scaled_pixmap = pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio)
             self.qr_label.setPixmap(scaled_pixmap)
-
             self.generated_qr_data = img  # Store for saving
 
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate QR code: {str(e)}")
+        task_manager.run_task(do_generate, on_finished=on_finished)
 
     def save_qr_code(self):
         """Save QR code to file"""
@@ -412,19 +463,24 @@ class PharmacySettingsView(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to save QR code: {str(e)}")
 
     def run_vacuum(self):
-        with db_manager.get_pharmacy_connection() as conn:
-            conn.execute("VACUUM")
-        QMessageBox.information(self, "Success", "Pharmacy database optimized.")
+        from src.core.blocking_task_manager import task_manager
+        def do_vacuum():
+            with db_manager.get_pharmacy_connection() as conn:
+                conn.execute("VACUUM")
+            return True
+        task_manager.run_task(do_vacuum, on_finished=lambda _: QMessageBox.information(self, "Success", "Pharmacy database optimized."))
 
     def clear_logs(self):
         if QMessageBox.question(self, "Confirm", "Clear all pharmacy audit logs?") == QMessageBox.StandardButton.Yes:
-            try:
-                with db_manager.get_pharmacy_connection() as conn:
-                    conn.execute("DELETE FROM audit_logs")
-                    conn.commit()
-                QMessageBox.information(self, "Success", "Logs cleared.")
-            except Exception as e:
-                QMessageBox.warning(self, "Info", "Audit logs table may not exist yet.")
+            from src.core.blocking_task_manager import task_manager
+            def do_clear():
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        conn.execute("DELETE FROM audit_logs")
+                        conn.commit()
+                    return True
+                except: return False
+            task_manager.run_task(do_clear, on_finished=lambda res: QMessageBox.information(self, "Success", "Logs cleared.") if res else QMessageBox.warning(self, "Info", "Audit logs table may not exist yet."))
 
     def run_backup(self):
         path = QFileDialog.getExistingDirectory(self, "Select Backup Folder")

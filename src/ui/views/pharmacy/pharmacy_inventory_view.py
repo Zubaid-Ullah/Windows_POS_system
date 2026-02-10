@@ -64,6 +64,8 @@ class PharmacyInventoryView(QWidget):
         style_table(self.table, variant="premium")
         # Global ResizeToContents will handle most, but let's stretch the Name column
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Fix width for Actions to make it bigger
+        self.table.setColumnWidth(12, 220) 
         main_layout.addWidget(self.table)
         
         # Ensure scroll bar is always visible if content overflows
@@ -138,12 +140,18 @@ class PharmacyInventoryView(QWidget):
                 act_layout.setContentsMargins(0,0,0,0)
                 act_layout.setSpacing(5)
                 
-                edit_btn = QPushButton(lang_manager.get("edit"))
-                style_button(edit_btn, variant="info", size="small")
+                import qtawesome as qta
+                
+                edit_btn = QPushButton(" " + lang_manager.get("edit"))
+                edit_btn.setIcon(qta.icon("fa5s.edit", color="white"))
+                style_button(edit_btn, variant="info")
+                edit_btn.setMinimumHeight(40)
                 edit_btn.clicked.connect(lambda checked, p_id=p['id']: self.edit_product(p_id))
                 
-                delete_btn = QPushButton(lang_manager.get("delete"))
-                style_button(delete_btn, variant="danger", size="small")
+                delete_btn = QPushButton(" " + lang_manager.get("delete"))
+                delete_btn.setIcon(qta.icon("fa5s.trash", color="white"))
+                style_button(delete_btn, variant="danger")
+                delete_btn.setMinimumHeight(40)
                 delete_btn.clicked.connect(lambda checked, p_id=p['id']: self.delete_product(p_id))
                 
                 act_layout.addWidget(edit_btn)

@@ -46,6 +46,13 @@ class MainWindow(QMainWindow):
         lang_manager.language_changed.connect(self.on_language_changed)
         theme_manager.theme_changed.connect(self.apply_theme)
         
+        # Task Monitoring
+        from src.core.blocking_task_manager import task_manager
+        task_manager.task_started.connect(self._on_task_started)
+        task_manager.task_finished.connect(self._on_task_finished)
+        self._active_background_tasks = set()
+        self._task_overlay = None
+        
 
 
     def on_language_changed(self, lang):
@@ -291,6 +298,7 @@ class MainWindow(QMainWindow):
                     ("pharm_price_check", "fa5s.tag", "Price Check"),
                     ("pharm_returns", "fa5s.undo", "Returns"),
                     ("pharm_users", "fa5s.user-nurse", "Staff Mgmt"),
+                    ("pharm_notes", "fa5s.sticky-note", "Notes"),
                     ("pharm_settings", "fa5s.cog", "Ph-Settings")
                 ]
                 # Removed automatic Store button - users should use dedicated module switcher if needed
@@ -419,6 +427,12 @@ class MainWindow(QMainWindow):
             else:
                 self.show_main_app("PHARMACY")
                 return
+        
+        if view_key == "pharm_notes":
+            from src.ui.views.pharmacy.notes_external_window import NotesExternalWindow
+            self.notes_win = NotesExternalWindow(parent_to_reenable=self)
+            self.notes_win.show()
+            return
 
         # Determine Auth Class
         user_auth = PharmacyAuth if self.business_mode == "PHARMACY" else Auth
@@ -612,4 +626,56 @@ class MainWindow(QMainWindow):
             self.central_widget.setCurrentWidget(self.login_view)
 
         task_manager.run_task(run_logout, on_finished=on_finished)
+
+    def _update_task_overlay(self):
+        if not self._task_overlay:
+            self._task_overlay = QFrame(self)
+            self._task_overlay.setFixedSize(320, 50)
+            self._task_overlay.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(30, 41, 59, 230);
+                    border: 1px solid rgba(59, 130, 246, 0.4);
+                    border-radius: 10px;
+                }
+                QLabel { color: #f1f5f9; font-size: 13px; background: transparent; }
+            """)
+            lay = QHBoxLayout(self._task_overlay)
+            self._task_icon = QLabel()
+            self._task_icon.setPixmap(qta.icon("fa5s.spinner", color="#3b82f6", animation=qta.Spin(self._task_icon)).pixmap(20, 20))
+            self._task_msg = QLabel("")
+            lay.addWidget(self._task_icon)
+            lay.addWidget(self._task_msg)
+            lay.addStretch()
+            self._task_overlay.raise_()
+
+        if self._active_background_tasks:
+            task_list = list(self._active_background_tasks)
+            msg = f"⏳ {task_list[0]}..."
+            if len(task_list) > 1:
+                msg += f" (+{len(task_list)-1} others)"
+            self._task_msg.setText(msg)
+            
+            # Position in bottom right corner
+            padding = 20
+            self._task_overlay.move(
+                self.width() - self._task_overlay.width() - padding,
+                self.height() - self._task_overlay.height() - padding
+            )
+            self._task_overlay.show()
+        else:
+            self._task_overlay.hide()
+
+    def _on_task_started(self, name):
+        self._active_background_tasks.add(name)
+        self._update_task_overlay()
+
+    def _on_task_finished(self, name):
+        if name in self._active_background_tasks:
+            self._active_background_tasks.remove(name)
+        self._update_task_overlay()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_task_overlay') and self._task_overlay and self._task_overlay.isVisible():
+            self._update_task_overlay()
 

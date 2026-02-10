@@ -439,59 +439,86 @@ class PharmacySalesView(QWidget):
 
     def reprint_last_bill(self):
         """Reprint the last pharmacy bill"""
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                last_sale = conn.execute(
-                    "SELECT id, invoice_number, total_amount, payment_type FROM pharmacy_sales ORDER BY id DESC LIMIT 1"
-                ).fetchone()
-                
-                if not last_sale:
-                    QMessageBox.warning(self, "No Sales", "No previous sales found to reprint.")
-                    return
-                
-                sale_id = last_sale['id']
-                invoice_num = last_sale['invoice_number']
-                total = last_sale['total_amount']
-                method = last_sale['payment_type']
-                
-                confirm = QMessageBox.question(
-                    self, "Reprint Bill",
-                    f"Reprint last pharmacy bill?\nInvoice: {invoice_num}\nAmount: {total:,.2f} AFN",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes
-                )
-                
-                if confirm == QMessageBox.StandardButton.Yes:
-                    from src.utils.thermal_bill_printer import thermal_printer
-                    bill_text = thermal_printer.generate_sales_bill(sale_id, method == "CREDIT", is_pharmacy=True)
-                    if bill_text:
-                        thermal_printer.print_bill(bill_text)
-                    else:
-                        QMessageBox.warning(self, "Error", "Failed to generate bill.")
-                        
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Reprint failed: {e}")
+        from src.core.blocking_task_manager import task_manager
+
+        def do_get_last():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    last_sale = conn.execute(
+                        "SELECT id, invoice_number, total_amount, payment_type FROM pharmacy_sales ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+                    return dict(last_sale) if last_sale else None
+            except:
+                return "error"
+
+        def on_got_last(last_sale):
+            if last_sale == "error":
+                QMessageBox.critical(self, "Error", "Failed to retrieve last sale")
+                return
+            if not last_sale:
+                QMessageBox.warning(self, "No Sales", "No previous sales found to reprint.")
+                return
+            
+            sale_id = last_sale['id']
+            invoice_num = last_sale['invoice_number']
+            total = last_sale['total_amount']
+            method = last_sale['payment_type']
+            
+            confirm = QMessageBox.question(
+                self, "Reprint Bill",
+                f"Reprint last pharmacy bill?\nInvoice: {invoice_num}\nAmount: {total:,.2f} AFN",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            
+            if confirm == QMessageBox.StandardButton.Yes:
+                def do_print():
+                    try:
+                        from src.utils.thermal_bill_printer import thermal_printer
+                        bill_text = thermal_printer.generate_sales_bill(sale_id, method == "CREDIT", is_pharmacy=True)
+                        if bill_text:
+                            thermal_printer.print_bill(bill_text)
+                            return True
+                        return "Failed to generate bill text"
+                    except Exception as e:
+                        return str(e)
+
+                def on_printed(res):
+                    if res is not True:
+                        QMessageBox.warning(self, "Print Error", f"Reprint failed: {res}")
+
+                task_manager.run_task(do_print, on_finished=on_printed)
+
+        task_manager.run_task(do_get_last, on_finished=on_got_last)
 
     def print_pharmacy_sale_bill(self, sale_id, invoice_num, total, method):
         """Ask user if they want to print the pharmacy bill after sale completion"""
         reply = QMessageBox.question(
-            self, "Print Pharmacy Bill",
-            f"Pharmacy sale completed successfully!\nInvoice: {invoice_num}\nAmount: {total:,.2f} AFN\n\nWould you like to print the bill?",
+            self, lang_manager.get("print") or "Print",
+            f"{lang_manager.get('sale_completed')}!\n{lang_manager.get('invoice')}: {invoice_num}\n{lang_manager.get('amount')}: {total:,.2f} AFN\n\n{lang_manager.get('print')}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            try:
-                from src.utils.thermal_bill_printer import thermal_printer
-                bill_text = thermal_printer.generate_sales_bill(sale_id, method == "CREDIT", is_pharmacy=True)
-                
-                if bill_text:
-                    thermal_printer.print_bill(bill_text)
-                else:
-                    QMessageBox.warning(self, "Print Error", "Failed to generate bill.")
-            except Exception as e:
-                QMessageBox.critical(self, "Print Error", f"Failed to print bill: {str(e)}")
+            from src.core.blocking_task_manager import task_manager
+            from src.utils.thermal_bill_printer import thermal_printer
+            
+            def do_print():
+                try:
+                    bill_text = thermal_printer.generate_sales_bill(sale_id, method == "CREDIT", is_pharmacy=True)
+                    if bill_text:
+                        thermal_printer.print_bill(bill_text)
+                        return True
+                    return "Failed to generate bill"
+                except Exception as e:
+                    return str(e)
+            
+            def on_finished(res):
+                if res is not True:
+                    QMessageBox.warning(self, "Print Error", f"Failed to print bill: {res}")
+            
+            task_manager.run_task(do_print, on_finished=on_finished)
 
     def generate_pharmacy_bill_pdf(self, sale_id, invoice_num, total, method):
         """Generate PDF bill for pharmacy sales"""

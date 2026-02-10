@@ -24,6 +24,7 @@ except Exception as e:
 
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtCore import Qt
 from src.ui.main_window import MainWindow
 from credentials.bootstrap_installations_table import bootstrap_installations_table
 from src.core.supabase_manager import supabase_manager
@@ -36,6 +37,7 @@ from src.ui.views.onboarding.locked_window import LockedWindow
 from src.database.db_manager import db_manager
 from src.ui.views.login_view import LoginView 
 from src.ui.theme_manager import theme_manager
+from src.ui.connection_monitor import ConnectionMonitorWindow
 
 def main():
     try:
@@ -77,6 +79,17 @@ def main():
         watchdog = start_watchdog()
         watchdog.ui_hang_detected.connect(lambda d: print(f"⚠️ App focus warning: UI was frozen for {d:.1f}s. Check background tasks."))
 
+        # Smart Watchdog: Pause when app is in background to prevent 'App Nap' false positives
+        def handle_app_state_change(state):
+            if state == Qt.ApplicationState.ApplicationActive:
+                print("[Watchdog] App Active - Resuming monitor")
+                watchdog.resume()
+            else:
+                print("[Watchdog] App Inactive - Pausing monitor to avoid false positives")
+                watchdog.pause()
+        
+        app.applicationStateChanged.connect(handle_app_state_change)
+
         # Shared References to prevent garbage collection
         main_window = None
         onboarding_window = None
@@ -84,6 +97,7 @@ def main():
         app_login_window = None
         locked_screen = None # Track the active lock screen
         launching_main_app = False
+        conn_monitor = None
         gate = ConnectivityGateWindow()
         
         # Security Guard Integration
@@ -143,6 +157,12 @@ def main():
                     # Close login window ONLY after main window is visible
                     if app_login_window: 
                         app_login_window.close()
+                    
+                    # Start background monitor after app starts
+                    nonlocal conn_monitor
+                    if not conn_monitor:
+                        conn_monitor = ConnectionMonitorWindow()
+                        conn_monitor.show()
                 except Exception as e:
                     print(f"[ERROR] Failed to launch main app: {e}")
                     import traceback
