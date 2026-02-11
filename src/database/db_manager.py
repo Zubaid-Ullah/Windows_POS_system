@@ -241,10 +241,21 @@ class DatabaseManager:
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS expenses (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, category TEXT NOT NULL CHECK(category IN ('Salary', 'Petty Cash', 'Other')),
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, category TEXT NOT NULL CHECK(category IN ('Petty Cash', 'Rent', 'Utilities', 'Taxes', 'Other')),
                     amount REAL NOT NULL, description TEXT, expense_date DATE DEFAULT CURRENT_DATE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, scope TEXT DEFAULT 'SHOP',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, scope TEXT DEFAULT 'SHOP', sync_status INTEGER DEFAULT 0,
                     FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS payroll (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, month_year TEXT, base_salary REAL,
+                    deductions REAL DEFAULT 0, net_paid REAL NOT NULL, payment_date DATE DEFAULT CURRENT_DATE,
+                    authorized_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, month_year),
+                    FOREIGN KEY (user_id) REFERENCES users(id),
+                    FOREIGN KEY (authorized_by) REFERENCES users(id)
                 )
             ''')
 
@@ -264,6 +275,7 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_ts ON audit_logs(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_payroll_user ON payroll(user_id)")
             
             conn.commit()
 

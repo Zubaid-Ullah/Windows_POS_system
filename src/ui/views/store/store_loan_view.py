@@ -10,7 +10,7 @@ from src.core.auth import Auth
 from src.ui.table_styles import style_table
 from src.ui.button_styles import style_button
 
-class LoanView(QWidget):
+class StoreLoanView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_user = Auth.get_current_user()
@@ -115,11 +115,13 @@ class LoanView(QWidget):
             # Pay Button
             pay_btn = QPushButton("Pay")
             style_button(pay_btn, variant="success")
-            pay_btn.clicked.connect(lambda checked, cid=c['id']: self.make_payment(cid))
+            pay_btn.clicked.connect(lambda checked, cust=c: self.make_payment(cust))
             self.table.setCellWidget(i, 6, pay_btn)
 
-    def make_payment(self, cid):
-        amount, ok = QInputDialog.getDouble(self, "Payment Received", "Enter amount to settle:", min=0.01)
+    def make_payment(self, cust):
+        cid = cust['id']
+        balance = cust['balance']
+        amount, ok = QInputDialog.getDouble(self, "Payment Received", "Enter amount to settle:", value=balance, min=0.01)
         if ok and amount > 0:
             from src.core.blocking_task_manager import task_manager
             
@@ -270,7 +272,12 @@ class KYCViewerDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        info = QLabel(f"<b>Name:</b> {self.customer['name_en']}<br><b>Phone:</b> {self.customer['phone']}<br><b>Address:</b> {self.customer.get('home_address', 'N/A')}")
+        limit_val = self.customer.get('loan_limit', 0)
+        limit_str = lang_manager.localize_digits(f"{limit_val:,.2f}")
+        info = QLabel(f"<b>Name:</b> {self.customer['name_en']}<br>"
+                      f"<b>Phone:</b> {self.customer['phone']}<br>"
+                      f"<b>Address:</b> {self.customer.get('home_address', 'N/A')}<br>"
+                      f"<b>Loan Limit:</b> <span style='color: #4318ff;'>{limit_str} AFN</span>")
         layout.addWidget(info)
         
         img_layout = QHBoxLayout()

@@ -1,0 +1,49 @@
+update regarding store:
+    make dashboard scrollable and a donut chart:
+        Progress_Range	       Color
+        0–25%	               Red
+        25–50%	               Orange
+        50–75%	               Yellow
+        75–100%	               Green
+    finance window:
+        overview tab: in record new expense make it easy, category and date width is small,
+        remove salary from expense because salary is already calculating in payrol tab
+        in payrol tab whe user paid:
+            show data in table for dash days dash amount paid, and if one time paid second must not be paid to avoid redundancy
+            in status show either paid or not paid according to month
+            if advance is taken show dash amount advance is taken if not then show clean
+        summary tab is missing for:
+            total gross sale
+            total coasts
+            total expense
+            total profit
+        report tab:
+            scrollable window for overall report for everything such as:
+                all
+                salaries
+                expenses
+                profit
+            if admin paid the payment show admin and if manager paid the payment show manager or show any authorizer who paid the money.
+            give custom range for filtering data according to selected option,
+                example: if salaries choosen show only and if all choosen then show salaries, expenses, profit from dash date to dash date.
+            all reports must be printable
+    customer window:
+        Detect all cameras and ask for choosing camera.
+        customer details & KYC popup window:
+            when picture taken then show picture in a label
+    sale window:
+        for quantity use spinbox double click is not suitable and with tab button make it focusable
+    loans window:
+        in KYC documents popup window loan limit is missing.
+    return window:
+        if an item is returned once it must not be returnable
+        pie chart should be updated according to day sale, if no credit then show full green
+    settings window:
+        add two types receipts:
+            walk-in customer
+            trusty customer
+        receipt bill should show message accordingly.
+    price check window:
+        must be always auto focus
+
+

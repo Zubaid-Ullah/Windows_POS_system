@@ -21,10 +21,38 @@ class TaskWorker(QRunnable):
         # Give signals a parent (the manager) so they aren't GC'd early
         self.signals = WorkerSignals(signals_parent)
 
+    def heartbeat_progress(self):
+        """Callback for long running tasks to signal they are still alive"""
+        from src.core.app_watchdog import watchdog_instance
+        if watchdog_instance:
+            watchdog_instance.heartbeat()
+
     @pyqtSlot()
     def run(self):
         try:
+            # Update watchdog heartbeat at start of task
+            from src.core.app_watchdog import watchdog_instance
+            if watchdog_instance:
+                 watchdog_instance.heartbeat()
+            
+            # Inject progress callback into kwargs if task supports it
+            if 'progress_callback' in self.kwargs:
+                 # The user explicitly wants a custom callback? 
+                 # Usually we'll just use heartbeat_progress
+                 pass
+            else:
+                 # Check if the function signature accepts progress_callback
+                 import inspect
+                 sig = inspect.signature(self.fn)
+                 if 'progress_callback' in sig.parameters:
+                      self.kwargs['progress_callback'] = self.heartbeat_progress
+                 
             result = self.fn(*self.args, **self.kwargs)
+            
+            # Update watchdog heartbeat again after task completion
+            if watchdog_instance:
+                 watchdog_instance.heartbeat()
+
             # Check if signals haven't been deleted already
             try:
                 self.signals.finished.emit(result)
@@ -63,6 +91,11 @@ class BlockingTaskManager(QObject):
         # Logging and signals for visibility
         print(f"[TaskManager] Starting task: {task_name}. Active: {len(self._active_workers)}")
         self.task_started.emit(task_name)
+        
+        # Trigger watchdog heartbeat as task is starting
+        from src.core.app_watchdog import watchdog_instance
+        if watchdog_instance:
+            watchdog_instance.heartbeat()
 
         def cleanup_worker():
             """Safe cleanup of worker references and signals."""
@@ -70,6 +103,12 @@ class BlockingTaskManager(QObject):
                 if worker in self._active_workers:
                     self._active_workers.remove(worker)
                 print(f"[TaskManager] Task finished: {task_name}. Remaining: {len(self._active_workers)}")
+                
+                # Update watchdog when task is cleared
+                from src.core.app_watchdog import watchdog_instance
+                if watchdog_instance:
+                    watchdog_instance.heartbeat()
+                
                 self.task_finished.emit(task_name)
                 worker.signals.deleteLater()
             except:

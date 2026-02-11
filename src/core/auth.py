@@ -127,9 +127,9 @@ class Auth:
         role_name = user.get('role_name', '')
         permissions = {
             'SuperAdmin': ['*'], 
-            'Admin': ['sales', 'inventory', 'customers', 'suppliers', 'loans', 'reports', 'finance', 'settings', 'low_stock', 'price_check', 'returns', 'pharmacy', 
+            'Admin': ['users', 'user_management', 'sales', 'inventory', 'customers', 'suppliers', 'loans', 'reports', 'finance', 'settings', 'low_stock', 'price_check', 'returns', 'pharmacy', 
                       'pharmacy_dashboard', 'pharmacy_finance', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_suppliers', 'pharmacy_loans', 'pharmacy_reports', 'pharmacy_price_check', 'pharmacy_returns', 'pharmacy_users', 'pharmacy_settings'],
-            'Manager': ['reports', 'inventory', 'customers', 'suppliers', 'loans', 'low_stock', 'price_check', 'returns', 'pharmacy',
+            'Manager': ['users', 'user_management', 'reports', 'inventory', 'customers', 'suppliers', 'loans', 'low_stock', 'price_check', 'returns', 'pharmacy',
                         'pharmacy_dashboard', 'pharmacy_finance', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_suppliers', 'pharmacy_loans', 'pharmacy_reports', 'pharmacy_price_check', 'pharmacy_returns', 'pharmacy_users'],
             'Salesman': ['sales', 'low_stock', 'price_check', 'returns', 'pharmacy',
                          'pharmacy_dashboard', 'pharmacy_inventory', 'pharmacy_sales', 'pharmacy_customers', 'pharmacy_reports', 'pharmacy_returns', 'pharmacy_price_check'],

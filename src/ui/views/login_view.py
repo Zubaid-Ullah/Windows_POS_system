@@ -469,21 +469,44 @@ class LoginView(QWidget):
                 on_result(False)
                 return
 
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("Contract Expired")
-            msg_box.setText(
-                "<h2 style='color:#ee5d50; margin-bottom:6px;'>🚫 Contract Completed</h2>"
-                "<p style='margin-top:4px;'>Thank you for using our service 🙏</p>"
-                "<p>Your contract has <b>expired</b>. To continue using the system, "
-                "please <b>renew your contract</b>.</p>"
-                "<p>If you have any questions regarding renewal, feel free to contact us.</p>"
+            title = "Contract Expired"
+            if lang_manager.current_lang == "ps":
+                title = "قرارداد پای ته رسېدلی"
+                msg_body = (
+                    "<h2 style='color:#ee5d50; margin-bottom:6px;'>🚫 قرارداد پای ته رسېدلی</h2>"
+                    "<p style='margin-top:4px;'>زموږ له خدمت څخه د ګټې اخیستنې مننه 🙏</p>"
+                    "<p>ستاسو د سیسټم قرارداد <b>ختم شوی</b> دی. د سیسټم کارولو لپاره هیله ده خپل قرارداد <b>تمدید</b> کړئ.</p>"
+                    "<p>که د تمدید په اړه کومه پوښتنه لرئ، له موږ سره اړیکه ونیسئ.</p>"
+                )
+            elif lang_manager.current_lang == "dr":
+                title = "قرارداد منقضی شده"
+                msg_body = (
+                    "<h2 style='color:#ee5d50; margin-bottom:6px;'>🚫 قرارداد منقضی شده</h2>"
+                    "<p style='margin-top:4px;'>از اینکه از خدمات ما استفاده می‌کنید سپاسگزاریم 🙏</p>"
+                    "<p>قرارداد سیستم شما <b>به پایان رسیده</b> است. برای ادامه استفاده از سیستم، لطفا قرارداد خود را <b>تمدید</b> کنید.</p>"
+                    "<p>اگر در مورد تمدید سوالی دارید، با ما در تماس شوید.</p>"
+                )
+            else:
+                msg_body = (
+                    "<h2 style='color:#ee5d50; margin-bottom:6px;'>🚫 Contract Completed</h2>"
+                    "<p style='margin-top:4px;'>Thank you for using our service 🙏</p>"
+                    "<p>Your contract has <b>expired</b>. To continue using the system, "
+                    "please <b>renew your contract</b>.</p>"
+                    "<p>If you have any questions regarding renewal, feel free to contact us.</p>"
+                )
+
+            contact_info = (
                 "<hr>"
-                "<p><b>OR DEVELOPER</b></p>"
+                "<p><b>DEVELOPER CONTACT</b></p>"
                 "<p>📱 WhatsApp: <b>+93 796 776 436</b></p>"
                 "<p>📞 Mobile: <b>+93 796 776 436</b></p>"
                 "<p>📧 Email: <b>zubaidullah.khan1437@gmail.com</b></p>"
                 "<p style='font-size:11px; color:#777;'>We’re happy to assist you anytime 🚀</p>"
             )
+
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle(title)
+            msg_box.setText(msg_body + contact_info)
             msg_box.setTextFormat(Qt.TextFormat.RichText)
             t = theme_manager.DARK if theme_manager.is_dark else theme_manager.QUICKMART
             msg_box.setStyleSheet(

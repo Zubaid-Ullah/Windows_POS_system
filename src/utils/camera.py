@@ -79,6 +79,10 @@ class CameraDialog(QDialog):
         self.thread.error_signal.connect(self.handle_error)
         self.thread.start()
 
+    def accept(self):
+        self.thread.stop()
+        super().accept()
+
     def reject(self):
         self.thread.stop()
         super().reject()
@@ -102,10 +106,15 @@ class CameraDialog(QDialog):
 
     def capture(self):
         if self.current_frame:
-            os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
-            self.current_frame.save(self.save_path)
-            self.captured = True
-            self.accept()
+            try:
+                os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+                # Clone the image to avoid race conditions with the background thread
+                copy = self.current_frame.copy()
+                copy.save(self.save_path)
+                self.captured = True
+                self.accept()
+            except Exception as e:
+                self.handle_error(f"Failed to save image: {e}")
 
     def closeEvent(self, event):
         self.thread.stop()
@@ -120,29 +129,35 @@ def capture_image(save_path, parent=None):
     from PyQt6.QtWidgets import QProgressDialog
     
     # Use a progress dialog for probing since it can take seconds
-    progress = QProgressDialog("Scanning for cameras...", None, 0, 0, parent)
+    progress = QProgressDialog("Scanning for cameras...", "Cancel", 0, 0, parent)
     progress.setWindowModality(Qt.WindowModality.WindowModal)
     progress.show()
     
-    def probe_cameras():
-        # Quick probe: Is camera 0 available?
-        temp = cv2.VideoCapture(0)
-        has_zero = temp.isOpened()
-        if has_zero: temp.release()
+    def probe_cameras(progress_callback=None):
+        available = []
+        # Probe up to 3 indices (usually enough for built-in + 1 external)
+        for i in range(3):
+            # Check if progress dialog was cancelled
+            if progress.wasCanceled():
+                break
+                
+            if progress_callback: progress_callback()
+            temp = cv2.VideoCapture(i)
+            if temp.isOpened():
+                available.append(i)
+                temp.release()
+            if progress_callback: progress_callback()
         
-        if has_zero: return 0
+        # Priority logic/Selection
+        if not available: return -1
         
-        # Check camera 1
-        temp = cv2.VideoCapture(1)
-        has_one = temp.isOpened()
-        if has_one: temp.release()
-        
-        if has_one: return 1
-        return -1
+        # On macOS, index 0 is often 'iPhone' (Continuity Camera) if connected, 
+        # index 1 is usually the built-in webcam.
+        # We'll return the first one but let's log it
+        print(f"[Camera] Detected cameras at indices: {available}")
+        return available[0]
 
     # We need a synchronous-looking execution but without blocking the event loop
-    # Actually, we can use a nested event loop or just make capture_image async if we wanted.
-    # But for simplicity, we'll use a result placeholder.
     probe_result = {"index": -1, "done": False}
     
     def on_ready(idx):
@@ -153,12 +168,14 @@ def capture_image(save_path, parent=None):
     task_manager.run_task(probe_cameras, on_finished=on_ready)
     progress.exec() # This keeps local event loop running while task finishes
     
+    if progress.wasCanceled():
+        return False, "Camera scan cancelled"
+        
     camera_index = probe_result["index"]
     if camera_index == -1:
         return False, "No cameras found"
     
     dialog = CameraDialog(camera_index, save_path, parent)
-    if dialog.exec():
-        return True, ""
-    return False, ""
+    result = dialog.exec()
+    return bool(result), ""
 

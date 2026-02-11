@@ -8,7 +8,7 @@ from src.core.local_config import local_config
 from src.core.supabase_manager import supabase_manager
 from src.database.db_manager import db_manager
 from src.ui.button_styles import style_button
-from src.ui.views.user_management_view import UserManagementView
+from src.ui.views.store.store_users_view import StoreUsersView
 
 class SuperAdminView(QWidget):
     def __init__(self):
@@ -33,7 +33,7 @@ class SuperAdminView(QWidget):
         """)
         
         # User Management Tab using the shared component
-        self.tabs.addTab(UserManagementView(), "User Management")
+        self.tabs.addTab(StoreUsersView(), "User Management")
         
         # System Governance Tab
         self.tabs.addTab(self.create_system_tab(), "System Governance")

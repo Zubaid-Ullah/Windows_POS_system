@@ -257,7 +257,9 @@ class Localization(QObject):
                 "record_new_expense": "Record New Expense / Petty Cash",
                 "daily_expense": "Daily Expense",
                 "petty_cash": "Petty Cash",
-                "utility": "Utility",
+                "rent": "Rent",
+                "utilities": "Utilities",
+                "taxes": "Taxes",
                 "other": "Other",
                 "description_of_expense": "Description of expense",
                 "daily_total": "Daily Total",
@@ -352,7 +354,8 @@ class Localization(QObject):
                 "refund": "Refund",
                 "no_sale_found_with_invoice": "No sale found with invoice",
                 "ready_to_scan": "READY TO SCAN",
-                "scan": "Scan"
+                "scan": "Scan",
+                "update_contract": "Update Contract"
             },
             "ps": {
                 "welcome_title":"ښه راغلاست",
@@ -601,7 +604,9 @@ class Localization(QObject):
                 "record_new_expense": "د نوي لګښت ثبتول",
                 "daily_expense": "ورځنی لګښت",
                 "petty_cash": "کوچنۍ نغدې",
-                "utility": "خدمات",
+                "rent": "کرایه",
+                "utilities": "خدمات (برېښنا/اوبه)",
+                "taxes": "مالیات",
                 "other": "نور",
                 "description_of_expense": "د لګښت تفصیل",
                 "daily_total": "ورځنۍ مجموعه",
@@ -686,7 +691,8 @@ class Localization(QObject):
                 "refund": "بېرته پیسې",
                 "no_sale_found_with_invoice": "دې رسید سره پلور ونه موندل شو",
                 "ready_to_scan": "سکین ته چمتو",
-                "scan": "سکین"
+                "scan": "Scan",
+                "update_contract": "قرارداد تمدید"
             },
             "dr": {
                 "welcome_title":"خوش آمدید",
@@ -935,7 +941,9 @@ class Localization(QObject):
                 "record_new_expense": "ثبت هزینه جدید",
                 "daily_expense": "هزینه روزانه",
                 "petty_cash": "پول نقد",
-                "utility": "خدمات عمومی",
+                "rent": "کرایه",
+                "utilities": "خدمات (برق/آب)",
+                "taxes": "مالیات",
                 "other": "دیگر",
                 "description_of_expense": "شرح هزینه",
                 "daily_total": "مجموع روزانه",
@@ -1020,7 +1028,8 @@ class Localization(QObject):
                 "refund": "بازپرداخت",
                 "no_sale_found_with_invoice": "فروشی با این فاکتور یافت نشد",
                 "ready_to_scan": "آماده سکین",
-                "scan": "سکین"
+                "scan": "Scan",
+                "update_contract": "تمدید قرارداد"
             },
         }
 

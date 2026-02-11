@@ -465,10 +465,12 @@ class PharmacySettingsView(QWidget):
     def run_vacuum(self):
         from src.core.blocking_task_manager import task_manager
         def do_vacuum():
-            with db_manager.get_pharmacy_connection() as conn:
-                conn.execute("VACUUM")
-            return True
-        task_manager.run_task(do_vacuum, on_finished=lambda _: QMessageBox.information(self, "Success", "Pharmacy database optimized."))
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    conn.execute("VACUUM")
+                return True
+            except: return False
+        task_manager.run_task(do_vacuum, on_finished=lambda res: QMessageBox.information(self, "Success", "Pharmacy database optimized.") if res else None)
 
     def clear_logs(self):
         if QMessageBox.question(self, "Confirm", "Clear all pharmacy audit logs?") == QMessageBox.StandardButton.Yes:
@@ -485,17 +487,26 @@ class PharmacySettingsView(QWidget):
     def run_backup(self):
         path = QFileDialog.getExistingDirectory(self, "Select Backup Folder")
         if path:
-            try:
-                # Backup pharmacy database
-                import shutil
-                from datetime import datetime
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                source = "faqiritech_pharmacy.db"
-                dest = os.path.join(path, f"pharmacy_backup_{timestamp}.db")
-                shutil.copy2(source, dest)
-                QMessageBox.information(self, "Success", f"Pharmacy backup created at:\n{dest}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Backup failed: {str(e)}")
+            from src.core.blocking_task_manager import task_manager
+            def do_backup():
+                try:
+                    import shutil
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    source = "faqiritech_pharmacy.db"
+                    dest = os.path.join(path, f"pharmacy_backup_{timestamp}.db")
+                    shutil.copy2(source, dest)
+                    return {"success": True, "dest": dest}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+
+            def on_finished(res):
+                if res["success"]:
+                    QMessageBox.information(self, "Success", f"Pharmacy backup created at:\n{res['dest']}")
+                else:
+                    QMessageBox.critical(self, "Error", f"Backup failed: {res['error']}")
+            
+            task_manager.run_task(do_backup, on_finished=on_finished)
 
     def run_restore(self):
         file, _ = QFileDialog.getOpenFileName(self, "Select Backup File", "", "Database Files (*.db)")
@@ -504,12 +515,22 @@ class PharmacySettingsView(QWidget):
                                        'This will overwrite current pharmacy data. Continue?',
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:
-                try:
-                    import shutil
-                    shutil.copy2(file, "faqiritech_pharmacy.db")
-                    QMessageBox.information(self, "Success", "Pharmacy database restored. Please restart the app.")
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Restore failed: {str(e)}")
+                from src.core.blocking_task_manager import task_manager
+                def do_restore():
+                    try:
+                        import shutil
+                        shutil.copy2(file, "faqiritech_pharmacy.db")
+                        return True
+                    except Exception as e:
+                        return str(e)
+
+                def on_finished(res):
+                    if res is True:
+                        QMessageBox.information(self, "Success", "Pharmacy database restored. Please restart the app.")
+                    else:
+                        QMessageBox.critical(self, "Error", f"Restore failed: {res}")
+
+                task_manager.run_task(do_restore, on_finished=on_finished)
 
     def toggle_offline_mode(self, checked):
         local_config.set("offline_mode", checked)

@@ -9,9 +9,9 @@ class AppWatchdog(QThread):
     """
     ui_hang_detected = pyqtSignal(float) # Hang duration in seconds
 
-    def __init__(self, timeout=5.0):
+    def __init__(self, timeout=10.0):
         super().__init__()
-        self.timeout = timeout # seconds (Increased from 2.0 to 5.0 for better real-world tolerance)
+        self.timeout = timeout # seconds (Increased to 10.0 for better tolerance)
         self.last_heartbeat = time.time()
         self.last_check_time = time.time()
         self._running = True
@@ -117,7 +117,17 @@ class WatchdogHelper(QObject):
         self.timer.start(1000)
 
     def ping(self):
+        if self.watchdog._paused:
+            return
         self.watchdog.heartbeat()
+
+    def pause_timer(self):
+        self.timer.stop()
+
+    def resume_timer(self):
+        if not self.timer.isActive():
+            self.timer.start(1000)
+            self.watchdog.heartbeat()
 
 # Initialization logic to be called in main.py
 watchdog_instance = None

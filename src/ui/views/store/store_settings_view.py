@@ -16,7 +16,7 @@ from src.core.autostart_helper import AutoStartHelper
 import os
 import platform
 
-class SettingsView(QWidget):
+class StoreSettingsView(QWidget):
     def __init__(self):
         super().__init__()
         self.is_syncing = False
@@ -401,7 +401,11 @@ class SettingsView(QWidget):
                         return {"success": False, "data": {}}
                 
                 def on_load_finished(result):
-                    self._on_online_settings_loaded(result["success"], result["data"])
+                    try:
+                        if not hasattr(self, 'company_name'): return
+                        self._on_online_settings_loaded(result["success"], result["data"])
+                    except RuntimeError:
+                        pass # Widget already deleted
                 
                 task_manager.run_task(load_from_cloud, on_finished=on_load_finished)
 
@@ -410,12 +414,15 @@ class SettingsView(QWidget):
             print(f"Error loading company settings: {e}")
 
     def _on_online_settings_loaded(self, success, data):
-        if success and data:
-            self.company_name.setText(data.get('company_name', self.company_name.text()))
-            self.company_phone.setText(data.get('phone', self.company_phone.text()))
-            self.company_email.setText(data.get('email', self.company_email.text()))
-            self.company_address.setPlainText(data.get('address', self.company_address.toPlainText()))
-            self.generate_whatsapp_qr(auto=True)
+        try:
+            if success and data:
+                self.company_name.setText(data.get('company_name', self.company_name.text()))
+                self.company_phone.setText(data.get('phone', self.company_phone.text()))
+                self.company_email.setText(data.get('email', self.company_email.text()))
+                self.company_address.setPlainText(data.get('address', self.company_address.toPlainText()))
+                self.generate_whatsapp_qr(auto=True)
+        except RuntimeError:
+            pass # Widget handles its own lifecycle
 
     def check_and_sync_online(self):
         """Timer callback - triggered every 60s. Must be non-blocking."""
@@ -467,8 +474,11 @@ class SettingsView(QWidget):
                 return {"ok": False, "error": str(e)}
 
         def _on_written(result):
-            if not result.get("ok"):
-                QMessageBox.critical(self, "Error", f"Failed to save settings: {result.get('error')}")
+            try:
+                if not result.get("ok"):
+                    QMessageBox.critical(self, "Error", f"Failed to save settings: {result.get('error')}")
+                    return
+            except RuntimeError:
                 return
 
             # Cloud Sync (Asynchronous)
@@ -494,9 +504,9 @@ class SettingsView(QWidget):
                         return False
                 
                 def on_sync_finished(success):
-                    self.is_syncing = False
-                    if not silent and success:
-                        # Only show message if explicitly saving (not auto-sync)
+                    try:
+                        self.is_syncing = False
+                    except RuntimeError:
                         pass
                 
                 task_manager.run_task(sync_to_cloud, on_finished=on_sync_finished)
@@ -540,20 +550,23 @@ class SettingsView(QWidget):
                 return {"success": False, "error": str(e)}
 
         def on_finished(result):
-            if not result["success"]:
-                if not auto: QMessageBox.critical(self, "Error", f"Failed to generate QR code: {result['error']}")
-                return
+            try:
+                if not result["success"]:
+                    if not auto: QMessageBox.critical(self, "Error", f"Failed to generate QR code: {result['error']}")
+                    return
 
-            img = result["img"]
-            # Convert to QPixmap
-            img_data = img.tobytes("raw", "RGBA")
-            qimage = QImage(img_data, img.size[0], img.size[1], QImage.Format.Format_RGBA8888)
-            pixmap = QPixmap.fromImage(qimage)
+                img = result["img"]
+                # Convert to QPixmap
+                img_data = img.tobytes("raw", "RGBA")
+                qimage = QImage(img_data, img.size[0], img.size[1], QImage.Format.Format_RGBA8888)
+                pixmap = QPixmap.fromImage(qimage)
 
-            # Scale to fit label
-            scaled_pixmap = pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio)
-            self.qr_label.setPixmap(scaled_pixmap)
-            self.generated_qr_data = img  # Store for saving
+                # Scale to fit label
+                scaled_pixmap = pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio)
+                self.qr_label.setPixmap(scaled_pixmap)
+                self.generated_qr_data = img  # Store for saving
+            except RuntimeError:
+                pass
 
         task_manager.run_task(do_generate, on_finished=on_finished)
 
@@ -639,26 +652,69 @@ class SettingsView(QWidget):
             task_manager.run_task(do_clear, on_finished=lambda _: QMessageBox.information(self, "Success", "Logs cleared."))
 
     def run_backup(self):
+        """Run backup asynchronously to prevent UI freeze"""
         path = QFileDialog.getExistingDirectory(self, "Select Backup Folder")
-        if path:
-            success, msg = BackupManager.create_backup(path)
+        if not path:
+            return
+            
+        from src.core.blocking_task_manager import task_manager
+        
+        # Show progress indicator
+        progress = QMessageBox(self)
+        progress.setWindowTitle("Backup in Progress")
+        progress.setText("Creating backup... Please wait.")
+        progress.setStandardButtons(QMessageBox.StandardButton.NoButton)
+        progress.setModal(True)
+        progress.show()
+        
+        def do_backup():
+            return BackupManager.create_backup(path)
+        
+        def on_finished(result):
+            progress.close()
+            success, msg = result
             if success:
                 QMessageBox.information(self, "Success", f"Backup created at: {msg}")
             else:
                 QMessageBox.critical(self, "Error", msg)
+        
+        task_manager.run_task(do_backup, on_finished=on_finished)
 
     def run_restore(self):
+        """Run restore asynchronously to prevent UI freeze"""
         file, _ = QFileDialog.getOpenFileName(self, "Select Backup File", "", "Database Files (*.db)")
-        if file:
-            reply = QMessageBox.question(self, 'Confirm Restore', 
-                                       'This will overwrite current data. Continue?',
-                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                success, msg = BackupManager.restore_backup(file)
-                if success:
-                    QMessageBox.information(self, "Success", "Database restored. Please restart the app.")
-                else:
-                    QMessageBox.critical(self, "Error", msg)
+        if not file:
+            return
+            
+        reply = QMessageBox.question(self, 'Confirm Restore', 
+                                   'This will overwrite current data. Continue?',
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+            
+        from src.core.blocking_task_manager import task_manager
+        
+        # Show progress indicator
+        progress = QMessageBox(self)
+        progress.setWindowTitle("Restore in Progress")
+        progress.setText("Restoring database... Please wait.")
+        progress.setStandardButtons(QMessageBox.StandardButton.NoButton)
+        progress.setModal(True)
+        progress.show()
+        
+        def do_restore():
+            return BackupManager.restore_backup(file)
+        
+        def on_finished(result):
+            progress.close()
+            success, msg = result
+            if success:
+                QMessageBox.information(self, "Success", "Database restored. Please restart the app.")
+            else:
+                QMessageBox.critical(self, "Error", msg)
+        
+        task_manager.run_task(do_restore, on_finished=on_finished)
+
     def open_system_qr_folder(self):
         import subprocess
         import platform

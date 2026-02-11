@@ -24,7 +24,15 @@ class PharmacyInventoryView(QWidget):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(300000)
         self.refresh_timer.timeout.connect(self.load_inventory)
+    
+    def showEvent(self, event):
+        super().showEvent(event)
         self.refresh_timer.start()
+        self.load_inventory()
+
+    def hideEvent(self, event):
+        self.refresh_timer.stop()
+        super().hideEvent(event)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -79,6 +87,11 @@ class PharmacyInventoryView(QWidget):
         """Actual data loading logic after debounce"""
         if self.is_loading:
             self.load_timer.start(500)
+            return
+            
+        # Skip if app is not active to prevent background hangs
+        from PyQt6.QtWidgets import QApplication
+        if QApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
             return
         
         search_term = self.search_input.text().strip()

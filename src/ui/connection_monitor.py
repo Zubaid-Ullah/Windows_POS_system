@@ -11,7 +11,7 @@ class ConnectionWorker(QThread):
     def run(self):
         try:
             # Robust check
-            online = supabase_manager.check_connection()
+            online = supabase_manager.check_connection(verbose=False)
             self.result_ready.emit(online)
         except Exception as e:
             print(f"[ConnectionWorker] Error: {e}")

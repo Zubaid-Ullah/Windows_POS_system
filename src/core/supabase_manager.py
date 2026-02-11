@@ -132,11 +132,11 @@ class SupabaseManager:
         else:
              self._log("Running in DEV (Script) mode")
 
-    def check_connection(self) -> bool:
+    def check_connection(self, verbose: bool = False) -> bool:
         """
         Robust check with socket ping fallback, logging, and SSL Fallback.
         """
-        self._log("Checking connection...")
+        if verbose: self._log("Checking connection...")
         try:
             # 1) PRE-CHECK: Fast socket ping (bypass OS-level DNS logic issues if any)
             import socket
@@ -144,11 +144,11 @@ class SupabaseManager:
             socket_success = False
             for host, port in test_hosts:
                 try:
-                    self._log(f"Socket pinging {host}:{port}...")
+                    if verbose: self._log(f"Socket pinging {host}:{port}...")
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(2)
                     if sock.connect_ex((host, port)) == 0:
-                        self._log(f"  -> Socket success for {host}")
+                        if verbose: self._log(f"  -> Socket success for {host}")
                         socket_success = True
                         sock.close()
                         break
@@ -162,9 +162,9 @@ class SupabaseManager:
             endpoints = ["https://www.google.com/generate_204", "https://www.cloudflare.com"]
             for endpoint in endpoints:
                 try:
-                    self._log(f"Pinging {endpoint}...")
+                    if verbose: self._log(f"Pinging {endpoint}...")
                     requests.get(endpoint, timeout=3)
-                    self._log("  -> HTTP Success")
+                    if verbose: self._log("  -> HTTP Success")
                     return True
                 except requests.exceptions.SSLError as e:
                     self._log(f"  -> SSL Error: {e}")

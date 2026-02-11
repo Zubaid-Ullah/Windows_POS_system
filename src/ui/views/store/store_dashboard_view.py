@@ -17,7 +17,7 @@ class DashboardCard(QFrame):
         self.setFixedSize(260, 200)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.colors = gradient_colors # (color1, color2)
-        self.title = "  "+title
+        self.title = "    "+title.capitalize()
         self.icon_name = icon_name
         self.description = description
         self.is_hovered = False
@@ -56,8 +56,10 @@ class DashboardCard(QFrame):
         
         # Title at top left
         self.title_label = QLabel(self.title)
-        self.title_label.setStyleSheet("font-size: 16px; font-weight: bold; background: none;")
-        layout.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.title_label.setStyleSheet(
+            "font-size: 16px; font-weight: bold; background-color: transparent; color: white;"
+        )
+        layout.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignCenter)
         
         # Centered Icon
         self.icon_lbl = QLabel()
@@ -68,18 +70,9 @@ class DashboardCard(QFrame):
         # Description at bottom (optional/subtle)
         if self.description:
             self.desc_lbl = QLabel(self.description)
-            self.desc_lbl.setStyleSheet("font-size: 11px; background: none;")
+            self.desc_lbl.setStyleSheet("font-size: 14px; background: none; color: white;")
             self.desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(self.desc_lbl)
-        
-        self.update_colors()
-
-    def update_colors(self):
-        text_color = "white" if theme_manager.is_dark else "#1b2559"
-        self.title_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {text_color}; background: none;")
-        if hasattr(self, 'desc_lbl'):
-            opacity = "0.7" if theme_manager.is_dark else "0.5"
-            self.desc_lbl.setStyleSheet(f"font-size: 11px; color: {text_color}; opacity: {opacity}; background: none;")
 
     def update_hover(self, progress):
         self.hover_progress = progress
@@ -115,9 +108,7 @@ class DashboardCard(QFrame):
         
         # Enforce rounded corners: 24px
         painter.drawRoundedRect(self.rect().adjusted(1,1,-1,-1), 24, 24)
-        
-        # Ensure colors are correct on repaint if theme changed
-        self.update_colors()
+
 
     def enterEvent(self, event):
         self.is_hovered = True
@@ -209,7 +200,7 @@ class BackgroundFrame(QFrame):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRect(self.rect())
 
-class DashboardView(QWidget):
+class StoreDashboardView(QWidget):
     navigation_requested = pyqtSignal(str)
     
     def __init__(self):

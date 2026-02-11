@@ -9,7 +9,7 @@ from src.core.auth import Auth
 from src.ui.table_styles import style_table
 from src.ui.button_styles import style_button
 
-class ReturnsView(QWidget):
+class StoreReturnsView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_user = Auth.get_current_user()

@@ -52,7 +52,7 @@ class SupplierDialog(QDialog):
             'contact': self.contact.text()
         }
 
-class SupplierView(QWidget):
+class StoreSupplierView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_user = Auth.get_current_user()

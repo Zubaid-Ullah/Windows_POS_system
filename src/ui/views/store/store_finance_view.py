@@ -1,9 +1,13 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QTableWidget, QTableWidgetItem, QHeaderView, QFrame, 
                              QComboBox, QPushButton, QScrollArea, QGridLayout, 
-                             QLineEdit, QDateEdit, QMessageBox, QGroupBox, QTabWidget, QDialog, QFormLayout)
-from PyQt6.QtCore import Qt, QDate
+                             QLineEdit, QDateEdit, QMessageBox, QGroupBox, QTabWidget, QDialog, QFormLayout, QFileDialog)
+from PyQt6.QtCore import Qt, QDate, QRect
+from PyQt6.QtGui import QColor, QFont, QTextDocument, QTextCursor, QTextTableFormat, QTextCharFormat, QTextLength, QPageLayout, QPageSize
+from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog
+import sqlite3
 import qtawesome as qta
+import pandas as pd
 from src.database.db_manager import db_manager
 from src.core.localization import lang_manager
 from src.core.auth import Auth
@@ -11,6 +15,7 @@ from src.ui.table_styles import style_table
 from src.ui.button_styles import style_button
 from src.ui.theme_manager import theme_manager
 from datetime import datetime, timedelta
+
 
 class StatCard(QFrame):
     def __init__(self, title, value, icon_name, icon_color):
@@ -52,13 +57,15 @@ class StatCard(QFrame):
     def update_value(self, value):
         self.value_lbl.setText(value)
 
-class FinanceView(QWidget):
+class StoreFinanceView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_period = "daily"
+        self._tabs_loaded = set()  # Track which tabs have been loaded
         self.init_ui()
-        self.load_data()
-        self.load_payroll_data()
+        # DO NOT load data here - it freezes the UI!
+        # Data will be loaded when user switches to each tab
+
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -127,9 +134,14 @@ class FinanceView(QWidget):
             }
         """)
 
-        self.tabs.addTab(self.create_overview_tab(), "📊 Overview")
+        self.tabs.addTab(self.create_overview_tab(), "📊 Expenses")
         self.tabs.addTab(self.create_payroll_tab(), "💰 Payroll")
+        self.tabs.addTab(self.create_summary_tab(), "📈 Summary")
+        self.tabs.addTab(self.create_reports_tab(), "📋 Reports")
         self.tabs.addTab(self.create_advance_tab(), "💸 Advances")
+        
+        # Connect tab change to lazy loading
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Wrap tabs in scroll area to make it scrollable
         scroll_area = QScrollArea()
@@ -138,6 +150,32 @@ class FinanceView(QWidget):
         scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
         
         layout.addWidget(scroll_area)
+    
+    def _on_tab_changed(self, index):
+        """Lazy load data when user switches to a tab"""
+        if index in self._tabs_loaded:
+            return  # Already loaded
+            
+        self._tabs_loaded.add(index)
+        
+        # Load data based on which tab was opened
+        if index == 0:  # Expenses
+            self.load_data()
+        elif index == 1:  # Payroll
+            self.load_payroll_data()
+        elif index == 2:  # Summary
+            self.load_summary_data()
+        elif index == 3:  # Reports
+            pass  # Reports load on demand via "Generate" button
+        elif index == 4:  # Advances
+            self.load_advances()
+    
+    def showEvent(self, event):
+        """Load first tab data when window is first shown"""
+        super().showEvent(event)
+        if not self._tabs_loaded:
+            # Load the currently visible tab (usually index 0)
+            self._on_tab_changed(self.tabs.currentIndex())
 
     def create_overview_tab(self):
         tab = QWidget()
@@ -164,7 +202,7 @@ class FinanceView(QWidget):
         layout.addLayout(header_layout)
         
         self.cat_combo = QComboBox()
-        self.cat_combo.addItems(["Salary", "Petty Cash", "Other"])
+        self.cat_combo.addItems(["Petty Cash", "Rent", "Utilities", "Taxes", "Other"])
         
         self.amount_input = QLineEdit()
         self.amount_input.setPlaceholderText("Amount")
@@ -240,8 +278,10 @@ class FinanceView(QWidget):
         # Button Row
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-        add_btn.setFixedHeight(45)
-        add_btn.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px 20px;")
+        add_btn.setFixedHeight(50)
+        add_btn.setFixedWidth(200)
+        add_btn.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px 20px;")
+        add_btn.setDefault(True)
         button_layout.addWidget(add_btn)
 
         expense_layout.addLayout(button_layout)
@@ -356,8 +396,10 @@ class FinanceView(QWidget):
         table_header.setStyleSheet("font-size: 16px; font-weight: bold; color: #4a5568; margin-bottom: 10px;")
         table_layout.addWidget(table_header)
 
-        self.payroll_table = QTableWidget(0, 5)
-        self.payroll_table.setHorizontalHeaderLabels(["👤 Employee", "🏷️ Role", "💰 Base Salary", "📊 Status", "⚙️ Actions"])
+        self.payroll_table = QTableWidget(0, 7)
+        self.payroll_table.setHorizontalHeaderLabels([
+            "👤 Employee", "🏷️ Role", "💰 Base Salary", "📈 Adv. Taken", "💹 Net To Pay", "📊 Status", "⚙️ Actions"
+        ])
         style_table(self.payroll_table, variant="premium")
         self.payroll_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.payroll_table.itemChanged.connect(self.on_salary_changed)
@@ -512,36 +554,84 @@ class FinanceView(QWidget):
         self.payroll_table.blockSignals(True)
         
         def fetch_payroll():
+            # ALL database operations must happen here, NOT in on_finished!
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # 1. Get all users
                 cursor.execute("""
                     SELECT u.id, u.username, r.name, u.base_salary, u.is_active
                     FROM users u
                     JOIN roles r ON u.role_id = r.id
                     WHERE u.is_super_admin = 0
                 """)
-                return [dict(u) for u in cursor.fetchall()]
+                users = [dict(u) for u in cursor.fetchall()]
+                
+                # 2. Get paid status for current month
+                month_str = datetime.now().strftime("%Y-%m")
+                cursor.execute("SELECT user_id FROM payroll WHERE month_year=?", (month_str,))
+                paid_users = [r[0] for r in cursor.fetchall()]
+                
+                # 3. Get advances for each user
+                user_advances = {}
+                for u in users:
+                    cursor.execute(
+                        "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id=? AND category='Advance Salary'",
+                        (u['id'],)
+                    )
+                    user_advances[u['id']] = cursor.fetchone()[0]
+                
+                return {
+                    'users': users,
+                    'paid_users': paid_users,
+                    'advances': user_advances
+                }
 
-        def on_finished(users):
+        def on_finished(data):
+            # NO database operations here - only UI updates!
             self.payroll_table.setRowCount(0)
+            users = data['users']
+            paid_users = data['paid_users']
+            user_advances = data['advances']
+                
             for i, u in enumerate(users):
                 self.payroll_table.insertRow(i)
                 self.payroll_table.setItem(i, 0, QTableWidgetItem(u['username']))
                 self.payroll_table.setItem(i, 1, QTableWidgetItem(u['name']))
                 
-                # Editable Base Salary
-                salary_item = QTableWidgetItem(f"{u['base_salary']:.2f}")
+                total_adv = user_advances.get(u['id'], 0)
+                
+                # Base Salary
+                salary_item = QTableWidgetItem(f"{u['base_salary']:,.2f}")
                 salary_item.setData(Qt.ItemDataRole.UserRole, u['id'])
                 self.payroll_table.setItem(i, 2, salary_item)
                 
-                status = "Active" if u['is_active'] else "Inactive"
-                self.payroll_table.setItem(i, 3, QTableWidgetItem(status))
+                # Advance Taken
+                adv_item = QTableWidgetItem(f"{total_adv:,.2f}" if total_adv > 0 else "")
+                adv_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.payroll_table.setItem(i, 3, adv_item)
+                
+                # Net To Pay
+                net = max(0, u['base_salary'] - total_adv)
+                net_item = QTableWidgetItem(f"{net:,.2f}")
+                net_item.setForeground(QColor("#4318ff"))
+                net_item.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+                self.payroll_table.setItem(i, 4, net_item)
+                
+                # Status
+                is_paid = u['id'] in paid_users
+                status_item = QTableWidgetItem("✅ Paid" if is_paid else "⏳ Not Paid")
+                if is_paid: status_item.setForeground(QColor("#05cd99"))
+                else: status_item.setForeground(QColor("#ee5d50"))
+                self.payroll_table.setItem(i, 5, status_item)
                 
                 # Action Button
-                btn = QPushButton("Calculate Pay")
-                style_button(btn, variant="success", size="small")
-                btn.clicked.connect(lambda checked, uid=u['id'], name=u['username'], base=u['base_salary']: self.run_payroll_dialog(uid, name, base))
-                self.payroll_table.setCellWidget(i, 4, btn)
+                btn = QPushButton(" Paid Successfully" if is_paid else " Calculate Pay")
+                btn.setIcon(qta.icon("fa5s.check-circle" if is_paid else "fa5s.calculator", color="white"))
+                style_button(btn, variant="secondary" if is_paid else "success", size="small")
+                btn.setEnabled(not is_paid)
+                btn.clicked.connect(lambda checked, uid=u['id'], name=u['username'], base=u['base_salary'], adv=total_adv: self.run_payroll_dialog(uid, name, base, adv))
+                self.payroll_table.setCellWidget(i, 6, btn)
             self.payroll_table.blockSignals(False)
 
         task_manager.run_task(fetch_payroll, on_finished=on_finished)
@@ -725,11 +815,9 @@ class FinanceView(QWidget):
 
         task_manager.run_task(fetch_advances, on_finished=on_finished)
 
-    def run_payroll_dialog(self, user_id, username, base_salary):
+    def run_payroll_dialog(self, user_id, username, base_salary, adv_taken=0):
         # Improved payroll dialog with advance deduction
-        with db_manager.get_connection() as conn:
-            adv_row = conn.execute("SELECT SUM(amount) FROM expenses WHERE user_id=? AND category='Advance Salary'", (user_id,)).fetchone()
-            total_advances = adv_row[0] or 0
+        total_advances = adv_taken
 
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Run Payroll: {username}")
@@ -774,23 +862,31 @@ class FinanceView(QWidget):
         def save_payment():
             try:
                 amount = float(calc_label.text())
+                month_str = datetime.now().strftime("%Y-%m")
+                current_user = Auth.get_current_user()
+                auth_id = current_user['id'] if current_user else None
+                
                 with db_manager.get_connection() as conn:
-                    # Record final payment
+                    # Point: "Track payment history" (REQ-SUM-01)
+                    # Use specialized 'payroll' table instead of 'expenses' for salary
                     conn.execute("""
-                        INSERT INTO expenses (user_id, category, amount, description, expense_date)
-                        VALUES (?, 'Salary', ?, ?, CURRENT_DATE)
-                    """, (user_id, amount, f"Net Salary Payment for {username} after deductions"))
+                        INSERT INTO payroll (user_id, month_year, base_salary, deductions, net_paid, authorized_by)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (user_id, month_str, base_salary, total_advances, amount, auth_id))
                     
-                    # Mark advances as settled? 
-                    # For simplicity, we can delete them or move them.
-                    # The requirement says "Track history", so maybe we mark them as 'SETTLED'?
-                    # Since we use 'expenses' table, we could add a column or just filter by date.
-                    # For now, let's just record the payment.
+                    # Point: "Track history of advance" (REQ-SUM-02)
+                    # Advances are usually identified by category 'Advance Salary' in expenses
+                    # We should mark them as settled or similar if we want to reset total_advances
+                    # For now we record the net payment which is already deducted.
                     
                     conn.commit()
-                QMessageBox.information(self, "Success", "Salary Paid and Advances Deducted")
+                QMessageBox.information(self, "Success", f"Salary for {month_str} paid successfully.")
                 dlg.accept()
                 self.load_data()
+                self.load_payroll_data()
+                self.load_summary_data()
+            except sqlite3.IntegrityError:
+                QMessageBox.warning(self, "Duplicate", f"Salary for {username} in {month_str} has already been paid.")
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
                 
@@ -798,3 +894,269 @@ class FinanceView(QWidget):
         layout.addRow(pay_btn)
         
         dlg.exec()
+
+    def create_summary_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        header = QLabel("Financial Summary Analysis")
+        header.setStyleSheet("font-size: 22px; font-weight: bold; color: #1b2559;")
+        layout.addWidget(header)
+        
+        grid = QGridLayout()
+        self.sum_gross_sale = StatCard("Gross Sales", "0 AFN", "fa5s.shopping-cart", "#4318ff")
+        self.sum_cogs = StatCard("Cost of Goods (COGS)", "0 AFN", "fa5s.tags", "#ff9800")
+        self.sum_expenses = StatCard("Total Expenses", "0 AFN", "fa5s.receipt", "#f44336")
+        self.sum_salaries = StatCard("Total Salaries Paid", "0 AFN", "fa5s.users", "#9c27b0")
+        self.sum_net_profit = StatCard("Net Profit", "0 AFN", "fa5s.chart-line", "#05cd99")
+        
+        grid.addWidget(self.sum_gross_sale, 0, 0)
+        grid.addWidget(self.sum_cogs, 0, 1)
+        grid.addWidget(self.sum_expenses, 1, 0)
+        grid.addWidget(self.sum_salaries, 1, 1)
+        grid.addWidget(self.sum_net_profit, 2, 0, 1, 2)
+        
+        layout.addLayout(grid)
+        
+        refresh_btn = QPushButton("Calculate Summary")
+        style_button(refresh_btn, variant="primary")
+        refresh_btn.clicked.connect(self.load_summary_data)
+        layout.addWidget(refresh_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        layout.addStretch()
+        return tab
+
+    def load_summary_data(self):
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_calc():
+            with db_manager.get_connection() as conn:
+                # 1. Sales Revenue
+                gross = conn.execute("SELECT COALESCE(SUM(total_amount), 0) FROM sales").fetchone()[0]
+                
+                # 2. COGS (Cost of Goods Sold)
+                cogs = conn.execute("""
+                    SELECT COALESCE(SUM(si.quantity * p.cost_price), 0)
+                    FROM sale_items si JOIN products p ON si.product_id = p.id
+                """).fetchone()[0]
+                
+                # 3. Operating Expenses (EXCLUDE all salary-related to avoid double-counting)
+                expenses = conn.execute("""
+                    SELECT COALESCE(SUM(amount), 0) 
+                    FROM expenses 
+                    WHERE category NOT IN ('Salary', 'Advance Salary', 'Payroll')
+                """).fetchone()[0]
+                
+                # 4. Salaries
+                salaries = conn.execute("SELECT COALESCE(SUM(net_paid), 0) FROM payroll").fetchone()[0]
+                
+                # Net Profit = Revenue - COGS - Operating Expenses - Salaries
+                profit = gross - cogs - expenses - salaries
+                
+                return {
+                    "gross": gross, 
+                    "cogs": cogs, 
+                    "expenses": expenses, 
+                    "salaries": salaries, 
+                    "profit": profit
+                }
+
+        def on_finished(res):
+            self.sum_gross_sale.update_value(f"{res['gross']:,.2f} AFN")
+            self.sum_cogs.update_value(f"{res['cogs']:,.2f} AFN")
+            self.sum_expenses.update_value(f"{res['expenses']:,.2f} AFN")
+            self.sum_salaries.update_value(f"{res['salaries']:,.2f} AFN")
+            
+            # Color code profit: green if positive, red if negative
+            profit_color = "#05cd99" if res['profit'] >= 0 else "#ee5d50"
+            self.sum_net_profit.update_value(f"{res['profit']:,.2f} AFN")
+            self.sum_net_profit.value_lbl.setStyleSheet(f"color: {profit_color}; font-size: 28px; font-weight: bold;")
+            
+        task_manager.run_task(do_calc, on_finished=on_finished)
+
+    def create_reports_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Filters
+        filter_box = QFrame()
+        filter_box.setObjectName("card")
+        f_layout = QHBoxLayout(filter_box)
+        
+        self.rpt_type = QComboBox()
+        self.rpt_type.addItems(["All", "Salaries", "Expenses", "Profit Analysis"])
+        self.rpt_type.setFixedWidth(150)
+        
+        self.rpt_from = QDateEdit()
+        self.rpt_from.setCalendarPopup(True)
+        self.rpt_from.setDate(QDate.currentDate().addDays(-30))
+        
+        self.rpt_to = QDateEdit()
+        self.rpt_to.setCalendarPopup(True)
+        self.rpt_to.setDate(QDate.currentDate())
+        
+        search_btn = QPushButton("Generate")
+        style_button(search_btn, variant="primary")
+        search_btn.clicked.connect(self.load_report_data)
+        
+        f_layout.addWidget(QLabel("Type:"))
+        f_layout.addWidget(self.rpt_type)
+        f_layout.addWidget(QLabel("From:"))
+        f_layout.addWidget(self.rpt_from)
+        f_layout.addWidget(QLabel("To:"))
+        f_layout.addWidget(self.rpt_to)
+        f_layout.addWidget(search_btn)
+        f_layout.addStretch()
+        
+        # Export buttons
+        export_lay = QHBoxLayout()
+        self.print_btn = QPushButton("Print A4")
+        style_button(self.print_btn, variant="outline")
+        self.print_btn.clicked.connect(self.print_report)
+        
+        self.excel_btn = QPushButton("Export Excel")
+        style_button(self.excel_btn, variant="outline")
+        self.excel_btn.clicked.connect(self.export_to_excel)
+        
+        export_lay.addWidget(self.print_btn)
+        export_lay.addWidget(self.excel_btn)
+        f_layout.addLayout(export_lay)
+        
+        layout.addWidget(filter_box)
+        
+        # Report Table
+        self.report_table = QTableWidget(0, 6)
+        self.report_table.setHorizontalHeaderLabels(["Date", "Category/Type", "Reference", "User/Authorizer", "Amount", "Details"])
+        style_table(self.report_table, variant="premium")
+        self.report_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.report_table)
+        
+        return tab
+
+    def load_report_data(self):
+        from src.core.blocking_task_manager import task_manager
+        t = self.rpt_type.currentText()
+        d_from = self.rpt_from.date().toString("yyyy-MM-dd")
+        d_to = self.rpt_to.date().toString("yyyy-MM-dd")
+        
+        def fetch():
+            rows = []
+            with db_manager.get_connection() as conn:
+                # 1. Expenses
+                if t in ["All", "Expenses"]:
+                    e_rows = conn.execute("""
+                        SELECT expense_date, category, 'Expense-' || e.id, COALESCE(u.username, 'N/A'), amount, description
+                        FROM expenses e LEFT JOIN users u ON e.user_id = u.id
+                        WHERE expense_date BETWEEN ? AND ?
+                        ORDER BY expense_date DESC
+                    """, (d_from, d_to)).fetchall()
+                    rows.extend([list(r) for r in e_rows])
+                
+                # 2. Salaries
+                if t in ["All", "Salaries"]:
+                    # Use COALESCE to handle null payment_date, fall back to created_at date
+                    p_rows = conn.execute("""
+                        SELECT 
+                            COALESCE(DATE(payment_date), DATE(created_at)) as pay_date,
+                            'Salary' as type,
+                            month_year as reference,
+                            u.username as employee,
+                            net_paid as amount,
+                            'Paid by: ' || COALESCE(auth.username, 'System') as details
+                        FROM payroll p 
+                        JOIN users u ON p.user_id = u.id
+                        LEFT JOIN users auth ON p.authorized_by = auth.id
+                        WHERE COALESCE(DATE(payment_date), DATE(created_at)) BETWEEN ? AND ?
+                        ORDER BY pay_date DESC
+                    """, (d_from, d_to)).fetchall()
+                    rows.extend([list(r) for r in p_rows])
+            
+            # Sort all rows by date descending
+            rows.sort(key=lambda x: x[0] if x[0] else '', reverse=True)
+            return rows
+
+        def on_finished(data):
+            self.report_table.setRowCount(0)
+            if not data:
+                QMessageBox.information(self, "No Records", f"No records found for the selected period ({d_from} to {d_to}).")
+                return
+            for i, row in enumerate(data):
+                self.report_table.insertRow(i)
+                for j, val in enumerate(row):
+                    self.report_table.setItem(i, j, QTableWidgetItem(str(val) if val is not None else ''))
+        
+        task_manager.run_task(fetch, on_finished=on_finished)
+
+    def print_report(self):
+        printer = QPrinter()
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        preview = QPrintPreviewDialog(printer, self)
+        preview.paintRequested.connect(self.generate_print_document)
+        preview.exec()
+
+    def generate_print_document(self, printer):
+        doc = QTextDocument()
+        cursor = QTextCursor(doc)
+        
+        # Header
+        title_fmt = QTextCharFormat()
+        title_fmt.setFontPointSize(20)
+        title_fmt.setFontWeight(QFont.Weight.Bold)
+        cursor.insertText("FaqiriTech Store Financial Report\n", title_fmt)
+        
+        info_fmt = QTextCharFormat()
+        info_fmt.setFontPointSize(10)
+        cursor.insertText(f"Period: {self.rpt_from.text()} to {self.rpt_to.text()}\n", info_fmt)
+        cursor.insertText(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", info_fmt)
+        cursor.insertText("-" * 80 + "\n\n")
+        
+        # Table
+        rows = self.report_table.rowCount()
+        cols = self.report_table.columnCount()
+        
+        tbl_fmt = QTextTableFormat()
+        tbl_fmt.setBorder(1)
+        tbl_fmt.setCellPadding(5)
+        tbl_fmt.setWidth(QTextLength(QTextLength.Type.PercentageLength, 100))
+        
+        text_table = cursor.insertTable(rows + 1, cols, tbl_fmt)
+        
+        # Headers
+        header_fmt = QTextCharFormat()
+        header_fmt.setFontWeight(QFont.Weight.Bold)
+        for c in range(cols):
+            cell = text_table.cellAt(0, c)
+            cell_cursor = cell.firstCursorPosition()
+            cell_cursor.insertText(self.report_table.horizontalHeaderItem(c).text(), header_fmt)
+            
+        # Data
+        for r in range(rows):
+            for c in range(cols):
+                item = self.report_table.item(r, c)
+                if item:
+                    cell = text_table.cellAt(r + 1, c)
+                    cell.firstCursorPosition().insertText(item.text())
+        
+        doc.print(printer)
+
+    def export_to_excel(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export Report", "", "Excel Files (*.xlsx)")
+        if not path: return
+        
+        try:
+            data = []
+            for r in range(self.report_table.rowCount()):
+                row = []
+                for c in range(self.report_table.columnCount()):
+                    item = self.report_table.item(r, c)
+                    row.append(item.text() if item else "")
+                data.append(row)
+                
+            headers = [self.report_table.horizontalHeaderItem(c).text() for c in range(self.report_table.columnCount())]
+            df = pd.DataFrame(data, columns=headers)
+            df.to_excel(path, index=False)
+            QMessageBox.information(self, "Success", "Report exported to Excel successfully.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export: {str(e)}")

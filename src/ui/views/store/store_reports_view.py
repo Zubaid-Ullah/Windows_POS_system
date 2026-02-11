@@ -279,7 +279,7 @@ class ModernBarChart(QWidget):
             painter.setPen(QColor("#a3aed0"))
             painter.drawText(QRectF(x, padding_y + chart_h + 10, bar_w, 20), Qt.AlignmentFlag.AlignCenter, self.labels[i % len(self.labels)])
 
-class ReportsView(QWidget):
+class StoreReportsView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_period = "daily"  # daily, weekly, monthly
@@ -303,8 +303,12 @@ class ReportsView(QWidget):
         if self.worker:
             try:
                 if self.worker.isRunning():
-                    self.worker.quit()
-                    self.worker.wait(500)
+                    # Instead of blocking wait, we just disconnect and let it finish in background
+                    try:
+                        self.worker.data_loaded.disconnect()
+                        self.worker.error.disconnect()
+                    except: pass
+                    # self.worker.quit() # Still tell it to quit if it has an event loop
             except RuntimeError:
                 pass
         self.worker = None
@@ -603,11 +607,36 @@ class ReportsView(QWidget):
 
     def update_search_suggestions(self, text):
         if len(text) < 2: return
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT name_en FROM products WHERE name_en LIKE ? LIMIT 10", (f"%{text}%",))
-            res = [r[0] for r in cursor.fetchall()]
+        
+        if not hasattr(self, 'search_suggest_timer'):
+            self.search_suggest_timer = QTimer(self)
+            self.search_suggest_timer.setSingleShot(True)
+            self.search_suggest_timer.setInterval(300)
+            self.search_suggest_timer.timeout.connect(lambda: self._do_search_suggestions(self.search_input.text()))
+        
+        self.search_suggest_timer.start()
+
+    def _do_search_suggestions(self, text):
+        if len(text) < 2: return
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_suggest():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT name_en FROM products WHERE name_en LIKE ? LIMIT 10", (f"%{text}%",))
+                    return [r[0] for r in cursor.fetchall()]
+            except:
+                return []
+
+        def on_finished(res):
+            from PyQt6.QtCore import QStringListModel
             self.completer.setModel(QStringListModel(res))
+            # If the menu isn't showing, try to show it if we have results
+            if res and self.search_input.hasFocus():
+                self.completer.complete()
+
+        task_manager.run_task(fetch_suggest, on_finished=on_finished)
 
     def load_dashboard_data(self):
         if self.is_loading: return
@@ -805,7 +834,7 @@ class ReportsView(QWidget):
                         total_sales += amount
                     except:
                         pass
-            cursor.insertText(".2f", footer_format)
+            cursor.insertText(f"{total_sales:,.2f} AFN", footer_format)
 
         elif "Sold Items Summary" in title and table == self.sold_summary_table:
             total_qty = 0
@@ -823,7 +852,7 @@ class ReportsView(QWidget):
                         total_sales += float(sales_item.text().replace(',', ''))
                     except:
                         pass
-            cursor.insertText(".2f", footer_format)
+            cursor.insertText(f"{total_sales:,.2f} AFN", footer_format)
 
         # Print the document
         document.print(printer)

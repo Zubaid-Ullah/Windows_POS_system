@@ -5,7 +5,7 @@ import qtawesome as qta
 from src.database.db_manager import db_manager
 from src.core.localization import lang_manager
 
-class PriceCheckView(QWidget):
+class StorePriceCheckView(QWidget):
     finished = pyqtSignal()
     def __init__(self):
         super().__init__()

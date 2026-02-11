@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
                              QHeaderView, QAbstractItemView, QMessageBox, QDialog, QFormLayout,
                              QComboBox, QDateEdit, QFileDialog, QInputDialog, QTabWidget,
                              QCheckBox, QPlainTextEdit, QDateTimeEdit, QSizePolicy, QGroupBox)
-from PyQt6.QtCore import Qt, QDate
+from PyQt6.QtCore import Qt, QDate, QTimer
 import qtawesome as qta
 from src.core.localization import lang_manager
 from src.database.db_manager import db_manager
@@ -18,6 +18,7 @@ class CategoryManagerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Manage Categories")
         self.setFixedWidth(400)
+        self._loading = False
         self.init_ui()
 
     def init_ui(self):
@@ -42,10 +43,21 @@ class CategoryManagerDialog(QDialog):
         self.load_categories()
 
     def load_categories(self):
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM categories")
-            rows = cursor.fetchall()
+        """Load categories asynchronously to prevent UI freeze"""
+        if self._loading:
+            return
+        self._loading = True
+        
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch():
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM categories")
+                return [dict(row) for row in cursor.fetchall()]
+        
+        def on_finished(rows):
+            self._loading = False
             self.table.setRowCount(0)
             for i, row in enumerate(rows):
                 self.table.insertRow(i)
@@ -56,26 +68,51 @@ class CategoryManagerDialog(QDialog):
                 del_btn.setIcon(qta.icon("fa5s.trash", color="white"))
                 del_btn.clicked.connect(lambda checked, rid=row['id']: self.delete_category(rid))
                 self.table.setCellWidget(i, 1, del_btn)
+        
+        task_manager.run_task(fetch, on_finished=on_finished)
 
     def add_category(self):
+        """Add category asynchronously"""
         name = self.new_cat.text().strip()
-        if not name: return
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO categories (name_en) VALUES (?)", (name,))
-            conn.commit()
-        self.new_cat.clear()
-        self.load_categories()
-
-    def delete_category(self, rid):
-        try:
+        if not name:
+            return
+        
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_add():
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("DELETE FROM categories WHERE id=?", (rid,))
+                cursor.execute("INSERT INTO categories (name_en) VALUES (?)", (name,))
                 conn.commit()
+            return True
+        
+        def on_finished(result):
+            self.new_cat.clear()
             self.load_categories()
-        except:
-            QMessageBox.warning(self, "Error", "Cannot delete category linked to products.")
+        
+        task_manager.run_task(do_add, on_finished=on_finished)
+
+    def delete_category(self, rid):
+        """Delete category asynchronously"""
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_delete():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM categories WHERE id=?", (rid,))
+                    conn.commit()
+                return {'success': True}
+            except Exception as e:
+                return {'success': False, 'error': str(e)}
+        
+        def on_finished(result):
+            if result['success']:
+                self.load_categories()
+            else:
+                QMessageBox.warning(self, "Error", "Cannot delete category linked to products.")
+        
+        task_manager.run_task(do_delete, on_finished=on_finished)
 
 class ProductDialog(QDialog):
     def __init__(self, product=None, initial_barcode=None):
@@ -253,13 +290,22 @@ class ProductDialog(QDialog):
                 self.category_cb.addItem(row['name_en'], row['id'])
 
     def load_suppliers(self):
-        self.supplier_cb.clear()
-        self.supplier_cb.addItem("None (No Supplier)", None)
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name FROM suppliers")
-            for row in cursor.fetchall():
+        """Load suppliers asynchronously"""
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch():
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, name FROM suppliers")
+                return [dict(row) for row in cursor.fetchall()]
+        
+        def on_finished(rows):
+            self.supplier_cb.clear()
+            self.supplier_cb.addItem("None (No Supplier)", None)
+            for row in rows:
                 self.supplier_cb.addItem(row['name'], row['id'])
+        
+        task_manager.run_task(fetch, on_finished=on_finished)
 
     def manage_categories(self):
         dialog = CategoryManagerDialog(self)
@@ -267,17 +313,28 @@ class ProductDialog(QDialog):
         self.load_categories()
         
     def load_categories(self):
-        prev_data = self.category_cb.currentData()
-        self.category_cb.clear()
-        self.category_cb.addItem("None (Uncategorized)", None)
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name_en FROM categories")
-            for row in cursor.fetchall():
-                self.category_cb.addItem(row['name_en'], row['id'])
+        """Load categories asynchronously"""
+        from src.core.blocking_task_manager import task_manager
         
-        idx = self.category_cb.findData(prev_data)
-        if idx >= 0: self.category_cb.setCurrentIndex(idx)
+        prev_data = self.category_cb.currentData()
+        
+        def fetch():
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, name_en FROM categories")
+                return [dict(row) for row in cursor.fetchall()]
+        
+        def on_finished(rows):
+            self.category_cb.clear()
+            self.category_cb.addItem("None (Uncategorized)", None)
+            for row in rows:
+                self.category_cb.addItem(row['name_en'], row['id'])
+            
+            idx = self.category_cb.findData(prev_data)
+            if idx >= 0:
+                self.category_cb.setCurrentIndex(idx)
+        
+        task_manager.run_task(fetch, on_finished=on_finished)
 
     def populate_data(self):
         p = self.product
@@ -361,13 +418,28 @@ class ProductDialog(QDialog):
             QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("error"))
             return None
 
-class InventoryView(QWidget):
+class StoreInventoryView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_user = Auth.get_current_user()
         self.can_edit = self.current_user['role_name'] in ['Admin', 'Manager']
+        self.is_loading = False
+        
+        # Debounce timer for refreshing
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setSingleShot(True)
+        self.refresh_timer.setInterval(500)
+        self.refresh_timer.timeout.connect(self._do_load_products)
+        
         self.init_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
         self.load_products()
+
+    def hideEvent(self, event):
+        self.refresh_timer.stop()
+        super().hideEvent(event)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -433,6 +505,18 @@ class InventoryView(QWidget):
         main_layout.addWidget(self.container)
 
     def load_products(self):
+        """Trigger debounced load"""
+        self.refresh_timer.start()
+
+    def _do_load_products(self):
+        # Skip if app is not active or view not visible
+        from PyQt6.QtWidgets import QApplication
+        if QApplication.applicationState() != Qt.ApplicationState.ApplicationActive or not self.isVisible():
+            return
+        
+        if self.is_loading: return
+        self.is_loading = True
+        
         from src.core.blocking_task_manager import task_manager
         
         def fetch_data():
@@ -449,6 +533,7 @@ class InventoryView(QWidget):
                 return [dict(row) for row in cursor.fetchall()], lang_col
 
         def on_loaded(result):
+            self.is_loading = False
             products, lang_col = result
             self.table.setRowCount(0)
             for i, p in enumerate(products):
@@ -505,7 +590,9 @@ class InventoryView(QWidget):
             # Ensure actions column is still usable
             self.table.setColumnWidth(7, 180)
 
-        task_manager.run_task(fetch_data, on_finished=on_loaded)
+        def on_error(_err):
+            self.is_loading = False
+        task_manager.run_task(fetch_data, on_finished=on_loaded, on_error=on_error)
 
     def generate_barcode_img(self, code):
         if not code: return
@@ -518,40 +605,67 @@ class InventoryView(QWidget):
         barcode = self.scan_input.text().strip()
         if not barcode: return
         
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT p.*, i.quantity 
-                FROM products p 
-                LEFT JOIN inventory i ON p.id = i.product_id 
-                WHERE (p.barcode = ? OR p.sku = ?) AND p.is_active = 1
-            """, (barcode, barcode))
-            product = cursor.fetchone()
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_lookup():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT p.*, i.quantity 
+                        FROM products p 
+                        LEFT JOIN inventory i ON p.id = i.product_id 
+                        WHERE (p.barcode = ? OR p.sku = ?) AND p.is_active = 1
+                    """, (barcode, barcode))
+                    res = cursor.fetchone()
+                    return {"success": True, "product": dict(res) if res else None}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def on_lookup_finished(result):
+            if not result["success"]:
+                QMessageBox.critical(self, "Error", result["error"])
+                return
             
+            product = result["product"]
             if product:
-                # Update existing quantity
                 qty_add, ok = QInputDialog.getDouble(self, "Update Stock", 
                                                     f"Product: {product['name_en']} ({product['brand']})\nStock: {product['quantity'] or 0}\n\nEnter Quantity to ADD:", 
                                                     1, 0, 1000000)
                 if ok and qty_add > 0:
-                    cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE product_id = ?", 
-                                 (qty_add, product['id']))
-                    cursor.execute("INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
-                                 (self.current_user['id'], 'STOCK_IN', 'inventory', product['id'], f'Added {qty_add} via scan'))
-                    conn.commit()
-                    QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
-                    print('\a', end='', flush=True) # Beep
-                    self.load_products()
+                    def do_update():
+                        try:
+                            with db_manager.get_connection() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE product_id = ?", 
+                                             (qty_add, product['id']))
+                                cursor.execute("INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
+                                             (self.current_user['id'], 'STOCK_IN', 'inventory', product['id'], f'Added {qty_add} via scan'))
+                                conn.commit()
+                            return True
+                        except:
+                            return False
+                    
+                    def on_update_finished(success):
+                        if success:
+                            QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
+                            print('\a', end='', flush=True) # Beep
+                            self.load_products()
+                        else:
+                            QMessageBox.critical(self, "Error", "Failed to update stock")
+                    
+                    task_manager.run_task(do_update, on_finished=on_update_finished)
             else:
-                # AUTOMATED REGISTRY POPUP (Point 13.1)
                 reply = QMessageBox.question(self, lang_manager.get("not_found"), 
                                            f"{barcode} {lang_manager.get('not_found')}.\n{lang_manager.get('add')}?",
                                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                 if reply == QMessageBox.StandardButton.Yes:
                     self.add_product(barcode)
-        
-        self.scan_input.clear()
-        self.scan_input.setFocus()
+            
+            self.scan_input.clear()
+            self.scan_input.setFocus()
+
+        task_manager.run_task(do_lookup, on_finished=on_lookup_finished)
 
     def add_product(self, barcode=None):
         dialog = ProductDialog(initial_barcode=barcode)

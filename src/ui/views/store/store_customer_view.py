@@ -1,16 +1,18 @@
 import os
+import uuid
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
-                             QPushButton, QLabel, QFrame, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QDialog, QFormLayout, QComboBox, QMessageBox, QInputDialog, QTextEdit)
-from PyQt6.QtCore import Qt
+                             QPushButton, QLabel, QFrame, QTableWidget, QTableWidgetItem,
+                             QHeaderView, QDialog, QFormLayout, QComboBox, QMessageBox, QTextEdit)
+from PyQt6.QtCore import Qt, QTimer
 import qtawesome as qta
-import uuid
+
 from src.core.localization import lang_manager
 from src.database.db_manager import db_manager
 from src.core.auth import Auth
 from src.ui.table_styles import style_table
 from src.ui.button_styles import style_button
+
 
 class CustomerDialog(QDialog):
     def __init__(self, customer=None):
@@ -27,12 +29,10 @@ class CustomerDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
-        # Header
         header = QLabel("Customer Information & KYC")
         header.setStyleSheet("font-size: 18px; font-weight: bold; color: #1b2559; margin-bottom: 10px;")
         layout.addWidget(header)
 
-        # Basic Information Group
         basic_group = QFrame()
         basic_group.setObjectName("customer_basic_group")
         basic_group.setStyleSheet("""
@@ -72,7 +72,6 @@ class CustomerDialog(QDialog):
         basic_layout.addLayout(form)
         layout.addWidget(basic_group)
 
-        # Loan Information Group
         loan_group = QFrame()
         loan_group.setObjectName("customer_loan_group")
         loan_group.setStyleSheet("""
@@ -115,27 +114,61 @@ class CustomerDialog(QDialog):
             self.loan_limit.setText(str(self.customer['loan_limit'] or 0))
             self.photo_path = self.customer.get('photo')
             self.id_photo_path = self.customer.get('id_card_photo')
-        
-        # Security/KYC Section
+
         layout.addWidget(QLabel("<b>Security Verification (KYC)</b>"))
-        kyc_box = QHBoxLayout()
+        kyc_box = QVBoxLayout()
         
-        self.photo_status = QLabel("Photo: " + ("Registered" if self.photo_path else "Pending"))
-        self.id_status = QLabel("ID Card: " + ("Registered" if self.id_photo_path else "Pending"))
+        # Row 1: Profile Photo
+        p_row = QHBoxLayout()
+        self.photo_preview = QLabel("No Photo")
+        self.photo_preview.setFixedSize(100, 100)
+        self.photo_preview.setStyleSheet("border: 1px solid #ccc; background: #f0f0f0;")
+        self.photo_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        p_btns = QVBoxLayout()
+        self.photo_status = QLabel("Profile Photo: " + ("Registered" if self.photo_path else "Pending"))
         take_photo_btn = QPushButton("Take Photo")
+        style_button(take_photo_btn, variant="outline")
         take_photo_btn.clicked.connect(self.take_photo)
+        p_btns.addWidget(self.photo_status)
+        p_btns.addWidget(take_photo_btn)
         
+        p_row.addWidget(self.photo_preview)
+        p_row.addLayout(p_btns)
+        p_row.addStretch()
+        kyc_box.addLayout(p_row)
+        
+        kyc_box.addSpacing(10)
+        
+        # Row 2: ID Photo
+        id_row = QHBoxLayout()
+        self.id_preview = QLabel("No ID")
+        self.id_preview.setFixedSize(100, 100)
+        self.id_preview.setStyleSheet("border: 1px solid #ccc; background: #f0f0f0;")
+        self.id_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        id_btns = QVBoxLayout()
+        self.id_status = QLabel("ID Card: " + ("Registered" if self.id_photo_path else "Pending"))
         take_id_btn = QPushButton("Take ID Photo")
+        style_button(take_id_btn, variant="outline")
         take_id_btn.clicked.connect(self.take_id_photo)
+        id_btns.addWidget(self.id_status)
+        id_btns.addWidget(take_id_btn)
         
-        kyc_box.addWidget(self.photo_status)
-        kyc_box.addWidget(take_photo_btn)
-        kyc_box.addSpacing(20)
-        kyc_box.addWidget(self.id_status)
-        kyc_box.addWidget(take_id_btn)
+        id_row.addWidget(self.id_preview)
+        id_row.addLayout(id_btns)
+        id_row.addStretch()
+        kyc_box.addLayout(id_row)
+        
         layout.addLayout(kyc_box)
-        
+
+        # Pre-load existing photos if any
+        from PyQt6.QtGui import QPixmap
+        if self.photo_path and os.path.exists(self.photo_path):
+             self.photo_preview.setPixmap(QPixmap(self.photo_path).scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
+        if self.id_photo_path and os.path.exists(self.id_photo_path):
+             self.id_preview.setPixmap(QPixmap(self.id_photo_path).scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
+
         btns = QHBoxLayout()
         save_btn = QPushButton("Save Customer")
         style_button(save_btn, variant="success")
@@ -149,27 +182,32 @@ class CustomerDialog(QDialog):
         layout.addLayout(btns)
 
     def take_photo(self):
-        print("DEBUG: take_photo button clicked")
         from src.utils.camera import capture_image
+        from PyQt6.QtGui import QPixmap
         path = os.path.join("data", "kyc", f"cust_{uuid.uuid4()}.jpg")
         success, msg = capture_image(path, self)
         if success:
             self.photo_path = path
-            self.photo_status.setText("Photo: Captured ✓")
+            self.photo_status.setText("Profile Photo: Captured ✓")
             self.photo_status.setStyleSheet("color: #05cd99; font-weight: bold;")
+            self.photo_preview.setPixmap(QPixmap(path).scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
         else:
-            if msg: QMessageBox.warning(self, "Camera Error", msg)
+            if msg:
+                QMessageBox.warning(self, "Camera Error", msg)
 
     def take_id_photo(self):
         from src.utils.camera import capture_image
+        from PyQt6.QtGui import QPixmap
         path = os.path.join("data", "kyc", f"id_{uuid.uuid4()}.jpg")
         success, msg = capture_image(path, self)
         if success:
             self.id_photo_path = path
             self.id_status.setText("ID Card: Captured ✓")
             self.id_status.setStyleSheet("color: #05cd99; font-weight: bold;")
+            self.id_preview.setPixmap(QPixmap(path).scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
         else:
-            if msg: QMessageBox.warning(self, "Camera Error", msg)
+            if msg:
+                QMessageBox.warning(self, "Camera Error", msg)
 
     def validate_and_accept(self):
         if not self.name_en.text() or not self.phone.text():
@@ -180,7 +218,8 @@ class CustomerDialog(QDialog):
     def get_data(self):
         try:
             val = float(self.loan_limit.text() or 0)
-        except: val = 0
+        except Exception:
+            val = 0
         return {
             'name_en': self.name_en.text(),
             'phone': self.phone.text(),
@@ -191,36 +230,49 @@ class CustomerDialog(QDialog):
             'id_card_photo': self.id_photo_path
         }
 
-class CustomerView(QWidget):
+
+class StoreCustomerView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_user = Auth.get_current_user()
         self.is_admin = self.current_user['role_name'] in ['Admin', 'Manager', 'SuperAdmin']
-        # Pagination
         self.current_page = 1
         self.page_size = 50
         self.total_pages = 1
-        
+        self.is_loading = False
+
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setSingleShot(True)
+        self.refresh_timer.setInterval(500)
+        self.refresh_timer.timeout.connect(self._do_load_customers)
+
         self.init_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
         self.load_customers()
+
+    def hideEvent(self, event):
+        self.refresh_timer.stop()
+        super().hideEvent(event)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self.container = QFrame()
         self.container.setObjectName("card")
         layout = QVBoxLayout(self.container)
         layout.setContentsMargins(25, 25, 25, 25)
         layout.setSpacing(20)
-        
+
         header = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search customer by name or phone...")
         self.search_input.setFixedHeight(35)
         self.search_input.textChanged.connect(self.load_customers)
         header.addWidget(self.search_input)
-        
+
         self.add_btn = QPushButton(" Add New Customer")
         style_button(self.add_btn, variant="primary")
         self.add_btn.setIcon(qta.icon("fa5s.user-plus", color="white"))
@@ -228,130 +280,119 @@ class CustomerView(QWidget):
         if not self.is_admin:
             self.add_btn.hide()
         header.addWidget(self.add_btn)
-        
+
         layout.addLayout(header)
-        
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels([
             "ID", "Full Name", "Contact", "Balance", "Actions"
         ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch) # Name stretches
-        self.table.setColumnWidth(4, 200) # Actions fixed
-        self.table.setColumnWidth(4, 200) # Actions fixed
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(4, 200)
         layout.addWidget(self.table)
-        
-        # Pagination Controls
+
         pag_layout = QHBoxLayout()
         pag_layout.addStretch()
-        
+
         self.prev_btn = QPushButton("Previous")
         style_button(self.prev_btn, variant="outline", size="small")
         self.prev_btn.clicked.connect(self.prev_page)
-        
-        self.page_label = QLabel(f"Page 1")
+
+        self.page_label = QLabel("Page 1")
         self.page_label.setStyleSheet("font-weight: bold; color: #555;")
-        
+
         self.next_btn = QPushButton("Next")
         style_button(self.next_btn, variant="outline", size="small")
         self.next_btn.clicked.connect(self.next_page)
-        
+
         pag_layout.addWidget(self.prev_btn)
         pag_layout.addWidget(self.page_label)
         pag_layout.addWidget(self.next_btn)
         pag_layout.addStretch()
-        
+
         layout.addLayout(pag_layout)
-        
         main_layout.addWidget(self.container)
 
     def load_customers(self):
-        from src.core.blocking_task_manager import task_manager
+        self.refresh_timer.start()
+
+    def _do_load_customers(self):
+        from PyQt6.QtWidgets import QApplication
+        if QApplication.applicationState() != Qt.ApplicationState.ApplicationActive or not self.isVisible():
+            self.is_loading = False
+            return
+        if self.is_loading:
+            return
+        self.is_loading = True
+
         search = self.search_input.text().strip()
-        
+        from src.core.blocking_task_manager import task_manager
+
         def fetch_data():
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
-                
-                # Base query
                 base_query = "FROM customers WHERE is_active = 1"
                 params = []
-                
                 if search:
                     base_query += " AND (name_en LIKE ? OR phone LIKE ?)"
                     params.extend([f"%{search}%", f"%{search}%"])
-                
-                # Count total
+
                 cursor.execute(f"SELECT COUNT(*) {base_query}", params)
                 total_count = cursor.fetchone()[0]
-                
-                # Fetch page
+
                 offset = (self.current_page - 1) * self.page_size
                 query = f"SELECT * {base_query} ORDER BY id DESC LIMIT ? OFFSET ?"
                 params.extend([self.page_size, offset])
-                
                 cursor.execute(query, params)
                 rows = [dict(row) for row in cursor.fetchall()]
-                
                 return {"rows": rows, "total": total_count}
 
         def on_loaded(result):
+            self.is_loading = False
             customers = result["rows"]
             total_count = result["total"]
-            
-            # Calculate total pages
-            import math
-            self.total_pages = math.ceil(total_count / self.page_size) if total_count > 0 else 1
-            
-            # Update UI controls
-            self.page_label.setText(f"Page {self.current_page} of {self.total_pages}")
+
+            self.total_pages = (total_count + self.page_size - 1) // self.page_size
+            self.page_label.setText(f"Page {self.current_page} of {max(1, self.total_pages)}")
             self.prev_btn.setEnabled(self.current_page > 1)
-            self.next_btn.setEnabled(self.current_page < self.total_pages)
-            
+            self.next_btn.setEnabled(self.current_page < max(1, self.total_pages))
+
             self.table.setRowCount(0)
             for i, c in enumerate(customers):
                 self.table.insertRow(i)
                 self.table.setItem(i, 0, QTableWidgetItem(str(c['id'])))
                 self.table.setItem(i, 1, QTableWidgetItem(c['name_en']))
-                self.table.setItem(i, 2, QTableWidgetItem(c['phone'] or ""))
-                
-                bal_item = QTableWidgetItem(f"{c['balance']:.2f}")
-                if c['balance'] > 0:
-                    bal_item.setForeground(Qt.GlobalColor.red)
-                self.table.setItem(i, 3, bal_item)
-                
+                self.table.setItem(i, 2, QTableWidgetItem(c['phone'] or "N/A"))
+                self.table.setItem(i, 3, QTableWidgetItem(f"{c['balance']:,.2f} AFN"))
+
                 actions = QWidget()
                 act_layout = QHBoxLayout(actions)
                 act_layout.setContentsMargins(2, 2, 2, 2)
-                
-                pay_btn = QPushButton()
-                style_button(pay_btn, variant="success", size="icon")
-                pay_btn.setIcon(qta.icon("fa5s.money-bill-wave", color="white"))
+
+                pay_btn = QPushButton("Pay")
+                style_button(pay_btn, variant="success", size="small")
                 pay_btn.clicked.connect(lambda checked, cid=c['id']: self.make_payment(cid))
-                
+                act_layout.addWidget(pay_btn)
+
                 if self.is_admin:
                     edit_btn = QPushButton()
                     style_button(edit_btn, variant="info", size="icon")
                     edit_btn.setIcon(qta.icon("fa5s.edit", color="white"))
                     edit_btn.clicked.connect(lambda checked, cust=c: self.edit_customer(cust))
-                    
+
                     del_btn = QPushButton()
                     style_button(del_btn, variant="danger", size="icon")
                     del_btn.setIcon(qta.icon("fa5s.trash", color="white"))
                     del_btn.clicked.connect(lambda checked, cid=c['id']: self.delete_customer(cid))
-                    
-                    act_layout.addWidget(pay_btn)
+
                     act_layout.addWidget(edit_btn)
                     act_layout.addWidget(del_btn)
-                else:
-                    act_layout.addWidget(pay_btn)
-                
+
                 self.table.setCellWidget(i, 4, actions)
-            
-            # Auto-fit columns to content once the table is populated
+
             self.table.resizeColumnsToContents()
-            # Restore stretch and fixed action column
             self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
             self.table.setColumnWidth(4, 200)
 
@@ -371,9 +412,10 @@ class CustomerView(QWidget):
         dialog = CustomerDialog()
         if dialog.exec():
             data = dialog.get_data()
-            if not data: return
+            if not data:
+                return
             from src.core.blocking_task_manager import task_manager
-            
+
             def do_add():
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
@@ -382,8 +424,10 @@ class CustomerView(QWidget):
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (data['name_en'], data['phone'], data['loan_enabled'], data['loan_limit'], data['address'], data['photo'], data['id_card_photo']))
                     customer_id = cursor.lastrowid
-                    cursor.execute("INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
-                                 (self.current_user['id'], 'ADD_CUSTOMER', 'customers', customer_id, f"Added customer {data['name_en']}"))
+                    cursor.execute(
+                        "INSERT INTO audit_logs (user_id, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?)",
+                        (self.current_user['id'], 'ADD_CUSTOMER', 'customers', customer_id, f"Added customer {data['name_en']}")
+                    )
                     conn.commit()
                 return True
 
@@ -393,7 +437,8 @@ class CustomerView(QWidget):
         dialog = CustomerDialog(customer)
         if dialog.exec():
             data = dialog.get_data()
-            if not data: return
+            if not data:
+                return
             from src.core.blocking_task_manager import task_manager
 
             def do_edit():
@@ -402,7 +447,8 @@ class CustomerView(QWidget):
                     cursor.execute("""
                         UPDATE customers SET name_en=?, phone=?, loan_enabled=?, loan_limit=?, home_address=?, photo=?, id_card_photo=?
                         WHERE id=?
-                    """, (data['name_en'], data['phone'], data['loan_enabled'], data['loan_limit'], data['address'], data['photo'], data['id_card_photo'], customer['id']))
+                    """, (data['name_en'], data['phone'], data['loan_enabled'], data['loan_limit'],
+                          data['address'], data['photo'], data['id_card_photo'], customer['id']))
                     conn.commit()
                 return True
 
@@ -412,10 +458,13 @@ class CustomerView(QWidget):
         if cid == 1:
             QMessageBox.warning(self, "Reserved", "Default walking customer cannot be deleted.")
             return
-        reply = QMessageBox.question(self, 'Confirm Delete', "Deactivate this customer?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        reply = QMessageBox.question(
+            self, 'Confirm Delete', "Deactivate this customer?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
         if reply == QMessageBox.StandardButton.Yes:
             from src.core.blocking_task_manager import task_manager
-            
+
             def do_delete():
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
@@ -431,14 +480,16 @@ class CustomerView(QWidget):
         if ok and amount > 0:
             from src.core.blocking_task_manager import task_manager
             from datetime import datetime
-            
+
             def do_payment():
                 try:
                     with db_manager.get_connection() as conn:
                         cursor = conn.cursor()
                         cursor.execute("UPDATE customers SET balance = MAX(0, balance - ?) WHERE id = ?", (amount, cid))
-                        cursor.execute("INSERT INTO customer_payments (customer_id, amount, payment_method, reference_number) VALUES (?, ?, 'CASH', ?)",
-                                     (cid, amount, f"Settle-{datetime.now().strftime('%Y%m%d%H%M')}"))
+                        cursor.execute(
+                            "INSERT INTO customer_payments (customer_id, amount, payment_method, reference_number) VALUES (?, ?, 'CASH', ?)",
+                            (cid, amount, f"Settle-{datetime.now().strftime('%Y%m%d%H%M')}")
+                        )
                         conn.commit()
                     return {"success": True}
                 except Exception as e:

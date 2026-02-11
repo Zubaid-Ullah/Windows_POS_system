@@ -64,21 +64,31 @@ class ThemeManager(QObject):
     def init_theme(self):
         """Load saved theme and apply it."""
         from src.database.db_manager import db_manager
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM app_settings WHERE key = 'theme_mode'")
-            row = cursor.fetchone()
-            if row:
-                self.theme_mode = row['value']
-            else:
-                self.theme_mode = "SYSTEM"
+        try:
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM app_settings WHERE key = 'theme_mode'")
+                row = cursor.fetchone()
+                if row:
+                    self.theme_mode = row['value']
+                else:
+                    self.theme_mode = "SYSTEM"
+        except:
+            self.theme_mode = "SYSTEM"
         
         self._apply_mode()
         
-        # Monitor for real-time changes
+        # Monitor for real-time changes (e.g. OS color scheme change)
         self.monitor_timer = QTimer()
-        self.monitor_timer.timeout.connect(self._apply_mode)
-        self.monitor_timer.start(2000) # Check every 2 seconds for zero-restart experience
+        self.monitor_timer.timeout.connect(self._check_and_apply_theme)
+        self.monitor_timer.start(5000) # Check every 5 seconds (less aggressive)
+
+    def _check_and_apply_theme(self):
+        """Timer callback - only process if app is active to save resources."""
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+        if QApplication.applicationState() == Qt.ApplicationState.ApplicationActive:
+            self._apply_mode()
 
     def toggle_theme(self):
         self.is_dark = not self.is_dark

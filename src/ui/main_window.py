@@ -4,16 +4,16 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 import qtawesome as qta
 from src.ui.views.login_view import LoginView
-from src.ui.views.sales_view import SalesView
-from src.ui.views.inventory_view import InventoryView
-from src.ui.views.customer_view import CustomerView
-from src.ui.views.reports_view import ReportsView
-from src.ui.views.settings_view import SettingsView
-from src.ui.views.supplier_view import SupplierView
-from src.ui.views.loan_view import LoanView
-from src.ui.views.stock_alert_view import StockAlertView
-from src.ui.views.price_check_view import PriceCheckView
-from src.ui.views.returns_view import ReturnsView
+from src.ui.views.store.store_sales_view import StoreSalesView
+from src.ui.views.store.store_inventory_view import StoreInventoryView
+from src.ui.views.store.store_customer_view import StoreCustomerView
+from src.ui.views.store.store_reports_view import StoreReportsView
+from src.ui.views.store.store_settings_view import StoreSettingsView
+from src.ui.views.store.store_supplier_view import StoreSupplierView
+from src.ui.views.store.store_loan_view import StoreLoanView
+from src.ui.views.store.store_stock_alert_view import StoreStockAlertView
+from src.ui.views.store.store_price_check_view import StorePriceCheckView
+from src.ui.views.store.store_returns_view import StoreReturnsView
 from src.ui.views.pharmacy.pharmacy_hub import PharmacyHub
 from src.ui.theme_manager import theme_manager
 from src.core.localization import lang_manager
@@ -21,9 +21,9 @@ from src.core.auth import Auth
 from src.core.pharmacy_auth import PharmacyAuth
 from datetime import datetime
 from src.ui.views.super_admin_view import SuperAdminView
-from src.ui.views.dashboard_view import DashboardView
-from src.ui.views.finance_view import FinanceView
-from src.ui.views.user_management_view import UserManagementView
+from src.ui.views.store.store_dashboard_view import StoreDashboardView
+from src.ui.views.store.store_finance_view import StoreFinanceView
+from src.ui.views.store.store_users_view import StoreUsersView
 from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QTimer
 from src.core.local_config import local_config
 from src.core.app_version import APP_VERSION
@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
             # Modular Activation Check: If store is disabled by superadmin, hide store items
             store_active = getattr(self, 'store_active', local_config.get("store_active", True))
             if not store_active:
-                menus = [("pharm_dashboard", "fa5s.prescription-bottle-alt", "Pharmacy")] # Only show switch to pharmacy if store is off
+                menus = [("dashboard", "fa5s.th-large", "Dashboard")] # Show dashboard even if store is off
             else:
                 menus = [
                     ("dashboard", "fa5s.th-large", "Dashboard"),
@@ -274,9 +274,6 @@ class MainWindow(QMainWindow):
                     ("price_check", "fa5s.tag", "Price Check"),
                     ("settings", "fa5s.cog", "Settings")
                 ]
-                # Modular Activation: If pharmacy is available, show button to switch
-                if local_config.get("pharmacy_active", True):
-                    menus.insert(1, ("pharmacy", "fa5s.prescription-bottle-alt", "Pharmacy"))
 
             if user.get('is_super_admin'):
                 menus.insert(-1, ("credentials", "fa5s.key", "Credentials"))
@@ -338,7 +335,7 @@ class MainWindow(QMainWindow):
         
         # Profile section at bottom
         self.profile_frame = QFrame()
-        self.profile_frame.setStyleSheet(f"border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;background:1a3a8a;")
+        self.profile_frame.setStyleSheet(f"border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px; background: #1a3a8a;")
         prof_lay = QHBoxLayout(self.profile_frame)
         
         self.user_name_lbl = QLabel(user.get('username', 'User').capitalize())
@@ -507,37 +504,37 @@ class MainWindow(QMainWindow):
             
         # Create and add new view
         if view_key == "dashboard":
-            self.current_view = DashboardView()
+            self.current_view = StoreDashboardView()
             self.current_view.navigation_requested.connect(self.switch_view)
         elif view_key == "finance":
-            self.current_view = FinanceView()
+            self.current_view = StoreFinanceView()
         elif view_key == "users":
-            self.current_view = UserManagementView()
+            self.current_view = StoreUsersView()
         elif view_key in ["sales"]:
-            self.current_view = SalesView()
+            self.current_view = StoreSalesView()
         elif view_key == "inventory":
-            self.current_view = InventoryView()
+            self.current_view = StoreInventoryView()
         elif view_key == "customers":
-            self.current_view = CustomerView()
+            self.current_view = StoreCustomerView()
         elif view_key == "reports":
-            self.current_view = ReportsView()
+            self.current_view = StoreReportsView()
         elif view_key == "settings":
-            self.current_view = SettingsView()
+            self.current_view = StoreSettingsView()
         elif view_key == "low_stock":
-            self.current_view = StockAlertView()
+            self.current_view = StoreStockAlertView()
         elif view_key == "price_check":
-            self.current_view = PriceCheckView()
+            self.current_view = StorePriceCheckView()
             # Requirement: Visible for 5 seconds
             # Actually, the view itself handles the 5s timer for the result.
-            # If the user means the WHOLE WINDOW, we handle it in PriceCheckView by emitting a signal.
+            # If the user means the WHOLE WINDOW, we handle it in StorePriceCheckView by emitting a signal.
             # if hasattr(self.current_view, 'finished'):
             #     self.current_view.finished.connect(lambda: self.switch_view("dashboard"))
         elif view_key == "returns":
-            self.current_view = ReturnsView()
+            self.current_view = StoreReturnsView()
         elif view_key == "suppliers":
-            self.current_view = SupplierView()
+            self.current_view = StoreSupplierView()
         elif view_key == "loans":
-            self.current_view = LoanView()
+            self.current_view = StoreLoanView()
         elif view_key.startswith("pharm"):
              if not hasattr(self, 'pharmacy_hub'):
                  self.pharmacy_hub = PharmacyHub()

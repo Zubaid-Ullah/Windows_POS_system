@@ -75,18 +75,28 @@ def main():
         task_manager.run_task(bootstrap_db)
 
         # Start GUI Watchdog (Background Monitor)
-        from src.core.app_watchdog import start_watchdog
+        from src.core.app_watchdog import start_watchdog, helper_instance
         watchdog = start_watchdog()
+        watchdog.pause()
+        if helper_instance: helper_instance.pause_timer()
+        watchdog_allowed = False # Flag to control automatic resumption
+        
         watchdog.ui_hang_detected.connect(lambda d: print(f"⚠️ App focus warning: UI was frozen for {d:.1f}s. Check background tasks."))
 
         # Smart Watchdog: Pause when app is in background to prevent 'App Nap' false positives
         def handle_app_state_change(state):
+            if not watchdog_allowed:
+                return
+            
+            from src.core.app_watchdog import helper_instance
             if state == Qt.ApplicationState.ApplicationActive:
                 print("[Watchdog] App Active - Resuming monitor")
                 watchdog.resume()
+                if helper_instance: helper_instance.resume_timer()
             else:
                 print("[Watchdog] App Inactive - Pausing monitor to avoid false positives")
                 watchdog.pause()
+                if helper_instance: helper_instance.pause_timer()
         
         app.applicationStateChanged.connect(handle_app_state_change)
 
@@ -163,6 +173,13 @@ def main():
                     if not conn_monitor:
                         conn_monitor = ConnectionMonitorWindow()
                         conn_monitor.show()
+
+                    # App is now stable, allow watchdog to start monitoring
+                    nonlocal watchdog_allowed
+                    watchdog_allowed = True
+                    watchdog.resume()
+                    from src.core.app_watchdog import helper_instance
+                    if helper_instance: helper_instance.resume_timer()
                 except Exception as e:
                     print(f"[ERROR] Failed to launch main app: {e}")
                     import traceback

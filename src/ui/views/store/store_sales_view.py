@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, 
                              QPushButton, QLabel, QFrame, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QAbstractItemView, QMessageBox, QDialog, QInputDialog, QCompleter, QTextEdit, QComboBox, QFormLayout)
+                             QHeaderView, QAbstractItemView, QMessageBox, QDialog, QInputDialog, QCompleter, QTextEdit, QComboBox, QFormLayout, QSpinBox)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QStringListModel
 from PyQt6.QtGui import QImage, QPixmap, QFont, QColor
 from datetime import datetime
@@ -50,6 +50,7 @@ class CreditKYCDialog(QDialog):
         
         btns = QHBoxLayout()
         save = QPushButton("Verify & Save")
+        save.setDefault(True) # Set as default button for Enter key focus
         style_button(save, variant="success")
         save.clicked.connect(self.accept)
         cancel = QPushButton("Cancel")
@@ -88,15 +89,22 @@ class CreditKYCDialog(QDialog):
             "id_photo": self.id_photo_path
         }
 
-class SalesView(QWidget):
+class StoreSalesView(QWidget):
     def __init__(self):
         super().__init__()
         self.cart = []
         self.selected_customer_id = 1
         self.barcode_cache = {}
+        self.stock_cache = {}  # Cache stock levels to avoid DB hits on every refresh
         self.last_scan_time = 0
         self.current_user = Auth.get_current_user()
         self.completion_map = {}
+        
+        # Debounce timer for autocomplete to avoid O(n) search on every keystroke
+        self.completer_timer = QTimer()
+        self.completer_timer.setSingleShot(True)
+        self.completer_timer.setInterval(150)  # 150ms debounce
+        self.completer_timer.timeout.connect(self._do_update_completer)
         
         # State for Price Check Hold
         self.is_price_check_mode = False
@@ -182,7 +190,7 @@ class SalesView(QWidget):
         style_table(self.cart_table, variant="premium")
         self.cart_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.cart_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch) # Name breathes
-        self.cart_table.cellChanged.connect(self.handle_qty_edit)
+        # self.cart_table.cellChanged.connect(self.handle_qty_edit) # Replaced with QSpinBox
         main_layout.addWidget(self.cart_table)
 
         # Price Check Stats Card (Hidden by default)
@@ -356,9 +364,20 @@ class SalesView(QWidget):
 
         task_manager.run_task(fetch_customers, on_finished=on_loaded)
 
+    def on_customer_changed(self, index):
+        customer_id = self.cust_combo.itemData(index)
+        if customer_id is None:
+            return
+        self.selected_customer_id = customer_id
+        # Autofocus back to search after selection
+        QTimer.singleShot(10, self.search_input.setFocus)
+
     def handle_barcode_scan(self):
         barcode = self.search_input.text().strip()
-        if not barcode: return
+        if not barcode: 
+            if self.cart:
+                self.process_payment("CASH")
+            return
         
         if barcode in self.barcode_cache:
             product = self.barcode_cache[barcode]
@@ -381,14 +400,33 @@ class SalesView(QWidget):
         self.search_input.clear()
 
     def update_completer(self, text):
-        if len(text) < 2: return
+        """Debounced autocomplete to prevent UI freeze on every keystroke"""
+        if len(text) < 2:
+            return
+        self._pending_search_text = text
+        self.completer_timer.start()  # Restart timer on each keystroke
+    
+    def _do_update_completer(self):
+        """Actual autocomplete logic - runs after debounce delay"""
+        text = getattr(self, '_pending_search_text', '')
+        if len(text) < 2:
+            return
+            
         suggestions = []
         new_map = {}
+        # Limit results to avoid performance issues with large datasets
+        count = 0
+        MAX_RESULTS = 50
+        
         for bc, p in self.barcode_cache.items():
+            if count >= MAX_RESULTS:
+                break
             if text.lower() in p['name_en'].lower() or text in bc:
                 display = f"{p['name_en']} ({bc})"
                 suggestions.append(display)
                 new_map[display] = bc
+                count += 1
+        
         self.completion_map = new_map
         self.completer.setModel(QStringListModel(suggestions))
 
@@ -422,51 +460,44 @@ class SalesView(QWidget):
         })
         self.refresh_table()
 
-    def handle_qty_edit(self, row, col):
-        if col == 4:
-            try:
-                item = self.cart[row]
-                new_qty = float(self.cart_table.item(row, col).text())
-                
-                if new_qty < 0:
-                    QMessageBox.warning(self, lang_manager.get("invalid_qty"), lang_manager.get("qty_cannot_be_negative"))
-                    self.refresh_table()
-                    return
-                
-                if new_qty > item['max_qty']:
-                    QMessageBox.warning(self, lang_manager.get("insufficient_stock"), f"{lang_manager.get('remaining')}: {lang_manager.localize_digits(item['max_qty'])}")
-                    self.refresh_table()
-                    return
-                
-                item['qty'] = new_qty
-                self.refresh_table()
-            except:
-                self.refresh_table()
+    def handle_qty_change(self, val, row):
+        try:
+            item = self.cart[row]
+            item['qty'] = val
+            # Update Total column in that row
+            total = item['price'] * val
+            total_item = self.cart_table.item(row, 6)
+            if total_item:
+                total_item.setText(lang_manager.localize_digits(f"{total:.2f}"))
+            self.update_totals()
+        except:
+            pass
 
     def refresh_table(self):
+        """Refresh cart table using cached stock data to avoid blocking DB query"""
         self.cart_table.blockSignals(True)
         self.cart_table.setRowCount(0)
         
-        # Batch Fetch Stock instead of one by one in loop
-        if self.cart:
-            p_ids = [str(item['id']) for item in self.cart]
-            stock_map = {}
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(f"SELECT product_id, quantity FROM inventory WHERE product_id IN ({','.join(p_ids)})")
-                stock_map = {row['product_id']: row['quantity'] for row in cursor.fetchall()}
-        
+        # Use cached stock data instead of live DB query on UI thread
+        # Stock cache is updated when items are added via barcode_cache
         for i, item in enumerate(self.cart):
-            current_stock = stock_map.get(item['id'], 0)
+            # Use stock from barcode_cache which is already loaded
+            cached_product = self.barcode_cache.get(item['barcode'], {})
+            current_stock = cached_product.get('stock_qty', item.get('max_qty', 0))
             
             self.cart_table.insertRow(i)
             self.cart_table.setItem(i, 0, QTableWidgetItem(str(item['id'])))
             self.cart_table.setItem(i, 1, QTableWidgetItem(item['barcode']))
             self.cart_table.setItem(i, 2, QTableWidgetItem(item['name']))
             self.cart_table.setItem(i, 3, QTableWidgetItem(lang_manager.localize_digits(f"{item['price']:.2f}")))
-            qty_item = QTableWidgetItem(lang_manager.localize_digits(str(item['qty'])))
-            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.cart_table.setItem(i, 4, qty_item)
+            
+            # Using QSpinBox for Quantity (REQ-SALE-01)
+            spin = QSpinBox()
+            spin.setRange(1, int(item['max_qty']))
+            spin.setValue(int(item['qty']))
+            spin.setStyleSheet("font-size: 18px; padding: 5px;")
+            spin.valueChanged.connect(lambda v, r=i: self.handle_qty_change(v, r))
+            self.cart_table.setCellWidget(i, 4, spin)
             
             stock_item = QTableWidgetItem(lang_manager.localize_digits(str(int(current_stock))))
             stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -547,7 +578,8 @@ class SalesView(QWidget):
                         if not cust['home_address'] or not cust['photo'] or not cust['id_card_photo']:
                             return {"success": False, "error": "KYC_REQUIRED", "customer_name": cust['name_en']}
 
-                invoice_num = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                next_bill = self.bill_number_display.text()
+                invoice_num = next_bill if next_bill.startswith("INV-") else f"INV-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:4]}"
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
@@ -613,16 +645,10 @@ class SalesView(QWidget):
             self.load_next_bill_number()
             QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('sale_completed')}: {result['invoice_num']}")
             self.clear_cart()
+            # Restore Focus
+            QTimer.singleShot(100, self.search_input.setFocus)
 
         task_manager.run_task(run_checkout, on_finished=on_finished)
-
-
-        
-
-
-
-
-
 
     def print_sale_bill(self, sale_id, invoice_num, total, method):
         """Ask user if they want to print the bill after sale completion"""
@@ -630,7 +656,7 @@ class SalesView(QWidget):
             self, lang_manager.get("print"),
             f"{lang_manager.get('sale_completed')}!\n{lang_manager.get('invoice')}: {invoice_num}\n{lang_manager.get('amount')}: {lang_manager.localize_digits(f'{total:,.2f}')} AFN\n\n{lang_manager.get('print')}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
+            QMessageBox.StandardButton.Yes # Default button is Yes (Enter key)
         )
 
         if reply == QMessageBox.StandardButton.Yes:
@@ -683,32 +709,43 @@ class SalesView(QWidget):
         task_manager.run_task(fetch_next, on_finished=on_finished)
 
     def reprint_last_bill(self):
-        """Reprint the last generated bill"""
-        try:
-            with db_manager.get_connection() as conn:
-                last_sale = conn.execute(
-                    "SELECT id, invoice_number, total_amount, payment_type FROM sales ORDER BY id DESC LIMIT 1"
-                ).fetchone()
-                
-                if not last_sale:
-                    QMessageBox.warning(self, lang_manager.get("no_bills"), lang_manager.get("no_bills_found_to_reprint"))
-                    return
-                
-                reply = QMessageBox.question(
-                    self, lang_manager.get("reprint_bill"),
-                    f"{lang_manager.get('reprint_bill')}: {last_sale['invoice_number']}\n{lang_manager.get('amount')}: {lang_manager.localize_digits('{:.2f}'.format(last_sale['total_amount']))} AFN?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        """Reprint the last generated bill - ASYNC to prevent UI freeze"""
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch_last_sale():
+            try:
+                with db_manager.get_connection() as conn:
+                    last_sale = conn.execute(
+                        "SELECT id, invoice_number, total_amount, payment_type FROM sales ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+                    return dict(last_sale) if last_sale else None
+            except Exception as e:
+                return {"error": str(e)}
+        
+        def on_finished(last_sale):
+            if last_sale is None:
+                QMessageBox.warning(self, lang_manager.get("no_bills"), lang_manager.get("no_bills_found_to_reprint"))
+                return
+            
+            if "error" in last_sale:
+                QMessageBox.critical(self, "Error", f"Failed to fetch: {last_sale['error']}")
+                return
+            
+            reply = QMessageBox.question(
+                self, lang_manager.get("reprint_bill"),
+                f"{lang_manager.get('reprint_bill')}: {last_sale['invoice_number']}\n{lang_manager.get('amount')}: {lang_manager.localize_digits('{:.2f}'.format(last_sale['total_amount']))} AFN?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                self.print_sale_bill(
+                    last_sale['id'],
+                    last_sale['invoice_number'],
+                    last_sale['total_amount'],
+                    last_sale['payment_type']
                 )
-                
-                if reply == QMessageBox.StandardButton.Yes:
-                    self.print_sale_bill(
-                        last_sale['id'],
-                        last_sale['invoice_number'],
-                        last_sale['total_amount'],
-                        last_sale['payment_type']
-                    )
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to reprint: {str(e)}")
+        
+        task_manager.run_task(fetch_last_sale, on_finished=on_finished)
 
     def clear_cart(self):
         self.cart = []
