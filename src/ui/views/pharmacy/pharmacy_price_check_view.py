@@ -63,7 +63,7 @@ class PharmacyPriceCheckView(QWidget):
             try:
                 with db_manager.get_pharmacy_connection() as conn:
                     row = conn.execute("""
-                        SELECT p.name_en, p.sale_price, SUM(i.quantity) as total_qty, p.size
+                        SELECT p.name_en, p.sale_price, SUM(i.quantity) as total_qty, p.size, p.shelf_location
                         FROM pharmacy_products p
                         LEFT JOIN pharmacy_inventory i ON p.id = i.product_id
                         WHERE p.barcode = ? OR p.name_en LIKE ?
@@ -107,10 +107,15 @@ class PharmacyPriceCheckView(QWidget):
         qty_lbl = QLabel(f"{lang_manager.get('stock')}: {qty}")
         qty_lbl.setStyleSheet(f"font-size: 28px; font-weight: 600; color: {'#059669' if qty > 10 else '#dc2626'};")
         
+        rack = data['shelf_location'] or "N/A"
+        rack_lbl = QLabel(f"Rack: {rack}")
+        rack_lbl.setStyleSheet("font-size: 28px; font-weight: 600; color: #3b82f6;")
+        
         self.result_layout.addWidget(name_lbl)
         self.result_layout.addWidget(size_lbl)
         self.result_layout.addWidget(price_lbl)
         self.result_layout.addWidget(qty_lbl)
+        self.result_layout.addWidget(rack_lbl)
         
         # Start clear timer to wipe display after 5 seconds
         self.clear_timer.start(5000)

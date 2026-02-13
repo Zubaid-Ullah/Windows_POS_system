@@ -91,7 +91,7 @@ class DonutChartWidget(QWidget):
         font.setBold(False)
         painter.setFont(font)
         subtitle_rect = QRectF(20, name_rect.bottom(), width - 40, 30)
-        painter.drawText(subtitle_rect, Qt.AlignmentFlag.AlignCenter, "Inventory Sold Percentage")
+        painter.drawText(subtitle_rect, Qt.AlignmentFlag.AlignCenter, "Stock Sold Percentage")
 
 class PharmacyDashboardCard(QFrame):
     clicked = pyqtSignal(str)
@@ -181,7 +181,7 @@ class PharmacyDashboardView(QWidget):
         
         actions = [
             ("pharmacy_finance", "fa5s.chart-pie", "pharmacy_finance", "#3b82f6"),
-            ("inventory", "fa5s.boxes", "pharmacy_inventory", "#10b981"),
+            ("stock", "fa5s.boxes", "pharmacy_inventory", "#10b981"), # Changed key for label
             ("sales", "fa5s.file-invoice-dollar", "pharmacy_sales", "#8b5cf6"),
             ("customers", "fa5s.users", "pharmacy_customers", "#f59e0b"),
             ("suppliers", "fa5s.truck", "pharmacy_suppliers", "#ec4899"),
@@ -205,7 +205,8 @@ class PharmacyDashboardView(QWidget):
             if not has_perm:
                 continue
             
-            label = lang_manager.get(trans_key)
+            # Use "Stock" if key is stock, else lang_manager
+            label = "Stock" if trans_key == "stock" else lang_manager.get(trans_key)
             card = PharmacyDashboardCard(label, icon, key, color, translation_key=trans_key)
             card.icon_lbl.setProperty("icon_name", icon)
             card.clicked.connect(self.navigation_requested.emit)
@@ -235,7 +236,7 @@ class PharmacyDashboardView(QWidget):
         list_container = QWidget()
         list_vbox = QVBoxLayout(list_container)
         
-        list_label = QLabel(lang_manager.get("inventory_stats") or "Inventory Statistics")
+        list_label = QLabel("Stock Statistics")
         list_label.setStyleSheet("font-weight: bold; font-size: 18px;")
         list_vbox.addWidget(list_label)
         
@@ -296,7 +297,7 @@ class PharmacyDashboardView(QWidget):
 
         # Remember selection before clear
         selected_items = self.product_list.selectedItems()
-        self.last_selected_name = selected_items[0].text() if selected_items else None
+        self.last_selected_name = selected_items[0].text().split('\t')[0] if selected_items else None
 
         def on_finished(results):
             self._is_loading = False
@@ -331,7 +332,8 @@ class PharmacyDashboardView(QWidget):
             
             percentage = (sold_qty / total * 100) if total > 0 else 0
             
-            item = QListWidgetItem(p['name_en'])
+            # Format: Name \t XX.X%
+            item = QListWidgetItem(f"{p['name_en']}\t{percentage:.1f}%")
             item.setData(Qt.ItemDataRole.UserRole, percentage)
             self.product_list.addItem(item)
             

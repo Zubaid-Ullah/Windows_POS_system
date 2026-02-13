@@ -303,12 +303,36 @@ class DatabaseManager:
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS pharmacy_products (
                         id INTEGER PRIMARY KEY AUTOINCREMENT, barcode TEXT UNIQUE NOT NULL, name_en TEXT NOT NULL,
-                        generic_name TEXT, brand TEXT, size TEXT, cost_price REAL DEFAULT 0, sale_price REAL DEFAULT 0,
+                        generic_name TEXT, brand TEXT, size TEXT, 
+                        pack_size REAL DEFAULT 1, 
+                        whole_price REAL DEFAULT 0, 
+                        unit_price REAL DEFAULT 0,
+                        allow_unit_sell INTEGER DEFAULT 0,
+                        allow_breaking_pack INTEGER DEFAULT 0,
+                        
+                        cost_price REAL DEFAULT 0, sale_price REAL DEFAULT 0,
                         min_stock REAL DEFAULT 10, shelf_location TEXT, supplier_id INTEGER, description TEXT,
                         uom TEXT DEFAULT 'Box', is_active INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
+
+                # Migration: Add new columns if missing
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_products ADD COLUMN pack_size REAL DEFAULT 1")
+                except: pass
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_products ADD COLUMN whole_price REAL DEFAULT 0")
+                except: pass
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_products ADD COLUMN unit_price REAL DEFAULT 0")
+                except: pass
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_products ADD COLUMN allow_unit_sell INTEGER DEFAULT 0")
+                except: pass
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_products ADD COLUMN allow_breaking_pack INTEGER DEFAULT 0")
+                except: pass
 
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS pharmacy_inventory (
@@ -331,10 +355,20 @@ class DatabaseManager:
                     CREATE TABLE IF NOT EXISTS pharmacy_sale_items (
                         id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, product_name TEXT,
                         batch_number TEXT, expiry_date DATE, quantity REAL NOT NULL, unit_price REAL NOT NULL,
-                        total_price REAL NOT NULL, cost_price_at_sale REAL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        total_price REAL NOT NULL, cost_price_at_sale REAL DEFAULT 0, 
+                        unit_type TEXT DEFAULT 'Pack', conversion_factor REAL DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (sale_id) REFERENCES pharmacy_sales(id), FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
                     )
                 ''')
+                
+                # Migration: Add unit_type and conversion_factor columns if missing
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_sale_items ADD COLUMN unit_type TEXT DEFAULT 'Pack'")
+                except: pass
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_sale_items ADD COLUMN conversion_factor REAL DEFAULT 1")
+                except: pass
 
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS pharmacy_customers (

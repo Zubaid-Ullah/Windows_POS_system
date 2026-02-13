@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QPushButton, QLabel, QHeaderView, QGroupBox,
                              QFormLayout, QLineEdit, QComboBox, QMessageBox, QTableWidgetItem,
-                             QCheckBox, QFileDialog, QDialog, QFrame, QGridLayout, QDoubleSpinBox)
+                             QCheckBox, QFileDialog, QDialog, QFrame, QGridLayout, QDoubleSpinBox, QScrollArea)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QFont
 from src.ui.button_styles import style_button
@@ -21,7 +21,16 @@ class PharmacyCustomerView(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
@@ -138,6 +147,7 @@ class PharmacyCustomerView(QWidget):
         # Fix width for Actions to make it bigger
         # Fix width for Actions to make it bigger
         self.table.setColumnWidth(4, 400) 
+        self.table.setMinimumHeight(400) # Ensure table has height within scroll
         layout.addWidget(self.table)
         
         # Pagination Controls
@@ -162,6 +172,9 @@ class PharmacyCustomerView(QWidget):
         
         layout.addLayout(pag_layout)
         
+        scroll.setWidget(content_widget)
+        main_layout.addWidget(scroll)
+
         self.load_customers()
 
     def select_kyc_photo(self, k_type):

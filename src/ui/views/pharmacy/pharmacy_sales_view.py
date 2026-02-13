@@ -75,18 +75,19 @@ class PharmacySalesView(QWidget):
         layout.addLayout(control_layout)
         
         # Cart Table
-        # Columns: Barcode, Name, Size, Expiry, Price, Qty, Total, Remaining, Actions
+        # Columns: Barcode, Name, Type, Price, Qty, Total, Remaining, Actions
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
             lang_manager.get("barcode"), lang_manager.get("name"), 
-            lang_manager.get("size"), lang_manager.get("expiry_date"), 
+            "Type", # New Column
             lang_manager.get("price"), lang_manager.get("quantity"), 
             lang_manager.get("total"), lang_manager.get("remaining"), 
-            lang_manager.get("actions")
+            lang_manager.get("actions"), "" # Extra
         ])
         style_table(self.table, variant="premium")
-        # Name stretches, others fit content (New style_table default)
+        # Name stretches
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnHidden(8, True) # Hide extra if needed
         layout.addWidget(self.table)
         
         # Footer
@@ -146,7 +147,11 @@ class PharmacySalesView(QWidget):
 
     # eventFilter removed to fix customer selection issue on Windows 10
 
-    def check_stock_async(self, product_id, batch, quantity, on_finished):
+    def check_stock_async(self, product_id, batch, quantity_units, on_finished):
+        """
+        Check stock availability. 
+        quantity_units: Total QUANTITY IN BASE UNITS (Tablets)
+        """
         from src.core.blocking_task_manager import task_manager
         
         def do_check():
@@ -162,12 +167,14 @@ class PharmacySalesView(QWidget):
                     
                     stock, expiry = row['quantity'], row['expiry_date']
                     if expiry:
-                        exp_date = datetime.strptime(expiry, "%Y-%m-%d")
-                        if exp_date < datetime.now():
-                            return False, f"Batch Expired on {expiry}"
+                        try:
+                            exp_date = datetime.strptime(expiry, "%Y-%m-%d")
+                            if exp_date < datetime.now():
+                                return False, f"Batch Expired on {expiry}"
+                        except: pass
                     
-                    if stock < quantity:
-                        return False, f"Insufficient Stock. Available: {stock}"
+                    if stock < quantity_units:
+                        return False, f"Insufficient Stock. Available: {stock} Units"
                     
                     return True, "OK"
             except Exception as e:
@@ -186,7 +193,7 @@ class PharmacySalesView(QWidget):
             try:
                 with db_manager.get_pharmacy_connection() as conn:
                     cursor = conn.cursor()
-                    # Fetch product with earliest expiring batch (FIFO)
+                    # Fetch return product with earliest expiring batch (FIFO)
                     cursor.execute("""
                         SELECT p.*, i.quantity as stock, i.batch_number, i.expiry_date 
                         FROM pharmacy_products p 
@@ -214,98 +221,169 @@ class PharmacySalesView(QWidget):
 
 
     def add_to_cart(self, p):
-        # 1. Existing Item Logic
-        for item in self.cart:
-            if item['id'] == p['id'] and item.get('batch') == p.get('batch_number'):
-                new_qty = item['qty'] + 1
-                def on_checked(res):
-                    valid, msg = res
-                    if not valid:
-                        QMessageBox.warning(self, "Stock Issue", msg)
-                        return
-                    item['qty'] = new_qty
-                    self.refresh_table()
-                
-                self.check_stock_async(item['id'], item['batch'], new_qty, on_checked)
-                return
-
-        # 2. New Item Logic
+        # Determine default unit type logic
+        # If allow_unit_sell is false, force Pack
+        # If allow_unit_sell is true, default to Pack (as per requirement)
+        
+        pack_size = p.get('pack_size') or 1
+        qty_to_add = 1 # 1 pack or 1 unit
+        conversion = pack_size # Default Pack
+        
+        # Logic to check strict duplicates in cart (same ID + same Unit Type + same Batch)
+        # We will default to Pack initially
+        
+        # Check stock for 1 Pack (approx check)
+        # We need to know if we are adding a Pack or Unit. Default Pack.
+        req_units = 1.0 * pack_size
+        
         def on_new_checked(res):
             valid, msg = res
             if not valid:
+                 # Try adding 1 Unit logic if Pack fails? No, user can switch later.
                  QMessageBox.warning(self, "Stock Issue", msg)
                  return
 
+            # Add to cart
+            # Resolve prices
+            # Use new columns if available, fallback to old
+            whole_price = p.get('whole_price', 0)
+            if whole_price == 0: whole_price = p.get('sale_price', 0)
+            
+            unit_price = p.get('unit_price', 0)
+            if unit_price == 0 and pack_size > 0:
+                unit_price = whole_price / pack_size
+            
             self.cart.append({
                 'id': p['id'],
                 'barcode': p['barcode'],
                 'name': p['name_en'],
                 'size': p.get('size', 'N/A'),
                 'expiry': p.get('expiry_date', 'N/A'),
-                'price': p['sale_price'],
+                
+                'pack_size': pack_size,
+                'whole_price': whole_price,
+                'unit_price': unit_price,
+                'allow_unit_sell': bool(p.get('allow_unit_sell', 0)),
+                
+                'current_type': 'Pack', # Default
+                'current_price': whole_price,
+                
                 'batch': p.get('batch_number'),
                 'cost': p.get('cost_price', 0),
-                'qty': 1,
-                'stock': p.get('stock', 0)  
+                'qty': 1, # 1 Pack
+                'stock': p.get('stock', 0) # Total Base Units
             })
             self.refresh_table()
 
-        self.check_stock_async(p['id'], p.get('batch_number'), 1, on_new_checked)
+        self.check_stock_async(p['id'], p.get('batch_number'), req_units, on_new_checked)
 
     def refresh_table(self):
         self.table.setRowCount(0)
         grant_total = 0
+        
+        self.table.blockSignals(True) # Prevent loops
+        
         for i, item in enumerate(self.cart):
             self.table.insertRow(i)
-            total = item['price'] * item['qty']
+            total = item['current_price'] * item['qty']
             grant_total += total
             
             self.table.setItem(i, 0, QTableWidgetItem(item['barcode']))
             self.table.setItem(i, 1, QTableWidgetItem(item['name']))
-            self.table.setItem(i, 2, QTableWidgetItem(item['size']))
-            self.table.setItem(i, 3, QTableWidgetItem(item.get('expiry', '')))
-            self.table.setItem(i, 4, QTableWidgetItem(f"{item['price']:.2f}"))
+            
+            # Unit Type Combo
+            type_combo = QComboBox()
+            type_combo.addItem("Pack")
+            if item['allow_unit_sell']:
+                type_combo.addItem("Unit") # or Tablet/Ampoule etc
+            
+            type_combo.setCurrentText(item['current_type'])
+            type_combo.currentIndexChanged.connect(lambda idx, r=i: self.on_type_changed(r))
+            self.table.setCellWidget(i, 2, type_combo)
+            
+            # Price (Read Only)
+            self.table.setItem(i, 3, QTableWidgetItem(f"{item['current_price']:.2f}"))
             
             # Editable Quantity with SpinBox
             qty_spinbox = QSpinBox()
             qty_spinbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_spinbox.setMinimum(1)
-            qty_spinbox.setMaximum(int(item.get('stock', 999)))  
-            qty_spinbox.setValue(item['qty'])
+            # Max logic: floor(total_stock / conversion)
+            # But converting max stock dynamically is tricky if stock is small
+            # We will validate in update_qty instead of harsh limit here
+            qty_spinbox.setMaximum(10000)  
+            qty_spinbox.setValue(int(item['qty']))
             qty_spinbox.setStyleSheet("background-color: #f1f5f9; color: #475569; font-size: 18px; padding: 2px 6px; border: 1px solid #e2e8f0; border-radius: 4px;")
             qty_spinbox.editingFinished.connect(lambda s=qty_spinbox, idx=i: self.update_qty(idx, s.value()))
-            self.table.setCellWidget(i, 5, qty_spinbox)
+            self.table.setCellWidget(i, 4, qty_spinbox)
             
             total_item = QTableWidgetItem(f"{total:.2f}")
             total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(i, 6, total_item)
+            self.table.setItem(i, 5, total_item)
             
-            # Remaining stock display
-            remaining = item.get('stock', 0) - item['qty']
-            remaining_item = QTableWidgetItem(str(remaining))
+            # Remaining stock display (Show in packs + units?)
+            # Or just remaining units for simplicity, or "Low"
+            # Logic: stock - (qty * conversion)
+            conv = item['pack_size'] if item['current_type'] == 'Pack' else 1
+            consumed_units = item['qty'] * conv
+            remaining_units = item.get('stock', 0) - consumed_units
+            
+            rem_str = f"{remaining_units:.0f} Units"
+            if item['pack_size'] > 1:
+                p_rem = int(remaining_units // item['pack_size'])
+                u_rem = int(remaining_units % item['pack_size'])
+                rem_str = f"{p_rem} P + {u_rem} U"
+                
+            remaining_item = QTableWidgetItem(rem_str)
             remaining_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if remaining > 10:
-                remaining_item.setForeground(Qt.GlobalColor.darkGreen)
-            elif remaining > 5:
-                remaining_item.setForeground(QColor(255, 140, 0))  
-            else:
+            
+            # Color logic
+            if remaining_units < (item['pack_size'] * 2): # Less than 2 packs
                 remaining_item.setForeground(Qt.GlobalColor.red)
-            self.table.setItem(i, 7, remaining_item)
+            else:
+                remaining_item.setForeground(Qt.GlobalColor.darkGreen)
+                
+            self.table.setItem(i, 6, remaining_item)
             
             remove_btn = QPushButton()
             remove_btn.setIcon(qta.icon("fa5s.times", color="white"))
             style_button(remove_btn, variant="danger", size="icon")
             remove_btn.clicked.connect(lambda checked, idx=i: self.remove_item(idx))
-            self.table.setCellWidget(i, 8, remove_btn)
+            self.table.setCellWidget(i, 7, remove_btn)
             
+        self.table.blockSignals(False)
         self.total_lbl.setText(f"{lang_manager.get('total')}: {grant_total:.2f} AFN")
         self.table.resizeColumnsToContents()
         self.table.resizeRowsToContents()
     
+    def on_type_changed(self, row):
+        if row < len(self.cart):
+            item = self.cart[row]
+            widget = self.table.cellWidget(row, 2) # Combo
+            new_type = widget.currentText()
+            
+            if new_type == item['current_type']: return
+            
+            # Switch Logic
+            item['current_type'] = new_type
+            if new_type == 'Pack':
+                item['current_price'] = item['whole_price']
+            else:
+                item['current_price'] = item['unit_price']
+            
+            # Validate Stock with new type
+            self.update_qty(row, item['qty']) # Re-validate
+            self.refresh_table()
+
     def update_qty(self, idx, new_qty):
         """Update quantity when spinbox changes"""
         if idx < len(self.cart):
             item = self.cart[idx]
+            
+            # Calculate needed units
+            conv = item['pack_size'] if item['current_type'] == 'Pack' else 1
+            req_units = new_qty * conv
+            
             def on_checked(res):
                 valid, msg = res
                 if not valid:
@@ -315,7 +393,7 @@ class PharmacySalesView(QWidget):
                 item['qty'] = new_qty
                 self.refresh_table()
             
-            self.check_stock_async(item['id'], item['batch'], new_qty, on_checked)
+            self.check_stock_async(item['id'], item['batch'], req_units, on_checked)
 
 
     def remove_item(self, idx):
@@ -329,7 +407,7 @@ class PharmacySalesView(QWidget):
         user = PharmacyAuth.get_current_user()
         user_id = user['id'] if user else 1
         
-        total_amount = sum(item['price'] * item['qty'] for item in self.cart)
+        total_amount = sum(item['current_price'] * item['qty'] for item in self.cart)
         invoice = f"PHARM-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
         customer_id = self.customer_combo.currentData()
@@ -367,18 +445,23 @@ class PharmacySalesView(QWidget):
                     
                     # 3. Process Items and Inventory
                     for item in self.cart:
+                        unit_type = item['current_type']
+                        conv_factor = item['pack_size'] if unit_type == 'Pack' else 1
+                        total_units_sold = item['qty'] * conv_factor
+                        
                         cursor.execute("""
                             INSERT INTO pharmacy_sale_items 
-                            (sale_id, product_id, product_name, batch_number, expiry_date, quantity, unit_price, total_price, cost_price_at_sale)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (sale_id, product_id, product_name, batch_number, expiry_date, quantity, unit_price, total_price, cost_price_at_sale, unit_type, conversion_factor)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (sale_id, item['id'], item['name'], item.get('batch'), item.get('expiry'), 
-                              item['qty'], item['price'], item['price']*item['qty'], item.get('cost', 0)))
+                              item['qty'], item['current_price'], item['current_price']*item['qty'], item.get('cost', 0),
+                              unit_type, conv_factor))
                         
                         cursor.execute("""
                             UPDATE pharmacy_inventory 
                             SET quantity = quantity - ? 
                             WHERE product_id = ? AND batch_number = ?
-                        """, (item['qty'], item['id'], item.get('batch')))
+                        """, (total_units_sold, item['id'], item.get('batch')))
                     
                     # 4. Handle Credit/Loan
                     if payment_method == "CREDIT":

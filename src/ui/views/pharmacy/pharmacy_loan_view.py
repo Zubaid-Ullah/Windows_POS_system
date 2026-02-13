@@ -116,106 +116,149 @@ class PharmacyLoanView(QWidget):
 
 
     def show_visual_details(self, customer_id, name=None):
-        try:
-            with db_manager.get_pharmacy_connection() as conn:
-                row = conn.execute("SELECT * FROM pharmacy_customers WHERE id=?", (customer_id,)).fetchone()
-                if not row:
-                    QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("customer_not_found"))
-                    return
-                
-                display_name = name or row['name'] or "Unknown"
-                dialog = QDialog(self)
-                dialog.setWindowTitle(lang_manager.get("customer_info") + f" - {display_name}")
-                dialog.setMinimumWidth(700)
-                l = QVBoxLayout(dialog)
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_fetch():
+            try:
+                with db_manager.get_pharmacy_connection() as conn:
+                    row = conn.execute("SELECT * FROM pharmacy_customers WHERE id=?", (customer_id,)).fetchone()
+                    if row:
+                        return {"success": True, "row": dict(row)}
+                    else:
+                        return {"success": False, "error": lang_manager.get("customer_not_found")}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
 
-                # Data Section
-                data_gb = QGroupBox(lang_manager.get("basic_info"))
-                data_layout = QFormLayout(data_gb)
-                data_layout.addRow(f"<b>{lang_manager.get('name')}:</b>", QLabel(row['name']))
-                data_layout.addRow(f"<b>{lang_manager.get('phone')}:</b>", QLabel(row['phone']))
-                data_layout.addRow(f"<b>{lang_manager.get('address')}:</b>", QLabel(row['address'] or "N/A"))
-                
-                balance_lbl = QLabel(f"<b>{row['balance']:,.2f} AFN</b>")
-                balance_lbl.setStyleSheet("color: #ef4444; font-size: 16px;" if row['balance'] > 0 else "color: #10b981;")
-                data_layout.addRow(f"<b>{lang_manager.get('balance')}:</b>", balance_lbl)
-                
-                loan_status = lang_manager.get("active") if row['loan_enabled'] else "Disabled"
-                data_layout.addRow(f"<b>{lang_manager.get('loans')}:</b>", QLabel(loan_status))
-                data_layout.addRow(f"<b>{lang_manager.get('reorder_level').split()[1] if ' ' in lang_manager.get('reorder_level') else 'Limit'}:</b>", QLabel(f"{row['loan_limit']:,.2f} AFN"))
-                l.addWidget(data_gb)
+        def on_finished(result):
+            if not result["success"]:
+                QMessageBox.warning(self, lang_manager.get("error"), result["error"])
+                return
+            
+            row = result["row"]
+            display_name = name or row['name'] or "Unknown"
+            dialog = QDialog(self)
+            dialog.setWindowTitle(lang_manager.get("customer_info") + f" - {display_name}")
+            dialog.setMinimumWidth(700)
+            l = QVBoxLayout(dialog)
 
-                img_layout = QHBoxLayout()
-                
-                # Photo
-                photo_v = QVBoxLayout()
-                photo_img = QLabel()
-                photo_img.setFixedSize(300, 300)
-                photo_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                photo_img.setStyleSheet("border: 2px solid #3b82f633; border-radius: 8px; background: #f8fafc;")
-                if row['kyc_photo']:
-                    pix = QPixmap(row['kyc_photo'])
-                    if not pix.isNull(): photo_img.setPixmap(pix.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-                    else: photo_img.setText("Photo File Missing")
-                else: photo_img.setText("No Photo")
-                photo_v.addWidget(QLabel(f"<b>{lang_manager.get('customer_photo')}:</b>"))
-                photo_v.addWidget(photo_img)
-                img_layout.addLayout(photo_v)
-                
-                # ID
-                id_v = QVBoxLayout()
-                id_img = QLabel()
-                id_img.setFixedSize(300, 300)
-                id_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                id_img.setStyleSheet("border: 2px solid #3b82f633; border-radius: 8px; background: #f8fafc;")
-                if row['kyc_id_card']:
-                    pix_id = QPixmap(row['kyc_id_card'])
-                    if not pix_id.isNull(): id_img.setPixmap(pix_id.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-                    else: id_img.setText("ID File Missing")
-                else: id_img.setText("No ID")
-                id_v.addWidget(QLabel(f"<b>{lang_manager.get('id_card_photo')}:</b>"))
-                id_v.addWidget(id_img)
-                img_layout.addLayout(id_v)
-                
-                l.addLayout(img_layout)
-                close_btn = QPushButton(lang_manager.get("close"))
-                style_button(close_btn, variant="outline")
-                close_btn.clicked.connect(dialog.accept)
-                l.addWidget(close_btn)
-                dialog.exec()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            # Data Section
+            data_gb = QGroupBox(lang_manager.get("basic_info"))
+            data_layout = QFormLayout(data_gb)
+            data_layout.addRow(f"<b>{lang_manager.get('name')}:</b>", QLabel(row['name']))
+            data_layout.addRow(f"<b>{lang_manager.get('phone')}:</b>", QLabel(row['phone']))
+            data_layout.addRow(f"<b>{lang_manager.get('address')}:</b>", QLabel(row['address'] or "N/A"))
+            
+            balance_lbl = QLabel(f"<b>{row['balance']:,.2f} AFN</b>")
+            balance_lbl.setStyleSheet("color: #ef4444; font-size: 16px;" if row['balance'] > 0 else "color: #10b981;")
+            data_layout.addRow(f"<b>{lang_manager.get('balance')}:</b>", balance_lbl)
+            
+            loan_status = lang_manager.get("active") if row['loan_enabled'] else "Disabled"
+            data_layout.addRow(f"<b>{lang_manager.get('loans')}:</b>", QLabel(loan_status))
+            
+            term_limit = lang_manager.get('reorder_level').split()[1] if ' ' in lang_manager.get('reorder_level') else 'Limit'
+            data_layout.addRow(f"<b>{term_limit}:</b>", QLabel(f"{row['loan_limit']:,.2f} AFN"))
+            l.addWidget(data_gb)
+
+            img_layout = QHBoxLayout()
+            
+            # Photo
+            photo_v = QVBoxLayout()
+            photo_img = QLabel()
+            photo_img.setFixedSize(300, 300)
+            photo_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            photo_img.setStyleSheet("border: 2px solid #3b82f633; border-radius: 8px; background: #f8fafc;")
+            if row['kyc_photo']:
+                pix = QPixmap(row['kyc_photo'])
+                if not pix.isNull(): photo_img.setPixmap(pix.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                else: photo_img.setText("Photo File Missing")
+            else: photo_img.setText("No Photo")
+            photo_v.addWidget(QLabel(f"<b>{lang_manager.get('customer_photo')}:</b>"))
+            photo_v.addWidget(photo_img)
+            img_layout.addLayout(photo_v)
+            
+            # ID
+            id_v = QVBoxLayout()
+            id_img = QLabel()
+            id_img.setFixedSize(300, 300)
+            id_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            id_img.setStyleSheet("border: 2px solid #3b82f633; border-radius: 8px; background: #f8fafc;")
+            if row['kyc_id_card']:
+                pix_id = QPixmap(row['kyc_id_card'])
+                if not pix_id.isNull(): id_img.setPixmap(pix_id.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                else: id_img.setText("ID File Missing")
+            else: id_img.setText("No ID")
+            id_v.addWidget(QLabel(f"<b>{lang_manager.get('id_card_photo')}:</b>"))
+            id_v.addWidget(id_img)
+            img_layout.addLayout(id_v)
+            
+            l.addLayout(img_layout)
+            close_btn = QPushButton(lang_manager.get("close"))
+            style_button(close_btn, variant="outline")
+            close_btn.clicked.connect(dialog.accept)
+            l.addWidget(close_btn)
+            dialog.exec()
+
+        task_manager.run_task(do_fetch, on_finished=on_finished)
 
     def receive_payment(self, loan_row):
         # Use simple input dialog for payment amount
         
-        amount, ok = QInputDialog.getDouble(self, "Receive Payment", 
-                                            f"Enter amount received from {loan_row['customer_name']}:", 
-                                            loan_row['balance'] if loan_row['balance'] > 0 else 0, 0, 1000000, 2)
+        # UI Input on Main Thread
+        current_balance = loan_row['balance']
+        # Default to full payment if positive balance, else 0
+        default_val = current_balance if current_balance > 0 else 0
+        
+        amount, ok = QInputDialog.getDouble(self, lang_manager.get("receive_payment"), 
+                                            f"{lang_manager.get('amount')}:", 
+                                            default_val, 0, 1000000, 2)
         if ok and amount > 0:
-            try:
-                with db_manager.get_pharmacy_connection() as conn:
-                    # Update loan balance
-                    new_balance = loan_row['balance'] - amount
-                    status = 'PAID' if new_balance <= 0 else 'PARTIAL'
-                    if new_balance <= 0: status = 'COMPLETED'
-                    
-                    conn.execute("UPDATE pharmacy_loans SET balance=?, status=? WHERE id=?", 
-                                 (new_balance, status, loan_row['id']))
-                    
-                    # Update customer balance
-                    conn.execute("UPDATE pharmacy_customers SET balance = balance - ? WHERE id=?", 
-                                 (amount, loan_row['customer_id']))
-                    
-                    # Record payment in a history table if exists, or just log
-                    conn.execute("""
-                        INSERT INTO pharmacy_payments (loan_id, customer_id, amount, payment_method)
-                        VALUES (?, ?, ?, ?)
-                    """, (loan_row['id'], loan_row['customer_id'], amount, 'CASH'))
-                    
-                    conn.commit()
-                
-                QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('payment_received')}: {amount:,.2f} AFN")
-                self.load_loans()
-            except Exception as e:
-                QMessageBox.critical(self, lang_manager.get("error"), str(e))
+            from src.core.blocking_task_manager import task_manager
+            
+            # Capture data for thread
+            loan_id = loan_row['id']
+            customer_id = loan_row['customer_id']
+            # We need the fresh balance in case it changed, but usually row is fresh enough. 
+            # Ideally do read-modify-write in transaction or simple update decrement.
+            
+            def do_pay():
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        cursor = conn.cursor()
+                        
+                        # 1. Fetch latest balance to be safe
+                        curr_loan = cursor.execute("SELECT balance FROM pharmacy_loans WHERE id=?", (loan_id,)).fetchone()
+                        if not curr_loan:
+                            return {"success": False, "error": "Loan record not found"}
+                            
+                        # 2. Update loan
+                        latest_bal = curr_loan['balance']
+                        new_balance = latest_bal - amount
+                        status = 'PAID' if new_balance <= 0 else 'PARTIAL'
+                        if new_balance <= 0: status = 'COMPLETED'
+                        
+                        cursor.execute("UPDATE pharmacy_loans SET balance=?, status=? WHERE id=?", 
+                                     (new_balance, status, loan_id))
+                        
+                        # 3. Update customer balance
+                        cursor.execute("UPDATE pharmacy_customers SET balance = balance - ? WHERE id=?", 
+                                     (amount, customer_id))
+                        
+                        # 4. Record payment
+                        cursor.execute("""
+                            INSERT INTO pharmacy_payments (loan_id, customer_id, amount, payment_method)
+                            VALUES (?, ?, ?, ?)
+                        """, (loan_id, customer_id, amount, 'CASH'))
+                        
+                        conn.commit()
+                        return {"success": True, "amount": amount}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+
+            def on_finished(result):
+                if result["success"]:
+                    QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('payment_received')}: {result['amount']:,.2f} AFN")
+                    self.load_loans()
+                else:
+                    QMessageBox.critical(self, lang_manager.get("error"), result["error"])
+
+            task_manager.run_task(do_pay, on_finished=on_finished)

@@ -236,7 +236,7 @@ class PharmacyReportsView(QWidget):
         expiry_header.addWidget(QLabel(lang_manager.get("showing_items_expiring_within")))
         self.expiry_days_spin = QSpinBox()
         self.expiry_days_spin.setRange(1, 1000) # Increased range for flexibility, user said 1-30 but 30 might be too low for some
-        self.expiry_days_spin.setValue(30)
+        self.expiry_days_spin.setValue(200)
         self.expiry_days_spin.setSuffix(" " + lang_manager.get("days"))
         self.expiry_days_spin.setMinimumWidth(100)
         self.expiry_days_spin.valueChanged.connect(self.load_data)
@@ -621,6 +621,34 @@ class PharmacyReportsView(QWidget):
                 elif days_left <= 7:
                     status_text = lang_manager.get("alert")
 
+                
+                # Medicine Name in a styled QFrame (Widget)
+                med_widget = QWidget()
+                med_layout = QVBoxLayout(med_widget)
+                med_layout.setContentsMargins(4, 2, 4, 2)
+                med_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                med_frame = QFrame()
+                med_frame.setObjectName("expiry_med_frame")
+                med_frame.setStyleSheet("""
+                    QFrame#expiry_med_frame {
+                        border: 1px solid #ef4444; 
+                        border-radius: 6px; 
+                        background-color: #fef2f2;
+                    }
+                """)
+                frame_layout = QVBoxLayout(med_frame)
+                frame_layout.setContentsMargins(8, 4, 8, 4)
+                frame_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                med_label = QLabel(medicine_name)
+                med_label.setStyleSheet("color: #b91c1c; font-weight: bold; font-size: 14px; border: none; background: transparent;")
+                med_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                frame_layout.addWidget(med_label)
+                med_layout.addWidget(med_frame)
+
+                # Create Items for other columns & hidden sorting item for med name
                 medicine_item = QTableWidgetItem(medicine_name)
                 batch_item = QTableWidgetItem(batch_no)
                 expiry_item = QTableWidgetItem(expiry_date_str)
@@ -628,15 +656,19 @@ class PharmacyReportsView(QWidget):
                 days_item = QTableWidgetItem(days_item_text)
                 status_item_obj = QTableWidgetItem(status_text)
                 
-                # Align center for all items
+                # Align center for all items and make text RED (for non-widget items)
+                font = QFont("Arial", 14)
+                red_brush = QBrush(QColor("#d32f2f")) # Strong Red
+
+                # Apply style to all items (medicine_item will be hidden by widget but good for consistency)
                 for item in (medicine_item, batch_item, expiry_item, days_item, status_item_obj):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                
-                # Apply color only to Days Left and Status cells
-                self.style_expiry_item(days_item, days_left)
-                self.style_expiry_item(status_item_obj, days_left)
+                    item.setForeground(red_brush)
+                    item.setFont(font)
 
                 self.expiry_table.setItem(row_idx, 0, medicine_item)
+                self.expiry_table.setCellWidget(row_idx, 0, med_widget) # Display widget over item
+                
                 self.expiry_table.setItem(row_idx, 1, batch_item)
                 self.expiry_table.setItem(row_idx, 2, expiry_item)
                 self.expiry_table.setItem(row_idx, 3, days_item)
@@ -877,88 +909,110 @@ class PharmacyReportsView(QWidget):
         document.print(printer)
 
     def print_full_report(self):
-        """Print a comprehensive full pharmacy report"""
-        printer = QPrinter()
-        printer.setPageOrientation(QPageLayout.Orientation.Portrait)
-        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-
-        preview = QPrintPreviewDialog(printer, self)
-        preview.setWindowTitle("Print Preview - Complete Pharmacy Reports Summary")
-        preview.setMinimumSize(1000, 700)
-
-        preview.paintRequested.connect(self.render_full_report)
-        preview.exec()
-
-    def render_full_report(self, printer):
-        """Render complete pharmacy report with all sections"""
-        document = QTextDocument()
-        cursor = QTextCursor(document)
-
-        # Main title
-        title_format = QTextCharFormat()
-        title_format.setFontPointSize(18)
-        title_format.setFontWeight(QFont.Weight.Bold)
-        cursor.insertText(f"{lang_manager.get('complete_pharmacy_reports_summary')}\n", title_format)
-        cursor.insertText("\n")
-
-        # Date info
-        info_format = QTextCharFormat()
-        info_format.setFontPointSize(10)
-        period_text = self.filter_combo.currentText()
-        date_from = self.date_from.date().toString("yyyy-MM-dd")
-        date_to = self.date_to.date().toString("yyyy-MM-dd")
-        cursor.insertText(f"{lang_manager.get('report_period')}: {period_text}\n", info_format)
-        cursor.insertText(f"{lang_manager.get('date')}: {date_from} {lang_manager.get('to')} {date_to}\n", info_format)
-        cursor.insertText(f"{lang_manager.get('generated_at')}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", info_format)
-        cursor.insertText("\n")
-
-        # Add each section
-        sections = [
-            (lang_manager.get("transaction_details"), self.trans_table),
-            (lang_manager.get("credit_loan_info"), self.loan_table),
-            (lang_manager.get("low_stock_medicines"), self.low_stock_table),
-            (lang_manager.get("medicine_expiry_status"), self.expiry_table)
-        ]
-
-        for section_title, table in sections:
-            if table.rowCount() > 0:
-                # Section header
-                section_format = QTextCharFormat()
-                section_format.setFontPointSize(14)
-                section_format.setFontWeight(QFont.Weight.Bold)
-                cursor.insertText(f"{section_title}\n", section_format)
-
-                # Create table for this section
-                rows = table.rowCount()
-                cols = table.columnCount()
-
-                table_format = QTextTableFormat()
-                table_format.setBorderStyle(QTextTableFormat.BorderStyle.BorderStyle_Solid)
-                table_format.setCellPadding(3)
-                table_format.setCellSpacing(0)
-                table_format.setWidth(QTextLength(QTextLength.Type.PercentageLength, 100))
-
-                text_table = cursor.insertTable(rows + 1, cols, table_format)
-
-                # Headers
-                header_format = QTextCharFormat()
-                header_format.setFontWeight(QFont.Weight.Bold)
-                header_format.setBackground(QColor("#f0f0f0"))
-
-                for col in range(cols):
-                    header_item = table.horizontalHeaderItem(col)
-                    if header_item:
-                        cell_cursor = text_table.cellAt(0, col).firstCursorPosition()
-                        cell_cursor.insertText(header_item.text(), header_format)
-
-                # Data
-                for row in range(rows):
-                    for col in range(cols):
-                        item = table.item(row, col)
-                        if item:
-                            cell_cursor = text_table.cellAt(row + 1, col).firstCursorPosition()
-                            cell_cursor.insertText(item.text())
-
-                cursor.insertText("\n\n")
-
-        document.print(printer)
+        """Export complete report to Excel"""
+        from PyQt6.QtWidgets import QFileDialog
+        import xlsxwriter
+        import os
+        
+        filename, _ = QFileDialog.getSaveFileName(
+            self, 
+            lang_manager.get("save_report") or "Save Report", 
+            f"Pharmacy_Report_{datetime.now().strftime('%Y-%m-%d')}.xlsx", 
+            "Excel Files (*.xlsx)"
+        )
+        
+        if not filename:
+            return
+            
+        try:
+            workbook = xlsxwriter.Workbook(filename)
+            # Formats
+            header_format = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+            cell_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
+            currency_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': '#,##0.00 "AFN"'})
+            date_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': 'yyyy-mm-dd'})
+            red_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_color': 'red'})
+            
+            # Helper to write table to sheet
+            def write_table_to_sheet(sheet_name, table, columns):
+                # Clean sheet name (max 31 chars, no invalid chars)
+                safe_name = sheet_name.replace(":", "").replace("/", "-")[:30]
+                worksheet = workbook.add_worksheet(safe_name)
+                
+                # Write Header
+                for col_num, header in enumerate(columns):
+                    worksheet.write(0, col_num, header, header_format)
+                    
+                # Write Data
+                for row_num in range(table.rowCount()):
+                    for col_num in range(table.columnCount()):
+                        item = table.item(row_num, col_num)
+                        text = item.text() if item else ""
+                        
+                        # Check specific column types for formatting
+                        # This is a heuristic based on content
+                        
+                        # Default format
+                        fmt = cell_format
+                        
+                        # Apply Red text if item has red foreground (e.g. Expiry or Low Stock)
+                        if item and item.foreground().color().name() == "#ff0000" or \
+                           (item and item.foreground().color().name() == "#d32f2f"): # Check for our specific red
+                            fmt = red_format
+                        
+                        # Try to write numbers/dates
+                        try:
+                            if "AFN" in text: # Currency
+                                val = float(text.replace("AFN", "").replace(",", "").strip())
+                                worksheet.write(row_num + 1, col_num, val, currency_format)
+                            elif text.replace(".", "", 1).isdigit(): # Number
+                                # Check if integer or float
+                                if "." in text:
+                                    worksheet.write(row_num + 1, col_num, float(text), fmt)
+                                else:
+                                    worksheet.write(row_num + 1, col_num, int(text), fmt)
+                            else:
+                                worksheet.write(row_num + 1, col_num, text, fmt)
+                        except:
+                            worksheet.write(row_num + 1, col_num, text, fmt)
+                            
+                # Auto-fit columns (approximate)
+                worksheet.set_column(0, len(columns) - 1, 20)
+            
+            # 1. Transactions
+            trans_cols = [self.trans_table.horizontalHeaderItem(i).text() for i in range(self.trans_table.columnCount())]
+            write_table_to_sheet("Transactions", self.trans_table, trans_cols)
+            
+            # 2. Returns
+            if hasattr(self, 'ret_table'):
+                ret_cols = [self.ret_table.horizontalHeaderItem(i).text() for i in range(self.ret_table.columnCount())]
+                write_table_to_sheet("Returns", self.ret_table, ret_cols)
+            
+            # 3. Loans
+            loan_cols = [self.loan_table.horizontalHeaderItem(i).text() for i in range(self.loan_table.columnCount())]
+            write_table_to_sheet("Loans", self.loan_table, loan_cols)
+            
+            # 4. Low Stock
+            stock_cols = [self.low_stock_table.horizontalHeaderItem(i).text() for i in range(self.low_stock_table.columnCount())]
+            write_table_to_sheet("Low Stock", self.low_stock_table, stock_cols)
+            
+            # 5. Expiry
+            expiry_cols = [self.expiry_table.horizontalHeaderItem(i).text() for i in range(self.expiry_table.columnCount())]
+            write_table_to_sheet("Expiry", self.expiry_table, expiry_cols)
+            
+            workbook.close()
+            
+            QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('report_saved_success')}\n{filename}")
+            
+            # Open the file
+            try:
+                if os.name == 'nt': # Windows
+                    os.startfile(filename)
+                elif os.name == 'posix': # macOS/Linux
+                    import subprocess
+                    subprocess.call(('open', filename))
+            except:
+                pass
+                
+        except Exception as e:
+            QMessageBox.critical(self, lang_manager.get("error"), f"Failed to export Excel: {str(e)}")

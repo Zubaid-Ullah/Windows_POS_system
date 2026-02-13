@@ -97,7 +97,7 @@ class ConnectionMonitorWindow(QWidget):
             self.status_lbl.setText("CLOUD ACTIVE")
             self.status_lbl.setStyleSheet("font-size: 10px; color: #10b981;")
         else:
-            self.icon_lbl.setPixmap(qta.icon("fa5s.wifi-slash", color="#ee5d50").pixmap(16, 16))
+            # self.icon_lbl.setPixmap(qta.icon("fa5s.wifi-slash", color="#ee5d50").pixmap(16, 16))
             self.status_lbl.setText("OFFLINE MODE")
             self.status_lbl.setStyleSheet("font-size: 10px; color: #ee5d50;")
 

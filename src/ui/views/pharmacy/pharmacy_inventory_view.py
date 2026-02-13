@@ -58,10 +58,11 @@ class PharmacyInventoryView(QWidget):
         
         main_layout.addLayout(header)
         
-        # Columns: Barcode, Name, Size, Expiry, Price, Qty, Total Val, Cost, Brand, Company, Vendor, Contact, Actions
-        self.table = QTableWidget(0, 13)
+        # Columns: Barcode, Name, Rank/Shelf, Size, Expiry, Price, Qty, Total Val, Cost, Brand, Company, Vendor, Contact, Actions
+        self.table = QTableWidget(0, 14)
         self.table.setHorizontalHeaderLabels([
             lang_manager.get("barcode"), lang_manager.get("name"), 
+            lang_manager.get("rack") or "Rack",
             lang_manager.get("size"), lang_manager.get("expiry_date"), 
             lang_manager.get("price"), lang_manager.get("quantity"), 
             lang_manager.get("total_val"), lang_manager.get("cost"), 
@@ -73,7 +74,7 @@ class PharmacyInventoryView(QWidget):
         # Global ResizeToContents will handle most, but let's stretch the Name column
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         # Fix width for Actions to make it bigger
-        self.table.setColumnWidth(12, 220) 
+        self.table.setColumnWidth(13, 220) 
         main_layout.addWidget(self.table)
         
         # Ensure scroll bar is always visible if content overflows
@@ -128,25 +129,66 @@ class PharmacyInventoryView(QWidget):
                 print(f"Inventory Load Error: {result['error']}")
                 return
 
+            from PyQt6.QtGui import QColor
+
             self.table.setRowCount(0)
             for i, p in enumerate(result["rows"]):
                 self.table.insertRow(i)
                 qty = p['quantity'] or 0
                 price = p['sale_price'] or 0
-                total_val = qty * price
+                pack_size = p.get('pack_size', 1) or 1
+                
+                # Calculate Total Value (Approx based on pack price if sold as packs)
+                # If quantity is total units, and price is Pack Price:
+                # Value = (qty / pack_size) * price
+                if pack_size > 0:
+                    total_val = (qty / pack_size) * price
+                else:
+                    total_val = 0
                 
                 self.table.setItem(i, 0, QTableWidgetItem(str(p['barcode'] or '')))
                 self.table.setItem(i, 1, QTableWidgetItem(str(p['name_en'] or '')))
-                self.table.setItem(i, 2, QTableWidgetItem(str(p['size'] or 'N/A')))
-                self.table.setItem(i, 3, QTableWidgetItem(str(p['expiry_date'] or 'N/A')))
-                self.table.setItem(i, 4, QTableWidgetItem(f"{price:.2f}"))
-                self.table.setItem(i, 5, QTableWidgetItem(str(qty)))
-                self.table.setItem(i, 6, QTableWidgetItem(f"{total_val:.2f}"))
-                self.table.setItem(i, 7, QTableWidgetItem(f"{p['cost_price']:.2f}"))
-                self.table.setItem(i, 8, QTableWidgetItem(str(p['brand'] or 'N/A')))
-                self.table.setItem(i, 9, QTableWidgetItem(str(p['company_name'] or 'N/A')))
-                self.table.setItem(i, 10, QTableWidgetItem(str(p['supplier_name'] or 'N/A')))
-                self.table.setItem(i, 11, QTableWidgetItem(str(p['supplier_contact'] or 'N/A')))
+                
+                # Rack Column
+                self.table.setItem(i, 2, QTableWidgetItem(str(p['shelf_location'] or '')))
+
+                self.table.setItem(i, 3, QTableWidgetItem(str(p['size'] or 'N/A')))
+                self.table.setItem(i, 4, QTableWidgetItem(str(p['expiry_date'] or 'N/A')))
+                self.table.setItem(i, 5, QTableWidgetItem(f"{price:.2f}"))
+                
+                # Quantity with Packs + Units Display
+                if pack_size > 1:
+                    packs = int(qty // pack_size)
+                    units = int(qty % pack_size)
+                    qty_str = f"{packs} Packs + {units} Units"
+                else:
+                    qty_str = f"{qty} Units"
+                
+                qty_item = QTableWidgetItem(qty_str)
+                qty_item.setData(Qt.ItemDataRole.UserRole, qty) # Store raw qty for sorting/logic
+                
+                min_stock = p.get('min_stock', 10) # Default to 10 if not set
+                if min_stock is None: min_stock = 10
+                
+                # Check low stock in base units? checking min_stock (usually packs?)
+                # If min_stock is packs, compare with qty/pack_size
+                # Let's assume min_stock is in Packs for now as that's intuitive
+                current_packs = qty / pack_size if pack_size else 0
+                
+                if current_packs < min_stock:
+                     qty_item.setForeground(QColor("red"))
+                     font = qty_item.font()
+                     font.setBold(True)
+                     qty_item.setFont(font)
+                
+                self.table.setItem(i, 6, qty_item)
+
+                self.table.setItem(i, 7, QTableWidgetItem(f"{total_val:.2f}"))
+                self.table.setItem(i, 8, QTableWidgetItem(f"{p['cost_price']:.2f}"))
+                self.table.setItem(i, 9, QTableWidgetItem(str(p['brand'] or 'N/A')))
+                self.table.setItem(i, 10, QTableWidgetItem(str(p['company_name'] or 'N/A')))
+                self.table.setItem(i, 11, QTableWidgetItem(str(p['supplier_name'] or 'N/A')))
+                self.table.setItem(i, 12, QTableWidgetItem(str(p['supplier_contact'] or 'N/A')))
                 
                 actions = QWidget()
                 act_layout = QHBoxLayout(actions)
@@ -169,7 +211,7 @@ class PharmacyInventoryView(QWidget):
                 
                 act_layout.addWidget(edit_btn)
                 act_layout.addWidget(delete_btn)
-                self.table.setCellWidget(i, 12, actions)
+                self.table.setCellWidget(i, 13, actions)
             
             self.table.resizeRowsToContents()
 
