@@ -1,6 +1,6 @@
 .venv/
 __pycache__/
-Backup/
+Backup/auto/*.db
 data/Backups/auto/*.db
 data/kyc/*.jpg
 data/bills/*.txt
@@ -20,8 +20,20 @@ platform/windows/windows_secured_dist/
 data/user_photos/*.jpg
 data/backups/*.db
 visual data for videos/*.png
-Backup/auto/*.db
 src/credentials/company_qr.png
 store_update.txt
 visual\ data\ for\ videos/*.png
 visual data for videos/qrcode_link.png
+.gemini/
+BUILD_GUIDE.md
+BUTTON_STYLING_GUIDE.md
+CHANGES_SUMMARY.md
+CREDENTIALS_AND_SETUP.md
+DOCKER_GUIDE.md
+faqiritech_pharmacy.db
+faqiritech_pharmacy.db-shm
+faqiritech_pharmacy.db-wal
+faqiritech_store.db
+*.md
+Full_Report_20260214.pdf
+
