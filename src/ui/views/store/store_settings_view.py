@@ -248,7 +248,24 @@ class StoreSettingsView(QWidget):
         system_qr_layout.addLayout(sys_info)
         
         layout.addWidget(system_qr_group)
-
+        
+        # Receipt Notes Section (Requirement 10)
+        receipt_group = QGroupBox("Receipt Settings & Notes")
+        receipt_form = QFormLayout(receipt_group)
+        
+        self.walkin_note = QTextEdit()
+        self.walkin_note.setMaximumHeight(60)
+        self.walkin_note.setPlaceholderText("e.g. Items cannot be returned without receipt.")
+        
+        self.trusted_note = QTextEdit()
+        self.trusted_note.setMaximumHeight(60)
+        self.trusted_note.setPlaceholderText("e.g. Please pay your balance within 15 days.")
+        
+        receipt_form.addRow("Walk-in Customer Note:", self.walkin_note)
+        receipt_form.addRow("Trusted Customer Note:", self.trusted_note)
+        
+        layout.addWidget(receipt_group)
+        
         # Save button
         save_layout = QHBoxLayout()
         save_layout.addStretch()
@@ -260,7 +277,7 @@ class StoreSettingsView(QWidget):
         save_layout.addWidget(self.save_settings_btn)
         layout.addLayout(save_layout)
 
-        self.load_company_settings()
+        self.load_settings()
         return scroll
 
     def create_maintenance_tab(self):
@@ -355,63 +372,66 @@ class StoreSettingsView(QWidget):
         layout.addStretch()
         return tab
 
-    def load_company_settings(self):
+    def load_settings(self):
         """Load company settings from local database and sync with cloud"""
-        try:
-            with db_manager.get_connection() as conn:
-                # Load Company Info from company_info table
-                try:
+        from src.core.blocking_task_manager import task_manager
+
+        def do_load_local():
+            try:
+                with db_manager.get_connection() as conn:
+                    # Load Company Info from company_info table
                     row = conn.execute("SELECT * FROM company_info WHERE id=1").fetchone()
-                    if row:
-                        self.company_name.setText(row['name'] or "")
-                        self.company_address.setPlainText(row['address'] or "")
-                        self.company_phone.setText(row['phone'] or "")
-                        self.company_email.setText(row['email'] or "")
-                except Exception as e:
-                    print(f"Error loading company_info: {e}")
+                    # Load WhatsApp from app_settings
+                    w_row = conn.execute("SELECT value FROM app_settings WHERE key='whatsapp_number'").fetchone()
+                    return row, w_row
+            except Exception as e:
+                print(f"Local settings load error: {e}")
+                return None, None
 
-                # Load WhatsApp from app_settings
+        def on_local_finished(result):
+            if not result: return
+            row, w_row = result
+            if row:
+                self.company_name.setText(row['name'] or "")
+                self.company_address.setPlainText(row['address'] or "")
+                self.company_phone.setText(row['phone'] or "")
+                self.company_email.setText(row['email'] or "")
+            if w_row:
+                self.whatsapp_number.setText(w_row['value'] or "")
+
+        task_manager.run_task(do_load_local, on_finished=on_local_finished)
+
+        # Load System QR Code
+        qr_path = os.path.join("credentials", "company_qr.png")
+        if os.path.exists(qr_path):
+            pixmap = QPixmap(qr_path)
+            self.sys_qr_label.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio))
+        else:
+            self.sys_qr_label.setText("QR Not Found")
+
+        # Cloud update logic (Asynchronous)
+        sid = local_config.get("system_id")
+        if sid:
+            from src.core.blocking_task_manager import task_manager
+            
+            def load_from_cloud():
                 try:
-                    row = conn.execute("SELECT value FROM app_settings WHERE key='whatsapp_number'").fetchone()
-                    if row:
-                        self.whatsapp_number.setText(row['value'] or "")
-                except: pass
-
-            # Load System QR Code
-            qr_path = os.path.join("credentials", "company_qr.png")
-            if os.path.exists(qr_path):
-                pixmap = QPixmap(qr_path)
-                self.sys_qr_label.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio))
-            else:
-                self.sys_qr_label.setText("QR Not Found")
-
-            # Cloud update logic (Asynchronous)
-            sid = local_config.get("system_id")
-            if sid:
-                from src.core.blocking_task_manager import task_manager
-                
-                def load_from_cloud():
-                    try:
-                        if supabase_manager.check_connection():
-                            data = supabase_manager.get_installation_status(sid)
-                            return {"success": True, "data": data if data else {}}
-                        return {"success": False, "data": {}}
-                    except Exception as e:
-                        print(f"Cloud load error: {e}")
-                        return {"success": False, "data": {}}
-                
-                def on_load_finished(result):
-                    try:
-                        if not hasattr(self, 'company_name'): return
-                        self._on_online_settings_loaded(result["success"], result["data"])
-                    except RuntimeError:
-                        pass # Widget already deleted
-                
-                task_manager.run_task(load_from_cloud, on_finished=on_load_finished)
-
-
-        except Exception as e:
-            print(f"Error loading company settings: {e}")
+                    if supabase_manager.check_connection():
+                        data = supabase_manager.get_installation_status(sid)
+                        return {"success": True, "data": data if data else {}}
+                    return {"success": False, "data": {}}
+                except Exception as e:
+                    print(f"Cloud load error: {e}")
+                    return {"success": False, "data": {}}
+            
+            def on_load_finished(result):
+                try:
+                    if not hasattr(self, 'company_name'): return
+                    self._on_online_settings_loaded(result["success"], result["data"])
+                except RuntimeError:
+                    pass # Widget already deleted
+            
+            task_manager.run_task(load_from_cloud, on_finished=on_load_finished)
 
     def _on_online_settings_loaded(self, success, data):
         try:
@@ -456,6 +476,9 @@ class StoreSettingsView(QWidget):
         email = self.company_email.text().strip()
         whatsapp = self.whatsapp_number.text().strip()
 
+        walkin_note = self.walkin_note.toPlainText().strip()
+        trusted_note = self.trusted_note.toPlainText().strip()
+
         def _write_db():
             try:
                 with db_manager.get_connection() as conn:
@@ -467,6 +490,14 @@ class StoreSettingsView(QWidget):
                     conn.execute(
                         "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('whatsapp_number', ?)",
                         (whatsapp,),
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('walkin_note', ?)",
+                        (walkin_note,),
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('trusted_note', ?)",
+                        (trusted_note,),
                     )
                     conn.commit()
                 return {"ok": True}

@@ -307,7 +307,9 @@ class MainWindow(QMainWindow):
             check_key = key.replace("pharm_", "pharmacy_") if mode == "PHARMACY" else key
             if check_key == "dashboard": check_key = "reports"
             
-            has_perm = '*' in permissions or check_key in permissions or f"{check_key}_view" in permissions
+            # Common views are always visible (Dashboard, Settings, Price Check)
+            is_common = key in ["dashboard", "settings", "price_check", "pharm_dashboard", "pharm_settings", "pharm_price_check"]
+            has_perm = is_common or '*' in permissions or check_key in permissions or f"{check_key}_view" in permissions
             if not has_perm:
                 continue
             

@@ -17,4 +17,11 @@ logs/*.log
 platform/windows/windows_exe_dist/
 platform/windows/windows_build_temp/
 platform/windows/windows_secured_dist/
+data/user_photos/*.jpg
+data/backups/*.db
+visual data for videos/*.png
+Backup/auto/*.db
+src/credentials/company_qr.png
+store_update.txt
 visual\ data\ for\ videos/*.png
+visual data for videos/qrcode_link.png

@@ -1,3 +1,5 @@
+import os
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
                              QMessageBox, QGroupBox)
@@ -52,11 +54,12 @@ class StoreUsersView(QWidget):
 
         self.user_table = QTableWidget(0, 8)
         self.user_table.setHorizontalHeaderLabels([
-            "ID", "Username", "Title", "Role", "Status", "Base Salary", "Password", "Actions"
+            "Photo", "Username", "Title", "Role", "Status", "Base Salary", "Password", "Actions"
         ])
         style_table(self.user_table, variant="premium")
 
         header = self.user_table.horizontalHeader()
+        self.user_table.setColumnWidth(0, 60)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.user_table)
@@ -104,14 +107,14 @@ class StoreUsersView(QWidget):
                 cursor = conn.cursor()
                 if current_user.get('username') == 'superadmin' or current_user.get('is_super_admin'):
                     query = """
-                        SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary
+                        SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary, u.profile_picture
                         FROM users u
                         JOIN roles r ON u.role_id = r.id
                         WHERE u.username != 'psuper'
                     """
                 else:
                     query = """
-                        SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary
+                        SELECT u.id, u.username, u.title, r.name as role, u.is_active, u.permissions, u.password_hash, u.base_salary, u.profile_picture
                         FROM users u
                         JOIN roles r ON u.role_id = r.id
                         WHERE u.is_super_admin = 0 AND u.username != 'psuper'
@@ -124,11 +127,26 @@ class StoreUsersView(QWidget):
             self.user_table.setRowCount(0)
             for i, u in enumerate(users):
                 self.user_table.insertRow(i)
-                self.user_table.setItem(i, 0, QTableWidgetItem(str(u['id'])))
+                # Photo Column (0)
+                photo_lbl = QLabel()
+                photo_lbl.setFixedSize(40, 40)
+                photo_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                photo_lbl.setStyleSheet("border-radius: 20px; border: 1px solid #ddd; background: #f8f9fa;")
+                
+                photo_path = u.get('profile_picture')
+                if photo_path and os.path.exists(photo_path):
+                    photo_lbl.setToolTip(f'<img src="{photo_path}" width="150">')
+                    self.load_thumbnail_async(photo_path, photo_lbl)
+                else:
+                    import qtawesome as qta
+                    photo_lbl.setPixmap(qta.icon("fa5s.user", color="#cbd5e1").pixmap(24, 24))
+                
+                self.user_table.setCellWidget(i, 0, photo_lbl)
+                
                 self.user_table.setItem(i, 1, QTableWidgetItem(u['username']))
                 self.user_table.setItem(i, 2, QTableWidgetItem(u['title'] or "Staff"))
                 self.user_table.setItem(i, 3, QTableWidgetItem(u['role']))
-
+                
                 status = "Active" if u['is_active'] else "Inactive"
                 status_item = QTableWidgetItem(status)
                 status_item.setForeground(QColor("#2ecc71" if u['is_active'] else "#e74c3c"))
@@ -171,6 +189,24 @@ class StoreUsersView(QWidget):
 
         task_manager.run_task(fetch_users, on_finished=on_finished, on_error=on_error)
 
+    def load_thumbnail_async(self, path, label):
+        from src.core.blocking_task_manager import task_manager
+        from PyQt6.QtGui import QImage, QPixmap
+
+        def scale_image():
+            try:
+                img = QImage(path)
+                if img.isNull(): return None
+                # Scaled for Users view circle
+                return img.scaled(40, 40, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            except: return None
+
+        def on_finished(scaled_img):
+            if scaled_img:
+                label.setPixmap(QPixmap.fromImage(scaled_img))
+
+        task_manager.run_task(scale_image, on_finished=on_finished)
+
     def open_create_user_dialog(self):
         dialog = CreateUserDialog(self)
         if dialog.exec():
@@ -196,10 +232,11 @@ class StoreUsersView(QWidget):
                     valid_until = user_data.get('valid_until')
 
                     cursor.execute("""
-                        INSERT INTO users (username, password_hash, role_id, title, permissions, valid_until, base_salary, is_active)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                        INSERT INTO users (username, password_hash, role_id, title, permissions, valid_until, base_salary, is_active, profile_picture)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
                     """, (user_data['username'], password_hash, role_id, user_data['title'],
-                          user_data['permissions'], valid_until, user_data.get('base_salary', 0)))
+                          user_data['permissions'], valid_until, user_data.get('base_salary', 0),
+                          user_data.get('profile_picture')))
                     conn.commit()
                 return {"success": True, "username": user_data['username']}
             except Exception as e:
@@ -261,8 +298,8 @@ class StoreUsersView(QWidget):
                     cursor.execute("SELECT id FROM roles WHERE name = ?", (data['role'],))
                     role_id = cursor.fetchone()['id']
 
-                    base_query = "UPDATE users SET username=?, role_id=?, title=?, permissions=?, base_salary=?"
-                    params = [data['username'], role_id, data['title'], data['permissions'], data.get('base_salary', 0)]
+                    base_query = "UPDATE users SET username=?, role_id=?, title=?, permissions=?, base_salary=?, profile_picture=?"
+                    params = [data['username'], role_id, data['title'], data['permissions'], data.get('base_salary', 0), data.get('profile_picture')]
 
                     if data['password']:
                         new_hash = Auth.hash_password(data['password'])

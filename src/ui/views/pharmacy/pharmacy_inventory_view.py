@@ -11,6 +11,9 @@ class PharmacyInventoryView(QWidget):
     def __init__(self):
         super().__init__()
         self.is_loading = False
+        self.current_page = 1
+        self.page_size = 50
+        self.total_count = 0
         
         # Debounce timer for loading
         self.load_timer = QTimer(self)
@@ -41,7 +44,7 @@ class PharmacyInventoryView(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(lang_manager.get("search") + " " + lang_manager.get("medicine") + "...")
         self.search_input.setMinimumHeight(55)
-        self.search_input.textChanged.connect(self.load_inventory)
+        self.search_input.textChanged.connect(self.on_search_changed)
         self.search_input.returnPressed.connect(self.handle_barcode_scan)
         header.addWidget(self.search_input)
         
@@ -76,13 +79,46 @@ class PharmacyInventoryView(QWidget):
         # Fix width for Actions to make it bigger
         self.table.setColumnWidth(13, 220) 
         main_layout.addWidget(self.table)
+
+        # Pagination Footer (Requirement 5)
+        pag_layout = QHBoxLayout()
+        pag_layout.addStretch()
+        
+        self.btn_prev = QPushButton(lang_manager.get("previous") or "Previous")
+        self.btn_next = QPushButton(lang_manager.get("next") or "Next")
+        self.page_label = QLabel("Page 1")
+        
+        style_button(self.btn_prev, variant="outline", size="small")
+        style_button(self.btn_next, variant="outline", size="small")
+        
+        self.btn_prev.clicked.connect(self.prev_page)
+        self.btn_next.clicked.connect(self.next_page)
+        
+        pag_layout.addWidget(self.btn_prev)
+        pag_layout.addWidget(self.page_label)
+        pag_layout.addWidget(self.btn_next)
+        pag_layout.addStretch()
+        main_layout.addLayout(pag_layout)
         
         # Ensure scroll bar is always visible if content overflows
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
+    def on_search_changed(self):
+        self.current_page = 1
+        self.load_inventory()
+
     def load_inventory(self):
         """Trigger debounced load"""
         self.load_timer.start()
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.load_inventory()
+
+    def next_page(self):
+        self.current_page += 1
+        self.load_inventory()
 
     def _do_load_inventory(self):
         """Actual data loading logic after debounce"""
@@ -117,9 +153,24 @@ class PharmacyInventoryView(QWidget):
                         query += " AND (p.name_en LIKE ? OR p.barcode LIKE ?)"
                         params = [f"%{search_term}%", f"%{search_term}%"]
                     
-                    query += " GROUP BY p.id"
+                    offset = (self.current_page - 1) * self.page_size
+                    
+                    query += " GROUP BY p.id ORDER BY p.id DESC LIMIT ? OFFSET ?"
+                    params.extend([self.page_size, offset])
+                    
                     cursor.execute(query, params)
-                    return {"success": True, "rows": [dict(row) for row in cursor.fetchall()]}
+                    rows = [dict(row) for row in cursor.fetchall()]
+
+                    # Get total count for page label
+                    count_q = "SELECT COUNT(*) FROM pharmacy_products WHERE is_active = 1"
+                    if search_term:
+                        count_q += " AND (name_en LIKE ? OR barcode LIKE ?)"
+                        cursor.execute(count_q, [f"%{search_term}%", f"%{search_term}%"])
+                    else:
+                        cursor.execute(count_q)
+                    total = cursor.fetchone()[0]
+                    
+                    return {"success": True, "rows": rows, "total": total}
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
@@ -128,6 +179,12 @@ class PharmacyInventoryView(QWidget):
             if not result["success"]:
                 print(f"Inventory Load Error: {result['error']}")
                 return
+
+            self.total_count = result["total"]
+            total_pages = (self.total_count + self.page_size - 1) // self.page_size
+            self.page_label.setText(f"Page {self.current_page} of {max(1, total_pages)}")
+            self.btn_prev.setEnabled(self.current_page > 1)
+            self.btn_next.setEnabled(self.current_page < total_pages)
 
             from PyQt6.QtGui import QColor
 

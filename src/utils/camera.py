@@ -120,7 +120,7 @@ class CameraDialog(QDialog):
         self.thread.stop()
         super().closeEvent(event)
 
-def capture_image(save_path, parent=None):
+def capture_image(save_path, parent=None, choose_camera=True):
     """
     Opens camera dialog, allows capture via spacebar.
     Returns (True, "") if captured, (False, error_msg) otherwise.
@@ -133,49 +133,90 @@ def capture_image(save_path, parent=None):
     progress.setWindowModality(Qt.WindowModality.WindowModal)
     progress.show()
     
+    
+    # Use a threading Event for cancellation to avoid cross-thread GUI access
+    import threading
+    cancel_event = threading.Event()
+    
+    # Handle cancellation safely on the main thread
+    def check_cancel():
+        try:
+            # Check if progress dialog still exists and was canceled
+            if progress and not progress.isHidden() and progress.wasCanceled():
+                cancel_event.set()
+            elif not cancel_event.is_set():
+                # Check again in 100ms if not finished or canceled
+                QTimer.singleShot(100, check_cancel)
+        except (RuntimeError, AttributeError):
+            # Object probably deleted, stop checking
+            pass
+            
+    # Start the cancel checker
+    from PyQt6.QtCore import QTimer
+    QTimer.singleShot(100, check_cancel)
+    
     def probe_cameras(progress_callback=None):
         available = []
         # Probe up to 3 indices (usually enough for built-in + 1 external)
         for i in range(3):
-            # Check if progress dialog was cancelled
-            if progress.wasCanceled():
+            # Check thread-safe event
+            if cancel_event.is_set():
                 break
                 
             if progress_callback: progress_callback()
+            
+            # Additional check before heavy operation
+            if cancel_event.is_set(): break
+            
             temp = cv2.VideoCapture(i)
             if temp.isOpened():
                 available.append(i)
                 temp.release()
+            
             if progress_callback: progress_callback()
         
-        # Priority logic/Selection
-        if not available: return -1
-        
-        # On macOS, index 0 is often 'iPhone' (Continuity Camera) if connected, 
-        # index 1 is usually the built-in webcam.
-        # We'll return the first one but let's log it
+        # Return all available cameras for optional user selection
+        if not available:
+            return []
         print(f"[Camera] Detected cameras at indices: {available}")
-        return available[0]
+        return available
 
     # We need a synchronous-looking execution but without blocking the event loop
-    probe_result = {"index": -1, "done": False}
+    probe_result = {"indices": [], "done": False}
     
-    def on_ready(idx):
-        probe_result["index"] = idx
+    def on_ready(indices):
+        probe_result["indices"] = indices or []
         probe_result["done"] = True
         progress.accept()
 
+    def force_timeout():
+        if probe_result["done"]:
+            return
+        cancel_event.set()
+        progress.cancel()
+
     task_manager.run_task(probe_cameras, on_finished=on_ready)
+    QTimer.singleShot(10000, force_timeout)
     progress.exec() # This keeps local event loop running while task finishes
     
-    if progress.wasCanceled():
+    if progress.wasCanceled() or cancel_event.is_set():
         return False, "Camera scan cancelled"
         
-    camera_index = probe_result["index"]
-    if camera_index == -1:
+    indices = probe_result["indices"]
+    if not indices:
         return False, "No cameras found"
+
+    camera_index = indices[0]
+    if choose_camera and len(indices) > 1:
+        opts = [f"Camera {i}" for i in indices]
+        selected, ok = QInputDialog.getItem(parent, "Select Camera", "Choose camera:", opts, 0, False)
+        if not ok:
+            return False, "Camera selection cancelled"
+        try:
+            camera_index = int(selected.split(" ")[1])
+        except Exception:
+            camera_index = indices[0]
     
     dialog = CameraDialog(camera_index, save_path, parent)
     result = dialog.exec()
     return bool(result), ""
-

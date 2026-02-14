@@ -15,6 +15,7 @@ class SupplierDialog(QDialog):
         self.supplier = supplier
         self.setWindowTitle(lang_manager.get("details"))
         self.setMinimumWidth(400)
+        self.photo_path = None
         self.init_ui()
 
     def init_ui(self):
@@ -30,12 +31,19 @@ class SupplierDialog(QDialog):
 
         layout.addRow(f"{lang_manager.get('supplier_name')}:", self.name)
         layout.addRow(f"{lang_manager.get('company')}:", self.company)
-        layout.addRow(f"{lang_manager.get('contact')}:", self.contact)
+        layout.addRow(f"{lang_manager.get('contact')} *:", self.contact)
+        
+        # Optional Photo (Requirement 7)
+        self.photo_status = QLabel("Photo: Optional")
+        take_photo_btn = QPushButton("Take/Select Photo")
+        style_button(take_photo_btn, variant="outline", size="small")
+        take_photo_btn.clicked.connect(self.take_photo)
+        layout.addRow(self.photo_status, take_photo_btn)
         
         btns = QHBoxLayout()
         save_btn = QPushButton(lang_manager.get("save"))
         style_button(save_btn, variant="success")
-        save_btn.clicked.connect(self.accept)
+        save_btn.clicked.connect(self.validate_and_save)
         
         cancel_btn = QPushButton(lang_manager.get("cancel"))
         style_button(cancel_btn, variant="secondary")
@@ -45,18 +53,38 @@ class SupplierDialog(QDialog):
         btns.addWidget(save_btn)
         layout.addRow(btns)
 
+    def take_photo(self):
+        # Implementation similar to customer photo but optional
+        from src.utils.camera import capture_image
+        import uuid, os
+        path = os.path.join("data", "suppliers", f"supp_{uuid.uuid4()}.jpg")
+        if not os.path.exists(os.path.dirname(path)): os.makedirs(os.path.dirname(path), exist_ok=True)
+        success, msg = capture_image(path, self)
+        if success:
+            self.photo_path = path
+            self.photo_status.setText("Photo: Captured ✓")
+            self.photo_status.setStyleSheet("color: #05cd99;")
+
+    def validate_and_save(self):
+        if not self.name.text().strip() or not self.contact.text().strip():
+             QMessageBox.warning(self, "Required Fields", "Supplier Name and Contact Number are mandatory.")
+             return
+        self.accept()
+
     def get_data(self):
         return {
             'name': self.name.text(),
             'company_name': self.company.text(),
-            'contact': self.contact.text()
+            'contact': self.contact.text(),
+            'photo': self.photo_path
         }
 
 class StoreSupplierView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_user = Auth.get_current_user()
-        self.is_admin = self.current_user['role_name'] in ['Admin', 'Manager', 'SuperAdmin']
+        perms = Auth.get_user_permissions(self.current_user)
+        self.is_admin = '*' in perms or 'suppliers' in perms or 'suppliers_edit' in perms
         self.init_ui()
         self.load_suppliers()
 

@@ -213,6 +213,12 @@ class CustomerDialog(QDialog):
         if not self.name_en.text() or not self.phone.text():
             QMessageBox.warning(self, "Required Fields", "Name and Contact Number are mandatory.")
             return
+        
+        # Mandatory Photo (Requirement 4)
+        if not self.photo_path or not os.path.exists(self.photo_path):
+             QMessageBox.warning(self, "Required Field", "Customer Profile Photo is mandatory for KYC.")
+             return
+             
         self.accept()
 
     def get_data(self):
@@ -235,7 +241,8 @@ class StoreCustomerView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_user = Auth.get_current_user()
-        self.is_admin = self.current_user['role_name'] in ['Admin', 'Manager', 'SuperAdmin']
+        perms = Auth.get_user_permissions(self.current_user)
+        self.is_admin = '*' in perms or 'customers' in perms or 'customers_edit' in perms
         self.current_page = 1
         self.page_size = 50
         self.total_pages = 1
@@ -247,6 +254,8 @@ class StoreCustomerView(QWidget):
         self.refresh_timer.timeout.connect(self._do_load_customers)
 
         self.init_ui()
+        if hasattr(self, 'table'):
+            self.table.viewport().installEventFilter(self)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -283,14 +292,31 @@ class StoreCustomerView(QWidget):
 
         layout.addLayout(header)
 
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels([
-            "ID", "Full Name", "Contact", "Balance", "Actions"
+            "ID", "Photo", "Full Name", "Contact", "Balance", "Actions"
         ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.setColumnWidth(4, 200)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(1, 60) # Photo col
+        self.table.setColumnWidth(5, 200) # Actions col
+        
+        # Hover Preview Setup
+        self.table.setMouseTracking(True)
+        self.hover_preview = QLabel(self)
+        self.hover_preview.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        self.hover_preview.setStyleSheet("border: 2px solid #4318ff; background: white; padding: 2px;")
+        self.hover_preview.hide()
+        
+        # Debounce timer for hover
+        self.hover_timer = QTimer()
+        self.hover_timer.setSingleShot(True)
+        self.hover_timer.setInterval(150) # 150ms delay
+        self.hover_timer.timeout.connect(self._do_show_hover)
+        self._pending_hover_path = None
+        self._pending_hover_pos = None
+
         layout.addWidget(self.table)
 
         pag_layout = QHBoxLayout()
@@ -363,10 +389,25 @@ class StoreCustomerView(QWidget):
             for i, c in enumerate(customers):
                 self.table.insertRow(i)
                 self.table.setItem(i, 0, QTableWidgetItem(str(c['id'])))
-                self.table.setItem(i, 1, QTableWidgetItem(c['name_en']))
-                self.table.setItem(i, 2, QTableWidgetItem(c['phone'] or "N/A"))
-                self.table.setItem(i, 3, QTableWidgetItem(f"{c['balance']:,.2f} AFN"))
+                
+                # Photo Thumbnail (Requirement 4)
+                photo_item = QLabel()
+                photo_item.setFixedSize(45, 45)
+                photo_item.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                photo_path = c.get('photo')
+                if photo_path and os.path.exists(photo_path):
+                    photo_item.full_photo_path = photo_path # Custom property for hover
+                    self.load_thumbnail_async(photo_path, photo_item)
+                else:
+                    photo_item.setText("N/A")
+                    photo_item.full_photo_path = None
+                self.table.setCellWidget(i, 1, photo_item)
 
+                self.table.setItem(i, 2, QTableWidgetItem(c['name_en']))
+                self.table.setItem(i, 3, QTableWidgetItem(c['phone'] or ""))
+                self.table.setItem(i, 4, QTableWidgetItem(f"{float(c['balance'] or 0):,.2f}"))
+                
+                # Actions... (rest of the row)
                 actions = QWidget()
                 act_layout = QHBoxLayout(actions)
                 act_layout.setContentsMargins(2, 2, 2, 2)
@@ -390,13 +431,31 @@ class StoreCustomerView(QWidget):
                     act_layout.addWidget(edit_btn)
                     act_layout.addWidget(del_btn)
 
-                self.table.setCellWidget(i, 4, actions)
+                self.table.setCellWidget(i, 5, actions)
 
             self.table.resizeColumnsToContents()
-            self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-            self.table.setColumnWidth(4, 200)
+            self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            self.table.setColumnWidth(5, 200)
 
         task_manager.run_task(fetch_data, on_finished=on_loaded)
+
+    def load_thumbnail_async(self, path, label):
+        from src.core.blocking_task_manager import task_manager
+        from PyQt6.QtGui import QImage, QPixmap
+
+        def scale_image():
+            try:
+                img = QImage(path)
+                if img.isNull(): return None
+                scaled = img.scaled(40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                return scaled
+            except: return None
+
+        def on_finished(scaled_img):
+            if scaled_img:
+                label.setPixmap(QPixmap.fromImage(scaled_img))
+
+        task_manager.run_task(scale_image, on_finished=on_finished)
 
     def prev_page(self):
         if self.current_page > 1:
@@ -407,6 +466,53 @@ class StoreCustomerView(QWidget):
         if self.current_page < self.total_pages:
             self.current_page += 1
             self.load_customers()
+
+    def eventFilter(self, source, event):
+        if source is self.table.viewport() and event.type() == event.Type.MouseMove:
+            self.handle_table_hover(event)
+        return super().eventFilter(source, event)
+
+    def handle_table_hover(self, event):
+        index = self.table.indexAt(event.pos())
+        if index.isValid() and index.column() == 1:
+            row = index.row()
+            cell_widget = self.table.cellWidget(row, 1)
+            if cell_widget and hasattr(cell_widget, 'full_photo_path'):
+                path = cell_widget.full_photo_path
+                if path:
+                    from PyQt6.QtGui import QCursor
+                    self._pending_hover_path = path
+                    self._pending_hover_pos = QCursor.pos()
+                    self.hover_timer.start()
+                    return
+        self._pending_hover_path = None
+        self.hover_timer.stop()
+        self.hover_preview.hide()
+
+    def _do_show_hover(self):
+        path = self._pending_hover_path
+        pos = self._pending_hover_pos
+        if not path or not os.path.exists(path):
+            self.hover_preview.hide()
+            return
+
+        from src.core.blocking_task_manager import task_manager
+        from PyQt6.QtGui import QImage, QPixmap
+
+        def scale_hover():
+            try:
+                img = QImage(path)
+                if img.isNull(): return None
+                return img.scaled(250, 250, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            except: return None
+
+        def on_finished(scaled):
+            if scaled and self._pending_hover_path == path: # Ensure we still want this image
+                self.hover_preview.setPixmap(QPixmap.fromImage(scaled))
+                self.hover_preview.move(pos.x() + 20, pos.y() + 20)
+                self.hover_preview.show()
+
+        task_manager.run_task(scale_hover, on_finished=on_finished)
 
     def add_customer(self):
         dialog = CustomerDialog()

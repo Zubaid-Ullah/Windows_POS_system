@@ -9,6 +9,7 @@ class PharmacyPriceCheckView(QWidget):
     finished = pyqtSignal()
     def __init__(self):
         super().__init__()
+        self._current_request_id = 0
         self.init_ui()
         
         # Auto-clear timer (5 seconds after showing result)
@@ -33,8 +34,14 @@ class PharmacyPriceCheckView(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(lang_manager.get("search") + " " + lang_manager.get("medicine") + "...")
         self.search_input.setStyleSheet("border: none; font-size: 24px; padding: 10px; background: transparent;")
-        self.search_input.textChanged.connect(self.search_product)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
         search_layout.addWidget(self.search_input)
+        
+        # Debounce Timer for Search
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(300) # 300ms debounce
+        self.search_timer.timeout.connect(self.search_product)
         
         layout.addWidget(search_container)
 
@@ -51,6 +58,9 @@ class PharmacyPriceCheckView(QWidget):
         
         layout.addWidget(self.result_card, 1)
 
+    def on_search_text_changed(self, text):
+        self.search_timer.start()
+
     def search_product(self):
         term = self.search_input.text().strip()
         if not term:
@@ -58,6 +68,10 @@ class PharmacyPriceCheckView(QWidget):
             return
             
         from src.core.blocking_task_manager import task_manager
+        
+        # Request-id cancellation: discard stale results from rapid typing/scanning
+        self._current_request_id += 1
+        request_id = self._current_request_id
         
         def do_load():
             try:
@@ -70,11 +84,14 @@ class PharmacyPriceCheckView(QWidget):
                         GROUP BY p.id
                         LIMIT 1
                     """, (term, f"%{term}%")).fetchone()
-                    return {"success": True, "row": dict(row) if row else None}
+                    return {"success": True, "row": dict(row) if row else None, "request_id": request_id}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": str(e), "request_id": request_id}
 
         def on_finished(result):
+            # Discard stale result if a newer request was issued
+            if result.get("request_id") != self._current_request_id:
+                return
             if not result["success"]:
                 print(f"Price check error: {result['error']}")
                 return

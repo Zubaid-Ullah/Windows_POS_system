@@ -304,11 +304,21 @@ class PharmacyReturnsView(QWidget):
                         JOIN pharmacy_products p ON si.product_id = p.id WHERE si.sale_id = ?
                     """, (sale['id'],)).fetchall()
                     
+                    # Single query replaces N per-item queries (N+1 fix)
+                    returned_map = {}
+                    ret_rows = conn.execute("""
+                        SELECT sale_item_id, COALESCE(SUM(quantity), 0) as returned_qty
+                        FROM pharmacy_return_items 
+                        WHERE sale_item_id IN (SELECT id FROM pharmacy_sale_items WHERE sale_id = ?)
+                        GROUP BY sale_item_id
+                    """, (sale['id'],)).fetchall()
+                    for r in ret_rows:
+                        returned_map[r['sale_item_id']] = r['returned_qty']
+                    
                     item_data = []
                     for item in items:
-                        ret_row = conn.execute("SELECT SUM(quantity) as returned_qty FROM pharmacy_return_items WHERE sale_item_id = ?", (item['id'],)).fetchone()
                         item_dict = dict(item)
-                        item_dict['already_returned'] = ret_row['returned_qty'] or 0
+                        item_dict['already_returned'] = returned_map.get(item['id'], 0)
                         item_data.append(item_dict)
                     
                     return {"success": True, "sale": dict(sale), "items": item_data}

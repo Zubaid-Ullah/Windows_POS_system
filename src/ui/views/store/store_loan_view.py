@@ -46,11 +46,21 @@ class StoreLoanView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
-        
+
+        from PyQt6.QtCore import QTimer
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(300) # 300ms debounce
+        self.search_timer.timeout.connect(self._do_search)
+
         main_layout.addWidget(self.container)
 
     def on_search_text_changed(self, text):
-        if not text.strip():
+        self.search_timer.start()
+
+    def _do_search(self):
+        text = self.search_input.text().strip()
+        if not text:
             self.load_loans()
             return
         

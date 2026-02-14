@@ -562,59 +562,99 @@ class PharmacyFinanceView(QWidget):
                         period_name = f"{date_from} {lang_manager.get('to')} {date_to}"
                         days_count = 30 
 
-                    # 2. Net Sales (Revenue)
-                    gross_received_sql = f"""
-                        SELECT (
-                            (SELECT COALESCE(SUM(total_amount), 0) FROM pharmacy_sales s WHERE payment_type='CASH' AND {time_filter.format(T='s')}) +
-                            (SELECT COALESCE(SUM(amount), 0) FROM pharmacy_payments p WHERE {time_filter.format(T='p')})
-                        ) as total
-                    """
-                    gross_sales = conn.execute(gross_received_sql).fetchone()[0] or 0
+                    # ============================================================
+                    # CASH REALIZED PROFIT MODEL
+                    # ============================================================
+                    # CASH sales: full accrual (revenue + COGS recognized at sale time)
+                    # CREDIT sales: revenue = payments collected, COGS = proportional
+                    # ============================================================
                     
-                    ret_row = conn.execute(f"SELECT SUM(refund_amount) as total FROM pharmacy_returns r WHERE refund_type='CASH' AND {time_filter.format(T='r')}").fetchone()
-                    returns_total = ret_row['total'] or 0
-                    net_sales = gross_sales - returns_total
-
-                    # 3. Net Cost of Goods (COGS) - Optimized with JOINs
-                    cash_cost_sql = f"""
-                        SELECT SUM(si.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), p.cost_price))
+                    # --- CASH sales: standard accrual ---
+                    cash_sales_sql = f"""
+                        SELECT COALESCE(SUM(total_amount), 0)
+                        FROM pharmacy_sales s
+                        WHERE s.payment_type = 'CASH' AND {time_filter.format(T='s')}
+                    """
+                    cash_revenue = conn.execute(cash_sales_sql).fetchone()[0] or 0
+                    
+                    cash_cogs_sql = f"""
+                        SELECT COALESCE(SUM(si.quantity * si.cost_price_at_sale), 0)
                         FROM pharmacy_sale_items si
-                        JOIN pharmacy_products p ON si.product_id = p.id
                         JOIN pharmacy_sales s ON si.sale_id = s.id
-                        WHERE s.payment_type='CASH' AND {time_filter.format(T='s')}
+                        WHERE s.payment_type = 'CASH' AND {time_filter.format(T='s')}
                     """
-                    gross_cost_cash = conn.execute(cash_cost_sql).fetchone()[0] or 0
+                    cash_cogs = conn.execute(cash_cogs_sql).fetchone()[0] or 0
                     
-                    # Optimized Credit COGS calculation to avoid nested selects
-                    credit_payment_cost_sql = f"""
-                        WITH SaleCosts AS (
-                            SELECT si.sale_id, SUM(si.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), pp.cost_price)) as total_cost
-                            FROM pharmacy_sale_items si
-                            JOIN pharmacy_products pp ON si.product_id = pp.id
-                            GROUP BY si.sale_id
-                        )
-                        SELECT SUM( p.amount * sc.total_cost / CAST(s.total_amount AS REAL) )
-                        FROM pharmacy_payments p
-                        JOIN pharmacy_sales s ON p.sale_id = s.id
-                        JOIN SaleCosts sc ON p.sale_id = sc.sale_id
-                        WHERE {time_filter.format(T='p')}
+                    # --- CREDIT sales: Cash Realized Profit ---
+                    # For each credit invoice in the period, compute:
+                    #   collected = SUM(payments received)
+                    #   ratio = collected / sale_total
+                    #   recognized_revenue = collected (capped at sale_total)
+                    #   recognized_cogs = sale_cogs × ratio (snapped on final payment)
+                    
+                    credit_invoices_sql = f"""
+                        SELECT 
+                            s.id, 
+                            s.total_amount as sale_total,
+                            COALESCE(
+                                (SELECT SUM(si2.quantity * si2.cost_price_at_sale) 
+                                 FROM pharmacy_sale_items si2 
+                                 WHERE si2.sale_id = s.id), 0
+                            ) as sale_cogs,
+                            COALESCE(
+                                (SELECT SUM(p.amount) 
+                                 FROM pharmacy_payments p 
+                                 WHERE p.sale_id = s.id), 0
+                            ) as collected
+                        FROM pharmacy_sales s
+                        WHERE s.payment_type = 'CREDIT' AND {time_filter.format(T='s')}
                     """
-                    gross_cost_payments = conn.execute(credit_payment_cost_sql).fetchone()[0] or 0
-                    gross_cost = gross_cost_cash + gross_cost_payments
-
+                    credit_rows = conn.execute(credit_invoices_sql).fetchall()
+                    
+                    credit_revenue = 0
+                    credit_cogs = 0
+                    for crow in credit_rows:
+                        sale_total = crow['sale_total'] or 0
+                        sale_cogs_val = crow['sale_cogs'] or 0
+                        collected = crow['collected'] or 0
+                        
+                        # Guard: revenue must never exceed invoice total
+                        collected = min(collected, sale_total)
+                        
+                        if sale_total > 0:
+                            if collected >= sale_total:
+                                # Final payment: snap COGS to exact sale_cogs
+                                credit_revenue += sale_total
+                                credit_cogs += sale_cogs_val
+                            else:
+                                ratio = collected / sale_total
+                                credit_revenue += collected
+                                credit_cogs += round(sale_cogs_val * ratio, 2)
+                    
+                    # --- Combine ---
+                    gross_sales = cash_revenue + credit_revenue
+                    gross_cost = cash_cogs + credit_cogs
+                    
+                    # --- Returns (reduce both revenue and COGS) ---
+                    ret_row = conn.execute(f"""
+                        SELECT COALESCE(SUM(refund_amount), 0) as total 
+                        FROM pharmacy_returns r 
+                        WHERE {time_filter.format(T='r')}
+                    """).fetchone()
+                    returns_total = ret_row['total'] or 0
+                    
                     ret_cost_sql = f"""
-                        SELECT SUM(ri.quantity * COALESCE(NULLIF(si.cost_price_at_sale, 0), p.cost_price))
+                        SELECT COALESCE(SUM(ri.quantity * si.cost_price_at_sale), 0)
                         FROM pharmacy_return_items ri
                         JOIN pharmacy_sale_items si ON ri.sale_item_id = si.id
-                        JOIN pharmacy_products p ON ri.product_id = p.id
                         JOIN pharmacy_returns r ON ri.return_id = r.id
-                        WHERE r.refund_type='CASH' AND {time_filter.format(T='r')}
+                        WHERE {time_filter.format(T='r')}
                     """
                     return_cost = conn.execute(ret_cost_sql).fetchone()[0] or 0
+                    
+                    net_sales = gross_sales - returns_total
                     net_cost = gross_cost - return_cost
                     trading_profit = net_sales - net_cost
-                    
-                    # 4. Expenses & Salaries
                     full_monthly_salaries = conn.execute("SELECT SUM(amount) as total FROM pharmacy_employee_salary WHERE is_active=1").fetchone()
                     total_salaries_val = (full_monthly_salaries['total'] or 0) / 30.0 * days_count
                     

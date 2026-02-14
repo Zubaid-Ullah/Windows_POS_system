@@ -499,6 +499,7 @@ class PharmacyReportsView(QWidget):
             self.low_stock.value_lbl.setText(str(stats['low_stock_count']))
             
             # Load Transactions Table
+            self.trans_table.setUpdatesEnabled(False)
             self.trans_table.setRowCount(0)
             trans = data['sales']
             
@@ -543,9 +544,11 @@ class PharmacyReportsView(QWidget):
                 
                 self.trans_table.setItem(total_row_idx, 4, QTableWidgetItem(""))
                 
+            self.trans_table.setUpdatesEnabled(True)
             self.trans_table.resizeColumnsToContents()
             
             # Load Returns Breakdown with Replacement Details
+            self.ret_table.setUpdatesEnabled(False)
             self.ret_table.setRowCount(0)
             ret_rows = data['returns']
             
@@ -581,8 +584,10 @@ class PharmacyReportsView(QWidget):
                 else:
                     method_text = lang_manager.get("account") or lang_manager.get("credit")
                 self.table_item(self.ret_table, i, 7, method_text)
+            self.ret_table.setUpdatesEnabled(True)
             
             # Load Loan / Credit Table
+            self.loan_table.setUpdatesEnabled(False)
             self.loan_table.setRowCount(0)
             loans = data['loans']
             for i, row in enumerate(loans):
@@ -591,8 +596,10 @@ class PharmacyReportsView(QWidget):
                 self.table_item(self.loan_table, i, 1, row['invoice_number'])
                 self.table_item(self.loan_table, i, 2, f"{row['total_amount']:,.2f} AFN")
                 self.table_item(self.loan_table, i, 3, f"{row['balance']:,.2f} AFN")
+            self.loan_table.setUpdatesEnabled(True)
             
             # Load Low Stock Table
+            self.low_stock_table.setUpdatesEnabled(False)
             self.low_stock_table.setRowCount(0)
             low_items = data['low_stock']
             for i, row in enumerate(low_items):
@@ -601,8 +608,10 @@ class PharmacyReportsView(QWidget):
                 self.table_item(self.low_stock_table, i, 1, row['expiry'] or "N/A")
                 self.table_item(self.low_stock_table, i, 2, f"{row['current_qty'] or 0}")
                 self.table_item(self.low_stock_table, i, 3, f"{row['min_stock']}")
+            self.low_stock_table.setUpdatesEnabled(True)
             
             # Load Expiry Stock Table
+            self.expiry_table.setUpdatesEnabled(False)
             self.expiry_table.setRowCount(0)
             filtered_expiry_rows = data['expiry']
             
@@ -673,8 +682,9 @@ class PharmacyReportsView(QWidget):
                 self.expiry_table.setItem(row_idx, 2, expiry_item)
                 self.expiry_table.setItem(row_idx, 3, days_item)
                 self.expiry_table.setItem(row_idx, 4, status_item_obj)
+            self.expiry_table.setUpdatesEnabled(True)
             
-            # Autofit all tables to content - Optimized to avoid UI hangs
+            # Single resize pass after all tables are populated
             for table in [self.trans_table, self.ret_table, self.loan_table, self.low_stock_table, self.expiry_table]:
                 if table.rowCount() > 0:
                     table.resizeColumnsToContents()
@@ -737,27 +747,42 @@ class PharmacyReportsView(QWidget):
             invoice_num = item.text()
             if invoice_num == "TOTAL": return
 
-            # Fetch sale ID
-            try:
-                with db_manager.get_pharmacy_connection() as conn:
-                    # Invoice number in table is from column 0
-                    sale = conn.execute("SELECT id, payment_type FROM pharmacy_sales WHERE invoice_number=?", (invoice_num,)).fetchone()
-                    if sale:
-                        sale_id = sale['id']
-                        is_credit = (sale['payment_type'] == 'CREDIT')
-                        
-                        # Generate Bill
-                        from src.utils.thermal_bill_printer import thermal_printer
-                        bill_text = thermal_printer.generate_sales_bill(sale_id, is_credit, is_pharmacy=True)
-                        if bill_text:
-                            # Ask to print
-                            if QMessageBox.question(self, lang_manager.get("reprint_bill"), f"{lang_manager.get('reprint_bill')} {invoice_num}?", 
-                                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-                                thermal_printer.print_bill(bill_text)
-                    else:
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_fetch_and_generate():
+                try:
+                    with db_manager.get_pharmacy_connection() as conn:
+                        sale = conn.execute("SELECT id, payment_type FROM pharmacy_sales WHERE invoice_number=?", (invoice_num,)).fetchone()
+                        if sale:
+                            sale_id = sale['id']
+                            is_credit = (sale['payment_type'] == 'CREDIT')
+                            
+                            from src.utils.thermal_bill_printer import thermal_printer
+                            bill_text = thermal_printer.generate_sales_bill(sale_id, is_credit, is_pharmacy=True)
+                            return {"success": True, "bill_text": bill_text, "invoice_num": invoice_num}
+                        return {"success": False, "error": "not_found"}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+
+            def on_finished(result):
+                if result["success"]:
+                    bill_text = result["bill_text"]
+                    if bill_text:
+                        if QMessageBox.question(self, lang_manager.get("reprint_bill"), f"{lang_manager.get('reprint_bill')} {result['invoice_num']}?", 
+                                              QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                            # Fix 2: print_bill off UI thread
+                            from src.utils.thermal_bill_printer import thermal_printer
+                            task_manager.run_task(
+                                lambda: thermal_printer.print_bill(bill_text),
+                                on_finished=lambda r: None
+                            )
+                else:
+                    if result["error"] == "not_found":
                         QMessageBox.warning(self, lang_manager.get("error"), lang_manager.get("not_found"))
-            except Exception as e:
-                print(f"Error handling click: {e}")
+                    else:
+                        print(f"Error handling click: {result['error']}")
+
+            task_manager.run_task(do_fetch_and_generate, on_finished=on_finished)
 
     def open_month_close(self):
         dialog = PharmacyMonthCloseDialog(self)
@@ -769,23 +794,42 @@ class PharmacyReportsView(QWidget):
             QMessageBox.information(self, lang_manager.get("no_data"), lang_manager.get("no_data"))
             return
 
-        # Create printer
-        printer = QPrinter()
-        printer.setPageOrientation(QPageLayout.Orientation.Portrait)
-        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        from src.core.blocking_task_manager import task_manager
+        
+        def extract_data():
+            rows = table.rowCount()
+            cols = table.columnCount()
+            data = []
+            headers = [table.horizontalHeaderItem(i).text() for i in range(cols) if table.horizontalHeaderItem(i)]
+            for r in range(rows):
+                row_data = []
+                for c in range(cols):
+                    item = table.item(r, c)
+                    row_data.append(item.text() if item else "")
+                data.append(row_data)
+            return {"headers": headers, "data": data}
 
-        # Create print preview dialog
-        preview = QPrintPreviewDialog(printer, self)
-        preview.setWindowTitle(f"Print Preview - {title}")
-        preview.setMinimumSize(800, 600)
+        def on_finished(result):
+            # Create printer
+            from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog
+            printer = QPrinter()
+            printer.setPageOrientation(QPageLayout.Orientation.Portrait)
+            printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
 
-        # Connect print function
-        preview.paintRequested.connect(lambda p: self.render_table_document(p, title, table))
+            # Create print preview dialog
+            preview = QPrintPreviewDialog(printer, self)
+            preview.setWindowTitle(f"Print Preview - {title}")
+            preview.setMinimumSize(800, 600)
 
-        # Show preview
-        preview.exec()
+            # Connect print function
+            preview.paintRequested.connect(lambda p: self.render_table_document(p, title, result['headers'], result['data']))
 
-    def render_table_document(self, printer, title, table):
+            # Show preview
+            preview.exec()
+
+        task_manager.run_task(extract_data, on_finished=on_finished)
+
+    def render_table_document(self, printer, title, headers, data):
         """Render table as printable document"""
         document = QTextDocument()
         cursor = QTextCursor(document)
@@ -809,8 +853,8 @@ class PharmacyReportsView(QWidget):
         cursor.insertText("\n")
 
         # Create table
-        rows = table.rowCount()
-        cols = table.columnCount()
+        rows = len(data)
+        cols = len(headers)
 
         if rows > 0 and cols > 0:
             # Create table format
@@ -829,18 +873,14 @@ class PharmacyReportsView(QWidget):
             header_format.setBackground(QColor("#f0f0f0"))
 
             for col in range(cols):
-                header_item = table.horizontalHeaderItem(col)
-                if header_item:
-                    cell_cursor = text_table.cellAt(0, col).firstCursorPosition()
-                    cell_cursor.insertText(header_item.text(), header_format)
+                cell_cursor = text_table.cellAt(0, col).firstCursorPosition()
+                cell_cursor.insertText(headers[col], header_format)
 
             # Data rows
-            for row in range(rows):
-                for col in range(cols):
-                    item = table.item(row, col)
-                    if item:
-                        cell_cursor = text_table.cellAt(row + 1, col).firstCursorPosition()
-                        cell_cursor.insertText(item.text())
+            for r_idx, row_data in enumerate(data):
+                for c_idx, text in enumerate(row_data):
+                    cell_cursor = text_table.cellAt(r_idx + 1, c_idx).firstCursorPosition()
+                    cell_cursor.insertText(text)
 
         # Footer with summary
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -851,59 +891,54 @@ class PharmacyReportsView(QWidget):
         footer_format.setFontItalic(True)
 
         if lang_manager.get("critical_stock_alert") in title or lang_manager.get("low_stock_medicines") in title:
-            low_stock_count = table.rowCount()
-            cursor.insertText(f"{lang_manager.get('total_low_stock_items')}: {low_stock_count}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('total_low_stock_items')}: {rows}\n", footer_format)
 
         elif lang_manager.get("transaction_details") in title:
             total_sales = 0
             total_items = 0
-            for row in range(table.rowCount()):
-                amount_item = table.item(row, 3)  # Amount column
-                items_item = table.item(row, 2)   # Items column
-                if amount_item and "AFN" in amount_item.text():
+            for row_data in data:
+                # Assuming Amount is column 3 and Items is column 2 based on original code
+                if len(row_data) > 3:
+                    amount_text = row_data[3]
+                    items_text = row_data[2]
+                    if "AFN" in amount_text:
+                        try:
+                            amount = float(amount_text.replace(',', '').replace(' AFN', ''))
+                            total_sales += amount
+                        except: pass
                     try:
-                        amount = float(amount_item.text().replace(',', '').replace(' AFN', ''))
-                        total_sales += amount
-                    except:
-                        pass
-                if items_item:
-                    try:
-                        total_items += int(items_item.text())
-                    except:
-                        pass
-            cursor.insertText(f"{lang_manager.get('total_transactions')}: {table.rowCount()}\n", footer_format)
+                        total_items += int(items_text)
+                    except: pass
+            cursor.insertText(f"{lang_manager.get('total_transactions')}: {rows}\n", footer_format)
             cursor.insertText(f"{lang_manager.get('total_items_sold')}: {total_items}\n", footer_format)
             cursor.insertText(f"{lang_manager.get('total_sales_amount')}: {total_sales:,.2f} AFN\n", footer_format)
 
         elif lang_manager.get("credit_loan_info") in title:
             total_loans = 0
             total_balance = 0
-            for row in range(table.rowCount()):
-                loan_item = table.item(row, 2)  # Total Loan column
-                balance_item = table.item(row, 3)  # Balance column
-                if loan_item:
+            for row_data in data:
+                if len(row_data) > 3:
+                    loan_text = row_data[2]
+                    balance_text = row_data[3]
                     try:
-                        total_loans += float(loan_item.text().replace(',', '').replace(' AFN', ''))
-                    except:
-                        pass
-                if balance_item:
+                        total_loans += float(loan_text.replace(',', '').replace(' AFN', ''))
+                    except: pass
                     try:
-                        total_balance += float(balance_item.text().replace(',', '').replace(' AFN', ''))
-                    except:
-                        pass
-            cursor.insertText(f"{lang_manager.get('total_active_loans')}: {table.rowCount()}\n", footer_format)
+                        total_balance += float(balance_text.replace(',', '').replace(' AFN', ''))
+                    except: pass
+            cursor.insertText(f"{lang_manager.get('total_active_loans')}: {rows}\n", footer_format)
             cursor.insertText(f"{lang_manager.get('total_loan_amount')}: {total_loans:,.2f} AFN\n", footer_format)
             cursor.insertText(f"{lang_manager.get('total_outstanding_balance')}: {total_balance:,.2f} AFN\n", footer_format)
 
         elif lang_manager.get("medicine_expiry_status") in title:
             expired_count = 0
-            for row in range(table.rowCount()):
-                status_item = table.item(row, 4)
-                if status_item and status_item.text() == "EXPIRED":
-                    expired_count += 1
-            cursor.insertText(f"{lang_manager.get('total_items_monitored')}: {table.rowCount()}\n", footer_format)
+            for row_data in data:
+                if len(row_data) > 4:
+                    if row_data[4] == "EXPIRED":
+                        expired_count += 1
+            cursor.insertText(f"{lang_manager.get('total_items_monitored')}: {rows}\n", footer_format)
             cursor.insertText(f"{lang_manager.get('already_expired_count')}: {expired_count}\n", footer_format)
-            cursor.insertText(f"{lang_manager.get('nearing_expiry')}: {table.rowCount() - expired_count}\n", footer_format)
+            cursor.insertText(f"{lang_manager.get('nearing_expiry')}: {rows - expired_count}\n", footer_format)
 
         # Print the document
         document.print(printer)
@@ -924,95 +959,90 @@ class PharmacyReportsView(QWidget):
         if not filename:
             return
             
-        try:
-            workbook = xlsxwriter.Workbook(filename)
-            # Formats
-            header_format = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-            cell_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-            currency_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': '#,##0.00 "AFN"'})
-            date_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': 'yyyy-mm-dd'})
-            red_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_color': 'red'})
-            
-            # Helper to write table to sheet
-            def write_table_to_sheet(sheet_name, table, columns):
-                # Clean sheet name (max 31 chars, no invalid chars)
-                safe_name = sheet_name.replace(":", "").replace("/", "-")[:30]
-                worksheet = workbook.add_worksheet(safe_name)
-                
-                # Write Header
-                for col_num, header in enumerate(columns):
-                    worksheet.write(0, col_num, header, header_format)
-                    
-                # Write Data
-                for row_num in range(table.rowCount()):
-                    for col_num in range(table.columnCount()):
-                        item = table.item(row_num, col_num)
-                        text = item.text() if item else ""
-                        
-                        # Check specific column types for formatting
-                        # This is a heuristic based on content
-                        
-                        # Default format
-                        fmt = cell_format
-                        
-                        # Apply Red text if item has red foreground (e.g. Expiry or Low Stock)
-                        if item and item.foreground().color().name() == "#ff0000" or \
-                           (item and item.foreground().color().name() == "#d32f2f"): # Check for our specific red
-                            fmt = red_format
-                        
-                        # Try to write numbers/dates
-                        try:
-                            if "AFN" in text: # Currency
-                                val = float(text.replace("AFN", "").replace(",", "").strip())
-                                worksheet.write(row_num + 1, col_num, val, currency_format)
-                            elif text.replace(".", "", 1).isdigit(): # Number
-                                # Check if integer or float
-                                if "." in text:
-                                    worksheet.write(row_num + 1, col_num, float(text), fmt)
-                                else:
-                                    worksheet.write(row_num + 1, col_num, int(text), fmt)
-                            else:
-                                worksheet.write(row_num + 1, col_num, text, fmt)
-                        except:
-                            worksheet.write(row_num + 1, col_num, text, fmt)
-                            
-                # Auto-fit columns (approximate)
-                worksheet.set_column(0, len(columns) - 1, 20)
-            
-            # 1. Transactions
-            trans_cols = [self.trans_table.horizontalHeaderItem(i).text() for i in range(self.trans_table.columnCount())]
-            write_table_to_sheet("Transactions", self.trans_table, trans_cols)
-            
-            # 2. Returns
-            if hasattr(self, 'ret_table'):
-                ret_cols = [self.ret_table.horizontalHeaderItem(i).text() for i in range(self.ret_table.columnCount())]
-                write_table_to_sheet("Returns", self.ret_table, ret_cols)
-            
-            # 3. Loans
-            loan_cols = [self.loan_table.horizontalHeaderItem(i).text() for i in range(self.loan_table.columnCount())]
-            write_table_to_sheet("Loans", self.loan_table, loan_cols)
-            
-            # 4. Low Stock
-            stock_cols = [self.low_stock_table.horizontalHeaderItem(i).text() for i in range(self.low_stock_table.columnCount())]
-            write_table_to_sheet("Low Stock", self.low_stock_table, stock_cols)
-            
-            # 5. Expiry
-            expiry_cols = [self.expiry_table.horizontalHeaderItem(i).text() for i in range(self.expiry_table.columnCount())]
-            write_table_to_sheet("Expiry", self.expiry_table, expiry_cols)
-            
-            workbook.close()
-            
-            QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('report_saved_success')}\n{filename}")
-            
-            # Open the file
+        # Extract table data on UI thread (fast - just reading QTableWidget items)
+        table_exports = []
+        table_configs = [
+            ("Transactions", self.trans_table),
+            ("Returns", self.ret_table if hasattr(self, 'ret_table') else None),
+            ("Loans", self.loan_table),
+            ("Low Stock", self.low_stock_table),
+            ("Expiry", self.expiry_table),
+        ]
+        
+        for sheet_name, table in table_configs:
+            if table is None:
+                continue
+            cols = [table.horizontalHeaderItem(i).text() for i in range(table.columnCount()) if table.horizontalHeaderItem(i)]
+            rows_data = []
+            for r in range(table.rowCount()):
+                row_cells = []
+                for c in range(table.columnCount()):
+                    item = table.item(r, c)
+                    text = item.text() if item else ""
+                    is_red = False
+                    if item:
+                        fg = item.foreground().color().name()
+                        if fg in ("#ff0000", "#d32f2f"):
+                            is_red = True
+                    row_cells.append({"text": text, "is_red": is_red})
+                rows_data.append(row_cells)
+            table_exports.append({"sheet": sheet_name, "cols": cols, "rows": rows_data})
+        
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_export():
             try:
-                if os.name == 'nt': # Windows
-                    os.startfile(filename)
-                elif os.name == 'posix': # macOS/Linux
-                    import subprocess
-                    subprocess.call(('open', filename))
-            except:
-                pass
+                import xlsxwriter
+                workbook = xlsxwriter.Workbook(filename)
+                header_format = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+                cell_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
+                currency_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': '#,##0.00 "AFN"'})
+                red_format = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_color': 'red'})
                 
-        except Exception as e:
-            QMessageBox.critical(self, lang_manager.get("error"), f"Failed to export Excel: {str(e)}")
+                for export in table_exports:
+                    safe_name = export["sheet"].replace(":", "").replace("/", "-")[:30]
+                    worksheet = workbook.add_worksheet(safe_name)
+                    
+                    for col_num, header in enumerate(export["cols"]):
+                        worksheet.write(0, col_num, header, header_format)
+                    
+                    for row_num, row_cells in enumerate(export["rows"]):
+                        for col_num, cell in enumerate(row_cells):
+                            text = cell["text"]
+                            fmt = red_format if cell["is_red"] else cell_format
+                            try:
+                                if "AFN" in text:
+                                    val = float(text.replace("AFN", "").replace(",", "").strip())
+                                    worksheet.write(row_num + 1, col_num, val, currency_format)
+                                elif text.replace(".", "", 1).isdigit():
+                                    if "." in text:
+                                        worksheet.write(row_num + 1, col_num, float(text), fmt)
+                                    else:
+                                        worksheet.write(row_num + 1, col_num, int(text), fmt)
+                                else:
+                                    worksheet.write(row_num + 1, col_num, text, fmt)
+                            except:
+                                worksheet.write(row_num + 1, col_num, text, fmt)
+                    
+                    worksheet.set_column(0, len(export["cols"]) - 1, 20)
+                
+                workbook.close()
+                return {"success": True}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        def on_export_finished(result):
+            if result["success"]:
+                QMessageBox.information(self, lang_manager.get("success"), f"{lang_manager.get('report_saved_success')}\n{filename}")
+                try:
+                    if os.name == 'nt':
+                        os.startfile(filename)
+                    elif os.name == 'posix':
+                        import subprocess
+                        subprocess.call(('open', filename))
+                except:
+                    pass
+            else:
+                QMessageBox.critical(self, lang_manager.get("error"), f"Failed to export Excel: {result['error']}")
+        
+        task_manager.run_task(do_export, on_finished=on_export_finished)

@@ -422,7 +422,8 @@ class StoreInventoryView(QWidget):
     def __init__(self):
         super().__init__()
         self.current_user = Auth.get_current_user()
-        self.can_edit = self.current_user['role_name'] in ['Admin', 'Manager']
+        perms = Auth.get_user_permissions(self.current_user)
+        self.can_edit = '*' in perms or 'inventory' in perms or 'inventory_edit' in perms
         self.is_loading = False
         
         # Debounce timer for refreshing
@@ -455,10 +456,19 @@ class StoreInventoryView(QWidget):
         header = QHBoxLayout()
         header.setSpacing(15)
         
-        # Barcode Scanner for Stock Intake
+        # Barcode Scanner / Search
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search by product name or barcode...")
+        self.search_input.setFixedWidth(400)
+        self.search_input.setFixedHeight(35)
+        self.search_input.textChanged.connect(self.load_products)
+        header.addWidget(self.search_input)
+        
+        # Scan Input (dedicated for rapid intake)
         self.scan_input = QLineEdit()
-        self.scan_input.setPlaceholderText("Scan barcode to update stock...")
-        self.scan_input.setFixedWidth(400)
+        self.scan_input.setPlaceholderText("Scan to update stock...")
+        self.scan_input.setFixedWidth(200)
+        self.scan_input.setFixedHeight(35)
         self.scan_input.returnPressed.connect(self.handle_barcode_scan)
         header.addWidget(self.scan_input)
         
@@ -492,21 +502,57 @@ class StoreInventoryView(QWidget):
         
         layout.addLayout(header)
         
-        self.table = QTableWidget(0, 8)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
-            "ID", "Barcode", "Product Name", "Brand", "Cost", "Price", "Qty", "Actions"
+            "ID", "Barcode", "Product Name", "Brand", "Rack", "Cost", "Price", "Qty", "Actions"
         ])
         style_table(self.table, variant="premium")
         # Product Name stretches, others fit content (via style_table default)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.table.setColumnWidth(7, 180) # Actions column fixed size
+        self.table.setColumnWidth(8, 180) # Actions column fixed size
         layout.addWidget(self.table)
         
+        # Pagination Controls
+        pag_layout = QHBoxLayout()
+        pag_layout.addStretch()
+        
+        self.page_label = QLabel("Page 1")
+        self.btn_prev = QPushButton("Previous")
+        self.btn_next = QPushButton("Next")
+        
+        style_button(self.btn_prev, variant="outline", size="small")
+        style_button(self.btn_next, variant="outline", size="small")
+        
+        self.btn_prev.clicked.connect(self.prev_page)
+        self.btn_next.clicked.connect(self.next_page)
+        
+        pag_layout.addWidget(self.btn_prev)
+        pag_layout.addWidget(self.page_label)
+        pag_layout.addWidget(self.btn_next)
+        pag_layout.addStretch()
+        
+        layout.addLayout(pag_layout)
+        
         main_layout.addWidget(self.container)
+        
+        self.current_page = 1
+        self.page_size = 50
+        self.total_item_count = 0
 
     def load_products(self):
         """Trigger debounced load"""
         self.refresh_timer.start()
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.load_products()
+
+    def next_page(self):
+        total_pages = (self.total_item_count + self.page_size - 1) // self.page_size
+        if self.current_page < total_pages:
+            self.current_page += 1
+            self.load_products()
 
     def _do_load_products(self):
         # Skip if app is not active or view not visible
@@ -519,22 +565,46 @@ class StoreInventoryView(QWidget):
         
         from src.core.blocking_task_manager import task_manager
         
+        search_query = self.search_input.text().strip()
+        offset = (self.current_page - 1) * self.page_size
+        limit = self.page_size
+        
         def fetch_data():
             lang_col = f'name_{lang_manager.current_lang}'
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(f"""
+                
+                base_query = "FROM products p LEFT JOIN inventory i ON p.id = i.product_id WHERE p.is_active = 1"
+                params = []
+                
+                if search_query:
+                    base_query += f" AND (p.{lang_col} LIKE ? OR p.barcode LIKE ? OR p.brand LIKE ?)"
+                    params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
+                
+                count = cursor.execute(f"SELECT COUNT(*) {base_query}", params).fetchone()[0]
+                
+                query = f"""
                     SELECT p.*, i.quantity 
-                    FROM products p 
-                    LEFT JOIN inventory i ON p.id = i.product_id
-                    WHERE p.is_active = 1
+                    {base_query}
                     ORDER BY p.id DESC
-                """)
-                return [dict(row) for row in cursor.fetchall()], lang_col
+                    LIMIT ? OFFSET ?
+                """
+                params.extend([limit, offset])
+                cursor.execute(query, params)
+                return [dict(row) for row in cursor.fetchall()], lang_col, count
 
         def on_loaded(result):
             self.is_loading = False
-            products, lang_col = result
+            products, lang_col, total_count = result
+            self.total_item_count = total_count
+            
+            # Update Pagination Controls
+            total_pages = (total_count + self.page_size - 1) // self.page_size
+            self.page_label.setText(f"Page {self.current_page} of {total_pages if total_pages > 0 else 1}")
+            self.btn_prev.setEnabled(self.current_page > 1)
+            self.btn_next.setEnabled(self.current_page < total_pages)
+            
+            self.table.setUpdatesEnabled(False)
             self.table.setRowCount(0)
             for i, p in enumerate(products):
                 name = p.get(lang_col) or p.get('name_en')
@@ -543,8 +613,9 @@ class StoreInventoryView(QWidget):
                 self.table.setItem(i, 1, QTableWidgetItem(p['barcode']))
                 self.table.setItem(i, 2, QTableWidgetItem(name))
                 self.table.setItem(i, 3, QTableWidgetItem(str(p['brand'] or 'N/A')))
-                self.table.setItem(i, 4, QTableWidgetItem(lang_manager.localize_digits(f"{p['cost_price']:.2f}")))
-                self.table.setItem(i, 5, QTableWidgetItem(lang_manager.localize_digits(f"{p['sale_price']:.2f}")))
+                self.table.setItem(i, 4, QTableWidgetItem(str(p.get('shelf_location') or '')))
+                self.table.setItem(i, 5, QTableWidgetItem(lang_manager.localize_digits(f"{p['cost_price']:.2f}")))
+                self.table.setItem(i, 6, QTableWidgetItem(lang_manager.localize_digits(f"{p['sale_price']:.2f}")))
                 
                 qty_val = p['quantity'] or 0
                 qty_item = QTableWidgetItem(lang_manager.localize_digits(str(qty_val)))
@@ -553,7 +624,7 @@ class StoreInventoryView(QWidget):
                     font = qty_item.font()
                     font.setBold(True)
                     qty_item.setFont(font)
-                self.table.setItem(i, 6, qty_item)
+                self.table.setItem(i, 7, qty_item)
                 
                 # Actions
                 actions = QWidget()
@@ -583,12 +654,13 @@ class StoreInventoryView(QWidget):
                     act_layout.addWidget(edit_btn)
                     act_layout.addWidget(del_btn)
                 
-                self.table.setCellWidget(i, 7, actions)
+                self.table.setCellWidget(i, 8, actions)
             
+            self.table.setUpdatesEnabled(True)
             # Auto-fit columns to content once the table is populated
             self.table.resizeColumnsToContents()
             # Ensure actions column is still usable
-            self.table.setColumnWidth(7, 180)
+            self.table.setColumnWidth(8, 180)
 
         def on_error(_err):
             self.is_loading = False
@@ -672,7 +744,9 @@ class StoreInventoryView(QWidget):
         if dialog.exec():
             data = dialog.get_data()
             if not data: return
-            try:
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_add():
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
@@ -697,16 +771,24 @@ class StoreInventoryView(QWidget):
                     product_id = cursor.lastrowid
                     cursor.execute("INSERT INTO inventory (product_id, quantity) VALUES (?, ?)", (product_id, data['quantity']))
                     conn.commit()
+                return True
+
+            def on_finished(_):
                 self.load_products()
-            except Exception as e:
-                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {e}")
+
+            def on_error(err):
+                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {err}")
+
+            task_manager.run_task(do_add, on_finished=on_finished, on_error=on_error)
 
     def edit_product(self, product):
         dialog = ProductDialog(product)
         if dialog.exec():
             data = dialog.get_data()
             if not data: return
-            try:
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_edit():
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
@@ -731,9 +813,15 @@ class StoreInventoryView(QWidget):
                     ))
                     cursor.execute("INSERT OR REPLACE INTO inventory (product_id, quantity) VALUES (?, ?)", (product['id'], data['quantity']))
                     conn.commit()
+                return True
+
+            def on_finished(_):
                 self.load_products()
-            except Exception as e:
-                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {e}")
+
+            def on_error(err):
+                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {err}")
+
+            task_manager.run_task(do_edit, on_finished=on_finished, on_error=on_error)
 
     def manage_categories(self):
         CategoryManagerDialog(self).exec()
@@ -816,7 +904,10 @@ class StoreInventoryView(QWidget):
         )
         
         if filename:
-            try:
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_export():
+                import csv
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
@@ -840,10 +931,15 @@ class StoreInventoryView(QWidget):
                             p['cost_price'], p['sale_price'], p['quantity'] or 0, 
                             p['min_stock'], p['unit'] or 'pcs'
                         ])
-                
+                return True
+
+            def on_finished(_):
                 QMessageBox.information(self, lang_manager.get("success"), lang_manager.get("success"))
-            except Exception as e:
-                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {str(e)}")
+
+            def on_error(err):
+                QMessageBox.critical(self, lang_manager.get("error"), f"{lang_manager.get('error')}: {str(err)}")
+
+            task_manager.run_task(do_export, on_finished=on_finished, on_error=on_error)
     
     def print_labels(self):
         """Generate printable barcode labels"""
@@ -870,47 +966,61 @@ class StoreInventoryView(QWidget):
         style_table(table, variant="compact")
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT p.name_en, p.brand, i.quantity, p.min_stock
-                FROM products p
-                LEFT JOIN inventory i ON p.id = i.product_id
-                WHERE p.is_active = 1 AND (i.quantity IS NULL OR i.quantity <= p.min_stock)
-                ORDER BY i.quantity ASC
-            """)
-            low_stock_items = cursor.fetchall()
+        from src.core.blocking_task_manager import task_manager
         
-        for i, item in enumerate(low_stock_items):
-            table.insertRow(i)
-            table.setItem(i, 0, QTableWidgetItem(item['name_en']))
-            table.setItem(i, 1, QTableWidgetItem(item['brand'] or 'N/A'))
+        def do_fetch_low_stock():
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT p.name_en, p.brand, i.quantity, p.min_stock
+                    FROM products p
+                    LEFT JOIN inventory i ON p.id = i.product_id
+                    WHERE p.is_active = 1 AND (i.quantity IS NULL OR i.quantity <= p.min_stock)
+                    ORDER BY i.quantity ASC
+                """)
+                return cursor.fetchall()
+
+        def on_finished(low_stock_items):
+            for i, item in enumerate(low_stock_items):
+                table.insertRow(i)
+                table.setItem(i, 0, QTableWidgetItem(item['name_en']))
+                table.setItem(i, 1, QTableWidgetItem(item['brand'] or 'N/A'))
+                
+                qty = item['quantity'] or 0
+                qty_item = QTableWidgetItem(str(qty))
+                qty_item.setForeground(Qt.GlobalColor.red)
+                table.setItem(i, 2, qty_item)
+                
+                table.setItem(i, 3, QTableWidgetItem(str(item['min_stock'])))
+                
+                status = "⚠️ OUT OF STOCK" if qty == 0 else "⚠️ LOW STOCK"
+                status_item = QTableWidgetItem(status)
+                status_item.setForeground(Qt.GlobalColor.red)
+                table.setItem(i, 4, status_item)
             
-            qty = item['quantity'] or 0
-            qty_item = QTableWidgetItem(str(qty))
-            qty_item.setForeground(Qt.GlobalColor.red)
-            table.setItem(i, 2, qty_item)
+            layout.addWidget(table)
             
-            table.setItem(i, 3, QTableWidgetItem(str(item['min_stock'])))
+            close_btn = QPushButton("Close")
+            style_button(close_btn, variant="secondary")
+            close_btn.clicked.connect(low_stock_dialog.close)
+            layout.addWidget(close_btn)
             
-            status = "⚠️ OUT OF STOCK" if qty == 0 else "⚠️ LOW STOCK"
-            status_item = QTableWidgetItem(status)
-            status_item.setForeground(Qt.GlobalColor.red)
-            table.setItem(i, 4, status_item)
-        
-        layout.addWidget(table)
-        
-        close_btn = QPushButton("Close")
-        style_button(close_btn, variant="secondary")
-        close_btn.clicked.connect(low_stock_dialog.close)
-        layout.addWidget(close_btn)
-        
-        low_stock_dialog.exec()
+            low_stock_dialog.exec()
+
+        task_manager.run_task(do_fetch_low_stock, on_finished=on_finished)
         
     def delete_product(self, pid):
         if QMessageBox.question(self, lang_manager.get("delete"), lang_manager.get("confirm_delete"), QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE products SET is_active = 0 WHERE id=?", (pid,))
-                conn.commit()
-            self.load_products()
+            from src.core.blocking_task_manager import task_manager
+            
+            def do_delete():
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE products SET is_active = 0 WHERE id=?", (pid,))
+                    conn.commit()
+                return True
+
+            def on_finished(_):
+                self.load_products()
+
+            task_manager.run_task(do_delete, on_finished=on_finished)

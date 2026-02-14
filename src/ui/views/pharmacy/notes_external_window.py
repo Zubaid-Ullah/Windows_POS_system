@@ -553,6 +553,14 @@ class NotesExternalWindow(QWidget):
         self.closed.emit()
         self.close()
 
+    def closeEvent(self, event):
+        """Safety net: always re-enable parent even if closed via system X button"""
+        self.player.stop()
+        if self.parent_to_reenable:
+            self.parent_to_reenable.setEnabled(True)
+        self.closed.emit()
+        super().closeEvent(event)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_pos = event.globalPosition().toPoint()

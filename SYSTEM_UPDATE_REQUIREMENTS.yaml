@@ -1,0 +1,124 @@
+
+---
+
+## Donut Chart Rules
+
+Use `PyQt6.QtCharts`:
+
+- `QPieSeries`
+- `QChart`
+
+### Show:
+- Top 5 Most Sold Products
+
+### Color Buckets:
+| Percentage | Color  |
+|------------|--------|
+| 0–25%      | Red    |
+| 25–50%     | Orange |
+| 50–75%     | Blue   |
+| 75%+       | Green  |
+
+### Hover Popup:
+Show:
+- Product Name
+- Barcode
+- Sold Percentage
+
+---
+
+# 4️⃣ Finance Filters
+
+Add filter support:
+
+- Daily
+- Weekly
+- Monthly
+- Custom Range (From → To)
+- Specific Day
+
+Use:
+- `QDateEdit`
+- `QComboBox`
+
+---
+
+# 5️⃣ Price Check Window
+
+Enhancements:
+
+- Auto-focus search input on window open.
+- Display:
+  - Product Name
+  - Barcode
+  - Remaining Quantity
+  - Rack / Location
+
+---
+
+# 6️⃣ Reports Window Enhancements
+
+- Replace payment-method pie chart with:
+  - Top 5 Sold Items donut chart.
+- Add Expiry Stock section:
+  - Use spinbox to filter by days.
+  - Expired items must display in red.
+
+---
+
+# 7️⃣ Camera Selection
+
+When activating camera:
+
+- Show available camera devices.
+- Allow user selection.
+- Support multiple cameras.
+
+---
+
+# 8️⃣ Settings Window
+
+Add two receipt note fields:
+
+- Walk-in Customer Note
+- Trusted Customer Note
+
+---
+
+# 9️⃣ Performance Optimization (CRITICAL)
+
+## Goal:
+Prevent UI freeze in Finance and Sales windows.
+
+## Implementation:
+
+- Move heavy database queries to worker threads (`QThread` or task_manager).
+- Avoid blocking UI thread.
+- Optimize dashboard calculations.
+- Implement lazy loading where applicable.
+
+---
+
+# 🔍 Verification Plan
+
+## Automated:
+- Test `pdf_generator_v2` with large datasets.
+- Validate permission keys in `Auth`.
+
+## Manual:
+- Verify Dashboard scroll.
+- Confirm Expense and Overview tabs are separate.
+- Test Inventory pagination (>50 products).
+- Verify Donut chart values match database.
+- Test camera selection dialog.
+- Confirm no UI freezing during heavy operations.
+
+---
+
+# Final Notes
+
+- UI must remain visually consistent.
+- No hover effects should be altered.
+- No hardcoded permission bypass.
+- Clarify before making structural changes.
+

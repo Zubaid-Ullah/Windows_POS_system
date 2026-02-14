@@ -11,6 +11,7 @@ from src.core.localization import lang_manager
 class PharmacyLoanView(QWidget):
     def __init__(self):
         super().__init__()
+        self._current_request_id = 0
         self.init_ui()
 
     def init_ui(self):
@@ -21,8 +22,15 @@ class PharmacyLoanView(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(lang_manager.get("search") + " " + lang_manager.get("customer") + "...")
         self.search_input.setMinimumHeight(55)
-        self.search_input.textChanged.connect(self.load_loans)
+        self.search_input.setMinimumHeight(55)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
         layout.addWidget(self.search_input)
+
+        from PyQt6.QtCore import QTimer
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(300) # 300ms debounce
+        self.search_timer.timeout.connect(self._do_load_loans)
 
         # Table
         self.table = QTableWidget(0, 6)
@@ -32,14 +40,23 @@ class PharmacyLoanView(QWidget):
         ])
         style_table(self.table, variant="premium")
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.resizeColumnsToContents()
         layout.addWidget(self.table)
         
         self.load_loans()
 
+    def on_search_text_changed(self, text):
+        self.search_timer.start()
+
     def load_loans(self):
+        self._do_load_loans()
+
+    def _do_load_loans(self):
         search = self.search_input.text().strip()
         from src.core.blocking_task_manager import task_manager
+        
+        # Request-id cancellation: discard stale results from fast typing
+        self._current_request_id += 1
+        request_id = self._current_request_id
         
         def do_load():
             try:
@@ -56,15 +73,19 @@ class PharmacyLoanView(QWidget):
                         params = [f"%{search}%"]
                     
                     rows = conn.execute(query, params).fetchall()
-                    return {"success": True, "rows": [dict(r) for r in rows]}
+                    return {"success": True, "rows": [dict(r) for r in rows], "request_id": request_id}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": str(e), "request_id": request_id}
 
         def on_finished(result):
+            # Discard stale result if a newer request was issued
+            if result.get("request_id") != self._current_request_id:
+                return
             if not result["success"]:
                 print(f"Error loading loans: {result['error']}")
                 return
-                
+            
+            self.table.setUpdatesEnabled(False)
             self.table.setRowCount(0)
             rows = result["rows"]
             for i, row in enumerate(rows):
@@ -104,6 +125,8 @@ class PharmacyLoanView(QWidget):
                 act_layout.addWidget(pay_btn)
                 act_layout.addWidget(detail_btn)
                 self.table.setCellWidget(i, 5, actions)
+            
+            self.table.setUpdatesEnabled(True)
             
             # Autofit logic
             self.table.resizeColumnsToContents()
@@ -225,10 +248,12 @@ class PharmacyLoanView(QWidget):
                     with db_manager.get_pharmacy_connection() as conn:
                         cursor = conn.cursor()
                         
-                        # 1. Fetch latest balance to be safe
-                        curr_loan = cursor.execute("SELECT balance FROM pharmacy_loans WHERE id=?", (loan_id,)).fetchone()
+                        # 1. Fetch latest balance AND sale_id to be safe
+                        curr_loan = cursor.execute("SELECT balance, sale_id FROM pharmacy_loans WHERE id=?", (loan_id,)).fetchone()
                         if not curr_loan:
                             return {"success": False, "error": "Loan record not found"}
+                        
+                        linked_sale_id = curr_loan['sale_id']
                             
                         # 2. Update loan
                         latest_bal = curr_loan['balance']
@@ -243,11 +268,11 @@ class PharmacyLoanView(QWidget):
                         cursor.execute("UPDATE pharmacy_customers SET balance = balance - ? WHERE id=?", 
                                      (amount, customer_id))
                         
-                        # 4. Record payment
+                        # 4. Record payment (include sale_id for Cash Realized Profit tracking)
                         cursor.execute("""
-                            INSERT INTO pharmacy_payments (loan_id, customer_id, amount, payment_method)
-                            VALUES (?, ?, ?, ?)
-                        """, (loan_id, customer_id, amount, 'CASH'))
+                            INSERT INTO pharmacy_payments (sale_id, loan_id, customer_id, amount, payment_method)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (linked_sale_id, loan_id, customer_id, amount, 'CASH'))
                         
                         conn.commit()
                         return {"success": True, "amount": amount}

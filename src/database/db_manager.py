@@ -37,19 +37,19 @@ class DatabaseManager:
             self.store_db = db_path
             self.pharmacy_db = db_path.replace(".db", "_pharmacy.db")
 
-        self.get_connection = self.get_store_connection # Alias for backward compatibility if needed
+        # self.get_connection = self.get_store_connection # Alias removed to prevent shadowing
 
         self._create_store_tables()
         self._create_pharmacy_tables()
+        self._check_and_migrate_tables()
         self.seed_initial_data()
         self._enable_wal_mode()
         self._auto_backup()
 
     def get_store_connection(self):
         """Returns connection to General Store database (Main)."""
-        conn = sqlite3.connect(self.store_db)
-        conn.row_factory = sqlite3.Row
-        return conn
+        # Redirect to main method to ensure safety checks
+        return self.get_connection()
 
     def _auto_backup(self):
         """Creates timestamped auto-backups for both databases."""
@@ -80,14 +80,18 @@ class DatabaseManager:
     def get_connection(self):
         """Returns connection to General Store database (Main)."""
         self._check_thread_safety()
-        conn = sqlite3.connect(self.store_db, check_same_thread=False)
+        # Increased timeout to 30s to prevent 'database locked' errors during concurrency
+        conn = sqlite3.connect(self.store_db, timeout=30.0, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 30000") # Ensure SQLite internal busy handler waits
         conn.row_factory = sqlite3.Row
         return conn
 
     def get_pharmacy_connection(self):
         """Returns connection to Pharmacy database (Isolated)."""
         self._check_thread_safety()
-        conn = sqlite3.connect(self.pharmacy_db, check_same_thread=False)
+        # Increased timeout to 30s
+        conn = sqlite3.connect(self.pharmacy_db, timeout=30.0, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -157,7 +161,7 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS sales (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_number TEXT UNIQUE NOT NULL, user_id INTEGER,
                     customer_id INTEGER, total_amount REAL NOT NULL, payment_type TEXT DEFAULT 'CASH',
-                    sync_status INTEGER DEFAULT 0, uuid TEXT UNIQUE, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    sync_status INTEGER DEFAULT 0, uuid TEXT UNIQUE, client_uuid TEXT UNIQUE, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, scope TEXT DEFAULT 'SHOP',
                     FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (customer_id) REFERENCES customers(id)
                 )
@@ -166,9 +170,21 @@ class DatabaseManager:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS sale_items (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, barcode TEXT,
-                    product_name TEXT, quantity REAL NOT NULL, unit_price REAL NOT NULL, total_price REAL NOT NULL,
+                    product_name TEXT, quantity REAL NOT NULL, unit_price REAL NOT NULL, 
+                    selling_price REAL NOT NULL, cost_price_at_sale REAL DEFAULT 0, total_price REAL NOT NULL,
                     sync_status INTEGER DEFAULT 0, uuid TEXT UNIQUE, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     scope TEXT DEFAULT 'SHOP', FOREIGN KEY (sale_id) REFERENCES sales(id), FOREIGN KEY (product_id) REFERENCES products(id)
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS stock_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, 
+                    type TEXT NOT NULL, -- 'SALE', 'PURCHASE', 'RETURN', 'ADJUSTMENT'
+                    quantity REAL NOT NULL, cost_price REAL DEFAULT 0, 
+                    reference_id INTEGER, -- sale_id, purchase_id, etc.
+                    details TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (product_id) REFERENCES products(id)
                 )
             ''')
 
@@ -279,6 +295,55 @@ class DatabaseManager:
             
             conn.commit()
 
+    def _check_and_migrate_tables(self):
+        """Checks for missing columns and adds them if necessary."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 1. Check 'title' in 'expenses'
+            cursor.execute("PRAGMA table_info(expenses)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if 'title' not in columns:
+                print("[MIGRATION] Adding 'title' column to expenses table...")
+                cursor.execute("ALTER TABLE expenses ADD COLUMN title TEXT")
+            
+            # 2. Check 'profile_picture' in 'users'
+            cursor.execute("PRAGMA table_info(users)")
+            user_columns = [info[1] for info in cursor.fetchall()]
+            if 'profile_picture' not in user_columns:
+                print("[MIGRATION] Adding 'profile_picture' column to users table...")
+                cursor.execute("ALTER TABLE users ADD COLUMN profile_picture TEXT")
+            
+            # 3. Check 'rack' (shelf_location) in 'products'.
+            # shelf_location already exists in CREATE TABLE, but check just in case for old DBs
+            cursor.execute("PRAGMA table_info(products)")
+            prod_columns = [info[1] for info in cursor.fetchall()]
+            if 'shelf_location' not in prod_columns:
+                print("[MIGRATION] Adding 'shelf_location' column to products table...")
+                cursor.execute("ALTER TABLE products ADD COLUMN shelf_location TEXT")
+            
+            # 4. Add index for performance in inventory/search
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active)")
+
+            # 5. Migration for Sale Logic Improvements
+            cursor.execute("PRAGMA table_info(sale_items)")
+            si_cols = [info[1] for info in cursor.fetchall()]
+            if 'selling_price' not in si_cols:
+                print("[MIGRATION] Adding 'selling_price' to sale_items...")
+                cursor.execute("ALTER TABLE sale_items ADD COLUMN selling_price REAL DEFAULT 0")
+            if 'cost_price_at_sale' not in si_cols:
+                print("[MIGRATION] Adding 'cost_price_at_sale' to sale_items...")
+                cursor.execute("ALTER TABLE sale_items ADD COLUMN cost_price_at_sale REAL DEFAULT 0")
+
+            cursor.execute("PRAGMA table_info(sales)")
+            s_cols = [info[1] for info in cursor.fetchall()]
+            if 'client_uuid' not in s_cols:
+                print("[MIGRATION] Adding 'client_uuid' to sales...")
+                cursor.execute("ALTER TABLE sales ADD COLUMN client_uuid TEXT")
+                cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_client_uuid ON sales(client_uuid)")
+                
+            conn.commit()
+
     def _create_pharmacy_tables(self):
         """Schema for Isolated Pharmacy Database."""
         print(f"[DEBUG] Initializing Pharmacy Database at: {self.pharmacy_db}")
@@ -347,7 +412,7 @@ class DatabaseManager:
                         id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_number TEXT UNIQUE NOT NULL, user_id INTEGER,
                         customer_id INTEGER, total_amount REAL NOT NULL, gross_amount REAL DEFAULT 0,
                         discount_amount REAL DEFAULT 0, net_amount REAL DEFAULT 0, payment_type TEXT DEFAULT 'CASH',
-                        is_synced INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        is_synced INTEGER DEFAULT 0, client_uuid TEXT UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
 
@@ -355,7 +420,7 @@ class DatabaseManager:
                     CREATE TABLE IF NOT EXISTS pharmacy_sale_items (
                         id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, product_name TEXT,
                         batch_number TEXT, expiry_date DATE, quantity REAL NOT NULL, unit_price REAL NOT NULL,
-                        total_price REAL NOT NULL, cost_price_at_sale REAL DEFAULT 0, 
+                        selling_price REAL NOT NULL, total_price REAL NOT NULL, cost_price_at_sale REAL DEFAULT 0, 
                         unit_type TEXT DEFAULT 'Pack', conversion_factor REAL DEFAULT 1,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (sale_id) REFERENCES pharmacy_sales(id), FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
@@ -369,6 +434,144 @@ class DatabaseManager:
                 try:
                     cursor.execute("ALTER TABLE pharmacy_sale_items ADD COLUMN conversion_factor REAL DEFAULT 1")
                 except: pass
+
+                # Migration for Sale Logic Improvements
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_sale_items ADD COLUMN selling_price REAL DEFAULT 0")
+                except: pass
+                try:
+                    cursor.execute("ALTER TABLE pharmacy_sales ADD COLUMN client_uuid TEXT")
+                    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ph_sales_client_uuid ON pharmacy_sales(client_uuid)")
+                except: pass
+
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_stock_ledger (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, 
+                        type TEXT NOT NULL, -- 'SALE', 'PURCHASE', 'RETURN', 'ADJUSTMENT'
+                        quantity REAL NOT NULL, cost_price REAL DEFAULT 0, 
+                        batch_number TEXT, reference_id INTEGER,
+                        details TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
+                    )
+                ''')
+
+                # ========== ENTERPRISE BATCH TRACKING TABLES ==========
+                
+                # pharmacy_batches: Core batch tracking with per-batch cost
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_batches (
+                        batch_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        product_id INTEGER NOT NULL,
+                        batch_number TEXT NOT NULL,
+                        expiry_date DATE NOT NULL,
+                        purchase_cost_per_unit REAL NOT NULL CHECK(purchase_cost_per_unit > 0),
+                        qty_received REAL NOT NULL,
+                        qty_remaining REAL NOT NULL DEFAULT 0,
+                        received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        supplier_id INTEGER,
+                        purchase_invoice_id INTEGER,
+                        FOREIGN KEY (product_id) REFERENCES pharmacy_products(id)
+                    )
+                ''')
+                
+                # FEFO Index for efficient batch selection
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_batches_fefo 
+                    ON pharmacy_batches(product_id, expiry_date ASC, batch_id ASC)
+                    WHERE qty_remaining > 0
+                ''')
+                
+                # pharmacy_sale_batch_allocations: Exact traceability of batch usage per sale
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_sale_batch_allocations (
+                        allocation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sale_item_id INTEGER NOT NULL,
+                        batch_id INTEGER NOT NULL,
+                        qty_allocated REAL NOT NULL CHECK(qty_allocated > 0),
+                        unit_cost REAL NOT NULL CHECK(unit_cost > 0),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (sale_item_id) REFERENCES pharmacy_sale_items(id),
+                        FOREIGN KEY (batch_id) REFERENCES pharmacy_batches(batch_id)
+                    )
+                ''')
+                
+                # ========== ACCOUNTS PAYABLE (AP) TABLES ==========
+                
+                # pharmacy_purchase_invoices: Supplier invoices
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_purchase_invoices (
+                        invoice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        supplier_id INTEGER NOT NULL,
+                        invoice_number TEXT UNIQUE NOT NULL,
+                        invoice_date DATE NOT NULL,
+                        total_amount REAL NOT NULL,
+                        payment_status TEXT DEFAULT 'PENDING',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # pharmacy_payables: Accounts payable tracking
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_payables (
+                        payable_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        supplier_id INTEGER NOT NULL,
+                        invoice_id INTEGER NOT NULL,
+                        total_amount REAL NOT NULL,
+                        amount_paid REAL DEFAULT 0,
+                        balance REAL NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (invoice_id) REFERENCES pharmacy_purchase_invoices(invoice_id)
+                    )
+                ''')
+                
+                # pharmacy_supplier_payments: Payment records
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS pharmacy_supplier_payments (
+                        payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        payable_id INTEGER NOT NULL,
+                        amount REAL NOT NULL CHECK(amount > 0),
+                        payment_date DATE NOT NULL,
+                        payment_method TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (payable_id) REFERENCES pharmacy_payables(payable_id)
+                    )
+                ''')
+                
+                # ========== DATA MIGRATION ==========
+                
+                # Migrate existing pharmacy_inventory to pharmacy_batches
+                cursor.execute('''
+                    INSERT OR IGNORE INTO pharmacy_batches (
+                        product_id, batch_number, expiry_date, 
+                        purchase_cost_per_unit, qty_received, qty_remaining
+                    )
+                    SELECT 
+                        i.product_id, 
+                        i.batch_number, 
+                        i.expiry_date,
+                        COALESCE(NULLIF(p.cost_price, 0), 0.01) as purchase_cost_per_unit,
+                        i.quantity as qty_received,
+                        i.quantity as qty_remaining
+                    FROM pharmacy_inventory i
+                    JOIN pharmacy_products p ON i.product_id = p.id
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM pharmacy_batches b 
+                        WHERE b.product_id = i.product_id 
+                        AND b.batch_number = i.batch_number
+                    )
+                ''')
+                
+                # Backfill cost_price_at_sale for existing sale_items
+                cursor.execute('''
+                    UPDATE pharmacy_sale_items 
+                    SET cost_price_at_sale = COALESCE(
+                        NULLIF(cost_price_at_sale, 0),
+                        (SELECT cost_price FROM pharmacy_products WHERE id = pharmacy_sale_items.product_id),
+                        0.01
+                    )
+                    WHERE cost_price_at_sale IS NULL OR cost_price_at_sale = 0
+                ''')
+
 
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS pharmacy_customers (

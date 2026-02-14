@@ -53,8 +53,24 @@ class StorePriceCheckView(QWidget):
         self.price_lbl.setStyleSheet("font-size: 82px; font-weight: 900; color: #27ae60;")
         self.price_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        # New Info Labels (Requirement 9)
+        info_lay = QHBoxLayout()
+        info_lay.setSpacing(40)
+        
+        self.qty_lbl = QLabel("")
+        self.qty_lbl.setStyleSheet("font-size: 28px; color: #4318ff; font-weight: bold;")
+        
+        self.rack_lbl = QLabel("")
+        self.rack_lbl.setStyleSheet("font-size: 28px; color: #a3aed0; font-weight: 500;")
+        
+        info_lay.addStretch()
+        info_lay.addWidget(self.qty_lbl)
+        info_lay.addWidget(self.rack_lbl)
+        info_lay.addStretch()
+        
         card_layout.addWidget(self.product_name_lbl)
         card_layout.addWidget(self.price_lbl)
+        card_layout.addLayout(info_lay)
         layout.addWidget(self.display_card)
         
         # Hidden Scanner Input
@@ -74,7 +90,11 @@ class StorePriceCheckView(QWidget):
         self.clear_timer.timeout.connect(self.reset_display)
         
         # Ensure scan input is always focused
-        self.scan_input.setFocus()
+        QTimer.singleShot(100, self.scan_input.setFocus)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(100, self.scan_input.setFocus)
 
     def handle_scan(self):
         barcode = self.scan_input.text().strip()
@@ -90,7 +110,12 @@ class StorePriceCheckView(QWidget):
             try:
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
-                    cursor.execute(f"SELECT {lang_col}, name_en, sale_price FROM products WHERE barcode = ? AND is_active = 1", (barcode,))
+                    cursor.execute(f"""
+                        SELECT p.{lang_col}, p.name_en, p.sale_price, i.quantity, p.shelf_location 
+                        FROM products p 
+                        LEFT JOIN inventory i ON p.id = i.product_id
+                        WHERE p.barcode = ? AND p.is_active = 1
+                    """, (barcode,))
                     row = cursor.fetchone()
                     return dict(row) if row else None
             except:
@@ -100,9 +125,13 @@ class StorePriceCheckView(QWidget):
             if product:
                 name = product[lang_col] or product['name_en']
                 price = product['sale_price']
+                qty = product['quantity'] or 0
+                rack = product['shelf_location'] or "N/A"
                 
                 self.product_name_lbl.setText(name)
                 self.price_lbl.setText(f"{lang_manager.localize_digits(f'{price:.2f}')} AFN")
+                self.qty_lbl.setText(f"Qty: {lang_manager.localize_digits(str(int(qty)))}")
+                self.rack_lbl.setText(f"Rack: {rack}")
                 self.display_card.setStyleSheet("")
                 print('\a', end='', flush=True) # Beep
             else:
@@ -125,6 +154,8 @@ class StorePriceCheckView(QWidget):
         self.clear_timer.stop()
         self.product_name_lbl.setText(lang_manager.get("ready_to_scan"))
         self.price_lbl.setText("")
+        self.qty_lbl.setText("")
+        self.rack_lbl.setText("")
         self.display_card.setStyleSheet("")
         self.scan_input.setFocus()
         self.finished.emit()

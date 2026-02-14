@@ -1,7 +1,12 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QLabel, QFrame, QGridLayout, QScrollArea, QGraphicsDropShadowEffect)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+                             QLabel, QFrame, QGridLayout, QScrollArea, QGraphicsDropShadowEffect, QSizePolicy)
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QVariantAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QLinearGradient, QBrush, QPen
+try:
+    from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QPieSlice
+except ImportError:
+    # Fallback if QtCharts is not available - but we'll try to ensure it is
+    QChart = QChartView = QPieSeries = QPieSlice = None
 import qtawesome as qta
 from src.ui.theme_manager import theme_manager
 from src.core.auth import Auth
@@ -14,7 +19,7 @@ class DashboardCard(QFrame):
     
     def __init__(self, title, icon_name, gradient_colors, description=""):
         super().__init__()
-        self.setFixedSize(260, 200)
+        self.setFixedSize(240, 180)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.colors = gradient_colors # (color1, color2)
         self.title = "    "+title.capitalize()
@@ -200,6 +205,87 @@ class BackgroundFrame(QFrame):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRect(self.rect())
 
+class DonutChartWidget(QChartView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.chart = QChart()
+        self.chart.setBackgroundVisible(False)
+        self.chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
+        self.chart.legend().setVisible(True)
+        self.chart.legend().setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.series = QPieSeries()
+        self.series.setHoleSize(0.5)
+        self.series.setPieSize(0.7)
+        self.chart.addSeries(self.series)
+        self.setChart(self.chart)
+        self.setStyleSheet("background: transparent; border: 1px solid black; font-size: 20px;")
+
+    def update_data(self, data):
+        self.series.clear()
+        for item in data:
+            name = item['name_en'] or "Unknown"
+            percent = float(item['percent'] or 0)
+            slice = QPieSlice(f"{name} ({percent:.1f}%)", percent)
+            
+            # Color Buckets (Requirement 2B)
+            # 0-25: Red, 25-50: Orange, 50-75: Blue, 75+: Green
+            if percent <= 25: slice.setColor(QColor("#FF4B2B")) # Red-ish
+            elif percent <= 50: slice.setColor(QColor("#FF8C00")) # Orange
+            elif percent <= 75: slice.setColor(QColor("#00c6ff")) # Blue
+            else: slice.setColor(QColor("#43e97b")) # Green
+            
+            # Hover effects
+            slice.setLabelVisible(False)
+            slice.hovered.connect(lambda state, s=slice: self.on_slice_hovered(state, s, percent, item['barcode']))
+            
+            self.series.append(slice)
+
+    def on_slice_hovered(self, state, slice, percent, barcode):
+        slice.setExploded(state)
+        slice.setLabelVisible(state)
+        # Detailed popup/tooltip handled by slice label for now, 
+        # but could be a custom overlay if needed.
+
+class TopProductsWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(10, 10, 10, 10)
+        self.title = QLabel("Top 5 Sold Products")
+        t = theme_manager.DARK if theme_manager.is_dark else theme_manager.QUICKMART
+        self.title.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {t['text_main']}; border: none;")
+        self.layout.addWidget(self.title)
+        
+        self.list_layout = QVBoxLayout()
+        self.layout.addLayout(self.list_layout)
+        self.layout.addStretch()
+
+    def update_data(self, data):
+        # Clear existing
+        while self.list_layout.count():
+            item = self.list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        t = theme_manager.DARK if theme_manager.is_dark else theme_manager.QUICKMART
+        for item in data:
+            row = QFrame()
+            row.setStyleSheet(f"background: {t['bg_card']}; border: none;")
+            r_lay = QHBoxLayout(row)
+            
+            name = QLabel(item['name_en'] or "Unknown")
+            name.setStyleSheet(f"color: {t['text_main']}; font-weight: 500;")
+            
+            perc = QLabel(f"{float(item['percent'] or 0):.1f}%")
+            perc.setStyleSheet("color: #05cd99; font-weight: bold;")
+            
+            r_lay.addWidget(name)
+            r_lay.addStretch()
+            r_lay.addWidget(perc)
+            
+            self.list_layout.addWidget(row)
+
 class StoreDashboardView(QWidget):
     navigation_requested = pyqtSignal(str)
     
@@ -209,14 +295,25 @@ class StoreDashboardView(QWidget):
 
     def init_ui(self):
         # Full view layout
-        self.main_container = QVBoxLayout(self)
-        self.main_container.setContentsMargins(0, 0, 0, 0)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Wrap everything in a scroll area (Requirement 2A)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
         # Background Widget (for gradient)
         self.bg_frame = BackgroundFrame()
+        self.bg_frame.setObjectName("dashboard_bg")
+        self.scroll.setWidget(self.bg_frame)
+        self.main_layout.addWidget(self.scroll)
+        
+        # Content Layout inside Bg Frame
         bg_layout = QVBoxLayout(self.bg_frame)
-        bg_layout.setContentsMargins(40, 40, 40, 40)
-        bg_layout.setSpacing(30)
+        bg_layout.setContentsMargins(20, 20, 20, 20)
+        bg_layout.setSpacing(20)
         
         # Header
         self.header = QLabel("Fairi Tech POS Smart Control")
@@ -269,13 +366,75 @@ class StoreDashboardView(QWidget):
             
             grid.addWidget(card, row, col)
             col += 1
-            if col > 2:
+            if col > 3:
                 col = 0
                 row += 1
         
-        bg_layout.addWidget(grid_area, 1, Qt.AlignmentFlag.AlignCenter)
+        bg_layout.addWidget(grid_area, 0, Qt.AlignmentFlag.AlignCenter)
         
-        self.main_container.addWidget(self.bg_frame)
+        # Analytics Section (Requirement 2B)
+        self.analytics_container = QFrame()
+        self.analytics_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.analytics_container.setMinimumHeight(500)
+        t = theme_manager.DARK if theme_manager.is_dark else theme_manager.QUICKMART
+        self.analytics_container.setStyleSheet(f"background: {t['bg_card']}; border-radius: 20px; border: 1px solid {t['border']};")
+        self.analytics_layout = QHBoxLayout(self.analytics_container)
+        self.analytics_layout.setContentsMargins(20, 20, 20, 20)
+        self.analytics_layout.setSpacing(10)
+        
+        bg_layout.addWidget(self.analytics_container)
+        
+        self.update_analytics_section()
+        
+        # self.main_layout already added the scroll area which contains bg_frame
+    
+    def update_analytics_section(self):
+        # Left: Donut Chart Widget (60%)
+        if QChart:
+            self.chart_view = DonutChartWidget()
+            self.analytics_layout.addWidget(self.chart_view, 6)
+        else:
+            self.analytics_layout.addWidget(QLabel("QtCharts not available"), 6)
+            
+        # Right: Top Products List (40%)
+        self.product_list = TopProductsWidget()
+        self.analytics_layout.addWidget(self.product_list, 4)
+        
+        self.load_analytics_data()
+
+    def load_analytics_data(self):
+        from src.database.db_manager import db_manager
+        from src.core.blocking_task_manager import task_manager
+        
+        def fetch():
+            try:
+                with db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    # Calculate total quantity for percentage
+                    cursor.execute("SELECT SUM(quantity) FROM sale_items")
+                    total_qty = cursor.fetchone()[0] or 1
+                    
+                    cursor.execute("""
+                        SELECT p.name_en, p.barcode, SUM(si.quantity) as total_qty,
+                        (SUM(si.quantity) * 100.0 / ?) as percent
+                        FROM sale_items si
+                        JOIN products p ON si.product_id = p.id
+                        GROUP BY si.product_id
+                        ORDER BY total_qty DESC
+                        LIMIT 5
+                    """, (total_qty,))
+                    return [dict(row) for row in cursor.fetchall()]
+            except Exception as e:
+                print(f"Error fetching analytics: {e}")
+                return []
+
+        def on_finished(data):
+            if QChart and hasattr(self, 'chart_view'):
+                self.chart_view.update_data(data)
+            if hasattr(self, 'product_list'):
+                self.product_list.update_data(data)
+
+        task_manager.run_task(fetch, on_finished=on_finished)
         
         # Apply Main Background Styling
         self.bg_frame.setObjectName("dashboard_bg")
@@ -291,9 +450,3 @@ class StoreDashboardView(QWidget):
         
         # Repaint
         self.update()
-
-    def update_bg(self):
-        pass
-
-    def paintEvent(self, event):
-        super().paintEvent(event)

@@ -26,3 +26,7 @@ pillow
 pyarmor
 python-barcode
 qrcode
+reportlab
+pyqt6-charts
+pyqt6-charts-qt6
+

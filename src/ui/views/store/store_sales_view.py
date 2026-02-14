@@ -315,7 +315,6 @@ class StoreSalesView(QWidget):
         self.display_card.setVisible(False)
         self.refresh_table()
         self.reset_search_style()
-        QMessageBox.information(self, lang_manager.get("resumed"), lang_manager.get("sale_transaction_resumed"))
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self.is_price_check_mode:
@@ -554,10 +553,21 @@ class StoreSalesView(QWidget):
         except: pass
         total = max(0, subtotal - discount)
         
+        # client_uuid for idempotency - generated once per checkout attempt
+        if not hasattr(self, '_current_checkout_uuid'):
+            self._current_checkout_uuid = str(uuid.uuid4())
+        checkout_uuid = self._current_checkout_uuid
+
         from src.core.blocking_task_manager import task_manager
         
         def run_checkout():
             try:
+                # 0. Check for Idempotency first
+                with db_manager.get_connection() as conn:
+                    existing = conn.execute("SELECT id, invoice_number FROM sales WHERE client_uuid = ?", (checkout_uuid,)).fetchone()
+                    if existing:
+                        return {"success": True, "sale_id": existing['id'], "invoice_num": existing['invoice_number'], "total": total, "method": method, "idempotent": True}
+
                 if method == "CREDIT":
                     if self.selected_customer_id == 1:
                         return {"success": False, "error": "Walking Customer cannot have credit sales.", "type": "warning"}
@@ -575,25 +585,30 @@ class StoreSalesView(QWidget):
                         if cust['loan_enabled'] and new_balance > loan_limit:
                             return {"success": False, "error": f"{lang_manager.get('limit_exceeded')}: {cust['name_en']}. {lang_manager.get('total_due')}: {lang_manager.localize_digits(loan_limit)}", "type": "warning"}
 
-                        if not cust['home_address'] or not cust['photo'] or not cust['id_card_photo']:
-                            return {"success": False, "error": "KYC_REQUIRED", "customer_name": cust['name_en']}
-
                 next_bill = self.bill_number_display.text()
                 invoice_num = next_bill if next_bill.startswith("INV-") else f"INV-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:4]}"
+                
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
-                        INSERT INTO sales (invoice_number, user_id, customer_id, total_amount, payment_type, uuid)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (invoice_num, self.current_user['id'], self.selected_customer_id, total, method, str(uuid.uuid4())))
+                        INSERT INTO sales (invoice_number, user_id, customer_id, total_amount, payment_type, uuid, client_uuid)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (invoice_num, self.current_user['id'], self.selected_customer_id, total, method, str(uuid.uuid4()), checkout_uuid))
                     sale_id = cursor.lastrowid
                     
+                    from src.core.ledger_manager import ledger_manager
+                    
                     for item in self.cart:
+                        # Get current cost for snapshot
+                        cost_at_sale = ledger_manager.get_store_wac(conn, item['id'])
+                        
                         cursor.execute("""
-                            INSERT INTO sale_items (sale_id, product_id, barcode, product_name, quantity, unit_price, total_price, uuid)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (sale_id, item['id'], item['barcode'], item['name'], item['qty'], item['price'], item['price']*item['qty'], str(uuid.uuid4())))
-                        cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE product_id = ?", (item['qty'], item['id']))
+                            INSERT INTO sale_items (sale_id, product_id, barcode, product_name, quantity, unit_price, selling_price, cost_price_at_sale, total_price, uuid)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (sale_id, item['id'], item['barcode'], item['name'], item['qty'], item['price'], item['price'], cost_at_sale, item['price']*item['qty'], str(uuid.uuid4())))
+                        
+                        # Use ledger_manager to record movement and deduct inventory
+                        ledger_manager.record_store_movement(conn, item['id'], 'SALE', item['qty'], sale_id, f"Sale {invoice_num}")
                     
                     if method == "CREDIT":
                         cursor.execute("UPDATE customers SET balance = balance + ? WHERE id = ?", (total, self.selected_customer_id))
@@ -606,6 +621,10 @@ class StoreSalesView(QWidget):
                 return {"success": False, "error": str(e)}
 
         def on_finished(result):
+            # Clear checkout_uuid on success or specific errors
+            if result["success"] or result.get("type") == "warning":
+                if hasattr(self, '_current_checkout_uuid'):
+                    delattr(self, '_current_checkout_uuid')
             if not result["success"]:
                 if result.get("error") == "KYC_REQUIRED":
                     kyc = CreditKYCDialog(self, result["customer_name"])

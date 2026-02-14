@@ -9,6 +9,7 @@ from src.core.localization import lang_manager
 from src.ui.table_styles import style_table
 from src.ui.button_styles import style_button
 from datetime import datetime
+import uuid
 
 class PharmacySalesView(QWidget):
     sale_completed = pyqtSignal()
@@ -353,8 +354,6 @@ class PharmacySalesView(QWidget):
             
         self.table.blockSignals(False)
         self.total_lbl.setText(f"{lang_manager.get('total')}: {grant_total:.2f} AFN")
-        self.table.resizeColumnsToContents()
-        self.table.resizeRowsToContents()
     
     def on_type_changed(self, row):
         if row < len(self.cart):
@@ -413,6 +412,11 @@ class PharmacySalesView(QWidget):
         customer_id = self.customer_combo.currentData()
         payment_method = "CREDIT" if force_credit else self.payment_combo.currentText()
         
+        # client_uuid for idempotency - generated once per checkout attempt
+        if not hasattr(self, '_current_checkout_uuid'):
+            self._current_checkout_uuid = str(uuid.uuid4())
+        checkout_uuid = self._current_checkout_uuid
+
         if payment_method == "CREDIT" and not customer_id:
             QMessageBox.warning(self, "Error", "Customer must be selected for Credit sales.")
             return
@@ -421,6 +425,12 @@ class PharmacySalesView(QWidget):
         
         def do_checkout_heavy():
             try:
+                # 0. Check for Idempotency first
+                with db_manager.get_pharmacy_connection() as conn:
+                    existing = conn.execute("SELECT id, invoice_number FROM pharmacy_sales WHERE client_uuid = ?", (checkout_uuid,)).fetchone()
+                    if existing:
+                        return {"success": True, "sale_id": existing['id'], "invoice_num": existing['invoice_number'], "idempotent": True}
+
                 with db_manager.get_pharmacy_connection() as conn:
                     cursor = conn.cursor()
                     
@@ -438,10 +448,12 @@ class PharmacySalesView(QWidget):
 
                     # 2. Create Sale Header
                     cursor.execute("""
-                        INSERT INTO pharmacy_sales (invoice_number, user_id, total_amount, customer_id, payment_type)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (invoice, user_id, total_amount, customer_id, payment_method))
+                        INSERT INTO pharmacy_sales (invoice_number, user_id, total_amount, customer_id, payment_type, client_uuid)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (invoice, user_id, total_amount, customer_id, payment_method, checkout_uuid))
                     sale_id = cursor.lastrowid
+                    
+                    from src.core.ledger_manager import ledger_manager
                     
                     # 3. Process Items and Inventory
                     for item in self.cart:
@@ -449,19 +461,54 @@ class PharmacySalesView(QWidget):
                         conv_factor = item['pack_size'] if unit_type == 'Pack' else 1
                         total_units_sold = item['qty'] * conv_factor
                         
+                        # First, insert sale_item to get sale_item_id (we'll update cost later)
                         cursor.execute("""
                             INSERT INTO pharmacy_sale_items 
-                            (sale_id, product_id, product_name, batch_number, expiry_date, quantity, unit_price, total_price, cost_price_at_sale, unit_type, conversion_factor)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (sale_id, item['id'], item['name'], item.get('batch'), item.get('expiry'), 
-                              item['qty'], item['current_price'], item['current_price']*item['qty'], item.get('cost', 0),
+                            (sale_id, product_id, product_name, quantity, unit_price, selling_price, total_price, 
+                             cost_price_at_sale, unit_type, conversion_factor)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (sale_id, item['id'], item['name'], item['qty'], item['current_price'], 
+                              item['current_price'], item['qty'] * item['current_price'], 
+                              0.01,  # Temporary, will update after FEFO
                               unit_type, conv_factor))
+                        sale_item_id = cursor.lastrowid
                         
-                        cursor.execute("""
-                            UPDATE pharmacy_inventory 
-                            SET quantity = quantity - ? 
-                            WHERE product_id = ? AND batch_number = ?
-                        """, (total_units_sold, item['id'], item.get('batch')))
+                        try:
+                            # ENTERPRISE FEFO Logic with Pack/Unit Cost Conversion
+                            allocations = ledger_manager.record_pharmacy_sale(
+                                conn, 
+                                item['id'], 
+                                sale_id, 
+                                sale_item_id, 
+                                total_units_sold, 
+                                f"Sale {invoice}",
+                                unit_type=unit_type,  # Pass unit type for cost conversion
+                                pack_size=conv_factor  # Pass pack size for cost conversion
+                            )
+                            
+                            # Calculate weighted average cost from allocations
+                            # Formula: cost_price_at_sale = SUM(qty × cost) / SUM(qty)
+                            total_cost = sum(alloc['qty'] * alloc['cost'] for alloc in allocations)
+                            total_qty = sum(alloc['qty'] for alloc in allocations)
+                            weighted_avg_cost = total_cost / total_qty if total_qty > 0 else 0.01
+                            
+                            # Update sale_item with correct cost and batch info from first allocation
+                            first_batch = allocations[0] if allocations else {}
+                            cursor.execute("""
+                                UPDATE pharmacy_sale_items 
+                                SET cost_price_at_sale = ?,
+                                    batch_number = ?,
+                                    expiry_date = ?
+                                WHERE id = ?
+                            """, (weighted_avg_cost, 
+                                  first_batch.get('batch_number', ''),
+                                  first_batch.get('expiry', ''),
+                                  sale_item_id))
+                            
+                        except ValueError as e:
+                            # Cost validation or stock error - rollback and return error
+                            conn.rollback()
+                            return {"success": False, "error": str(e)}
                     
                     # 4. Handle Credit/Loan
                     if payment_method == "CREDIT":
@@ -472,11 +519,15 @@ class PharmacySalesView(QWidget):
                         cursor.execute("UPDATE pharmacy_customers SET balance = balance + ? WHERE id = ?", (total_amount, customer_id))
 
                     conn.commit()
-                    return {"success": True, "sale_id": sale_id}
+                    return {"success": True, "sale_id": sale_id, "invoice_num": invoice}
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
         def on_finished(result):
+            # Clear checkout_uuid on success
+            if result["success"]:
+                if hasattr(self, '_current_checkout_uuid'):
+                    delattr(self, '_current_checkout_uuid')
             if not result["success"]:
                 if result.get("limit_exceeded"):
                     QMessageBox.warning(self, "Limit Exceeded", 
@@ -603,82 +654,83 @@ class PharmacySalesView(QWidget):
             
             task_manager.run_task(do_print, on_finished=on_finished)
 
-    def generate_pharmacy_bill_pdf(self, sale_id, invoice_num, total, method):
-        """Generate PDF bill for pharmacy sales"""
-        try:
-            from reportlab.lib import colors
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import inch
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-            import tempfile
+    def generate_pharmacy_bill_pdf(self, sale_id, invoice_num, total, method, on_complete=None):
+        """Generate PDF bill for pharmacy sales - runs in background worker"""
+        from src.core.blocking_task_manager import task_manager
+        
+        def do_generate():
+            try:
+                from reportlab.lib import colors
+                from reportlab.lib.pagesizes import A4
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import inch
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                import tempfile
 
-            with db_manager.get_pharmacy_connection() as conn:
-                cursor = conn.cursor()
+                with db_manager.get_pharmacy_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT ps.*, pc.name as customer_name
+                        FROM pharmacy_sales ps
+                        LEFT JOIN pharmacy_customers pc ON ps.customer_id = pc.id
+                        WHERE ps.id = ?
+                    """, (sale_id,))
+                    sale = cursor.fetchone()
 
-                # Get sale details
-                cursor.execute("""
-                    SELECT ps.*, pc.name as customer_name
-                    FROM pharmacy_sales ps
-                    LEFT JOIN pharmacy_customers pc ON ps.customer_id = pc.id
-                    WHERE ps.id = ?
-                """, (sale_id,))
-                sale = cursor.fetchone()
+                    cursor.execute("""
+                        SELECT psi.*, pp.name_en as product_name
+                        FROM pharmacy_sale_items psi
+                        JOIN pharmacy_products pp ON psi.product_id = pp.id
+                        WHERE psi.sale_id = ?
+                    """, (sale_id,))
+                    items = cursor.fetchall()
 
-                # Get sale items
-                cursor.execute("""
-                    SELECT psi.*, pp.name_en as product_name
-                    FROM pharmacy_sale_items psi
-                    JOIN pharmacy_products pp ON psi.product_id = pp.id
-                    WHERE psi.sale_id = ?
-                """, (sale_id,))
-                items = cursor.fetchall()
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+                temp_file.close()
 
-            # Create temporary PDF file
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-            temp_file.close()
+                doc = SimpleDocTemplate(temp_file.name, pagesize=A4)
+                elements = []
+                styles = getSampleStyleSheet()
+                title_style = ParagraphStyle('Title', fontSize=20, fontName='Helvetica-Bold', alignment=1, spaceAfter=20)
 
-            doc = SimpleDocTemplate(temp_file.name, pagesize=A4)
-            elements = []
+                elements.append(Paragraph("PHARMACY RECEIPT", title_style))
+                elements.append(Paragraph(f"Invoice: {invoice_num}", styles['Normal']))
+                elements.append(Paragraph(f"Date: {sale['created_at'][:10] if sale else 'N/A'}", styles['Normal']))
+                if sale and sale['customer_name']:
+                    elements.append(Paragraph(f"Customer: {sale['customer_name']}", styles['Normal']))
+                elements.append(Paragraph(f"Payment: {method}", styles['Normal']))
+                elements.append(Spacer(1, 20))
 
-            styles = getSampleStyleSheet()
-            title_style = ParagraphStyle('Title', fontSize=20, fontName='Helvetica-Bold', alignment=1, spaceAfter=20)
+                table_data = [['Product', 'Qty', 'Price', 'Total']]
+                for item in items:
+                    table_data.append([
+                        item['product_name'],
+                        str(item['quantity']),
+                        f"{item['unit_price']:.2f}",
+                        f"{item['total_price']:.2f}"
+                    ])
+                table_data.append(['', '', 'TOTAL:', f"{total:.2f}"])
 
-            elements.append(Paragraph("PHARMACY RECEIPT", title_style))
-            elements.append(Paragraph(f"Invoice: {invoice_num}", styles['Normal']))
-            elements.append(Paragraph(f"Date: {sale['created_at'][:10] if sale else 'N/A'}", styles['Normal']))
-            if sale and sale['customer_name']:
-                elements.append(Paragraph(f"Customer: {sale['customer_name']}", styles['Normal']))
-            elements.append(Paragraph(f"Payment: {method}", styles['Normal']))
-            elements.append(Spacer(1, 20))
-
-            # Items table
-            table_data = [['Product', 'Qty', 'Price', 'Total']]
-            for item in items:
-                table_data.append([
-                    item['product_name'],
-                    str(item['quantity']),
-                    f"{item['unit_price']:.2f}",
-                    f"{item['total_price']:.2f}"
-                ])
-
-            table_data.append(['', '', 'TOTAL:', f"{total:.2f}"])
-
-            items_table = Table(table_data, colWidths=[200, 50, 70, 70])
-            items_table.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (3, -1), 'RIGHT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-            ]))
-            elements.append(items_table)
-            elements.append(Spacer(1, 30))
-            elements.append(Paragraph("Thank you for your business!", styles['Normal']))
-
-            doc.build(elements)
-            return temp_file.name
-
-        except Exception as e:
-            print(f"Error generating pharmacy bill: {e}")
-            return None
+                items_table = Table(table_data, colWidths=[200, 50, 70, 70])
+                items_table.setStyle(TableStyle([
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('ALIGN', (1, 0), (3, -1), 'RIGHT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ]))
+                elements.append(items_table)
+                elements.append(Spacer(1, 30))
+                elements.append(Paragraph("Thank you for your business!", styles['Normal']))
+                doc.build(elements)
+                return {"success": True, "path": temp_file.name}
+            except Exception as e:
+                print(f"Error generating pharmacy bill: {e}")
+                return {"success": False, "error": str(e)}
+        
+        def on_finished(result):
+            if on_complete:
+                path = result.get("path") if result.get("success") else None
+                on_complete(path)
+        
+        task_manager.run_task(do_generate, on_finished=on_finished)

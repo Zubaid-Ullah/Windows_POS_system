@@ -1,4 +1,5 @@
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QThread
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QThread, Qt
+from PyQt6.QtWidgets import QApplication
 from src.core.supabase_manager import supabase_manager
 from src.core.local_config import local_config
 from datetime import datetime, timedelta
@@ -50,6 +51,11 @@ class LicenseGuard(QObject):
 
     def start_async_check(self):
         """Launches a one-off thread for the network poll."""
+        # Pause if app is in background to prevent resource hogging
+        app = QApplication.instance()
+        if app and app.applicationState() != Qt.ApplicationState.ApplicationActive:
+            return
+
         # Check if thread is valid AND running
         try:
             if self._active_thread and self._active_thread.isRunning():

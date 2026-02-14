@@ -1,6 +1,6 @@
 import sys
 import time
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QApplication
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 import qtawesome as qta
 from src.core.supabase_manager import supabase_manager
@@ -84,6 +84,11 @@ class ConnectionMonitorWindow(QWidget):
         layout.addWidget(self.drag_lbl)
 
     def check_now(self):
+        # Pause if app is in background
+        app = QApplication.instance()
+        if app and app.applicationState() != Qt.ApplicationState.ApplicationActive:
+            return
+
         if self.active_thread and self.active_thread.isRunning():
             return
             
